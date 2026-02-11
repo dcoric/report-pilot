@@ -83,6 +83,14 @@ Query sessions:
 - `POST /v1/query/sessions/{id}/run`
 - `POST /v1/query/sessions/{id}/feedback`
 
+`/v1/query/sessions/{id}/run` now returns:
+
+- `provider` (selected provider + model)
+- `confidence` (heuristic score)
+- `citations` (schema/semantic/metric/join context references)
+
+`/v1/query/sessions/{id}/feedback` now stores validated `corrected_sql` examples into `nl_sql_examples` (source=`feedback`) when valid.
+
 LLM provider config:
 
 - `POST /v1/llm/providers`

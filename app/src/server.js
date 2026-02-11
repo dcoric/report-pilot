@@ -5,6 +5,7 @@ const { runPostgresIntrospection } = require("./services/introspectionService");
 const { generateSqlWithRouting } = require("./services/llmSqlService");
 const { validateAndNormalizeSql } = require("./services/sqlSafety");
 const { evaluateExplainBudget } = require("./services/queryBudget");
+const { buildCitations, computeConfidence } = require("./services/queryResponse");
 const { OpenAiAdapter } = require("./adapters/llm/openAiAdapter");
 const { GeminiAdapter } = require("./adapters/llm/geminiAdapter");
 const { DeepSeekAdapter } = require("./adapters/llm/deepSeekAdapter");
@@ -395,7 +396,7 @@ async function handleRunSession(req, res, sessionId) {
 
   const semanticEntitiesResult = await appDb.query(
     `
-      SELECT entity_type, target_ref, business_name
+      SELECT id, entity_type, target_ref, business_name
       FROM semantic_entities
       WHERE data_source_id = $1 AND active = TRUE
       ORDER BY business_name
@@ -406,6 +407,8 @@ async function handleRunSession(req, res, sessionId) {
   const metricDefinitionsResult = await appDb.query(
     `
       SELECT
+        md.id,
+        md.semantic_entity_id,
         md.sql_expression,
         md.grain,
         se.business_name
@@ -419,7 +422,7 @@ async function handleRunSession(req, res, sessionId) {
 
   const joinPoliciesResult = await appDb.query(
     `
-      SELECT left_ref, right_ref, join_type, on_clause
+      SELECT id, left_ref, right_ref, join_type, on_clause
       FROM join_policies
       WHERE data_source_id = $1 AND approved = TRUE
       ORDER BY left_ref, right_ref
@@ -539,6 +542,24 @@ async function handleRunSession(req, res, sessionId) {
       }
     }
 
+    const citations = buildCitations({
+      question: session.question,
+      sql: safeSql,
+      refs: safety.refs || [],
+      schemaObjects: schemaObjectsResult.rows,
+      semanticEntities: semanticEntitiesResult.rows,
+      metricDefinitions: metricDefinitionsResult.rows,
+      joinPolicies: joinPoliciesResult.rows
+    });
+    const confidence = computeConfidence({
+      provider: usedProvider,
+      attempts: generationAttempts,
+      citations
+    });
+
+    validationJson.citations = citations;
+    validationJson.confidence = confidence;
+
     const execution = await adapter.executeReadOnly(safeSql, { timeoutMs, maxRows });
     const attemptResult = await appDb.query(
       `
@@ -587,7 +608,12 @@ async function handleRunSession(req, res, sessionId) {
       rows: execution.rows,
       row_count: execution.rowCount,
       duration_ms: execution.durationMs,
-      confidence: usedProvider === "local-fallback" ? 0.2 : 0.65
+      confidence,
+      provider: {
+        name: usedProvider,
+        model: usedModel
+      },
+      citations
     });
   } catch (err) {
     await appDb.query("UPDATE query_sessions SET status = 'failed' WHERE id = $1", [sessionId]);
@@ -609,10 +635,18 @@ async function handleFeedback(req, res, sessionId) {
     return badRequest(res, "rating must be an integer between 1 and 5");
   }
 
-  const sessionResult = await appDb.query("SELECT id FROM query_sessions WHERE id = $1", [sessionId]);
+  const sessionResult = await appDb.query(
+    `
+      SELECT id, data_source_id, question
+      FROM query_sessions
+      WHERE id = $1
+    `,
+    [sessionId]
+  );
   if (sessionResult.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "Session not found" });
   }
+  const session = sessionResult.rows[0];
 
   await appDb.query(
     `
@@ -622,7 +656,44 @@ async function handleFeedback(req, res, sessionId) {
     [sessionId, rating, correctedSql || null, comment || null]
   );
 
-  return json(res, 200, { ok: true });
+  let exampleSaved = false;
+  let exampleReason = null;
+
+  if (correctedSql && String(correctedSql).trim()) {
+    const schemaObjectsResult = await appDb.query(
+      `
+        SELECT schema_name, object_name
+        FROM schema_objects
+        WHERE data_source_id = $1
+      `,
+      [session.data_source_id]
+    );
+
+    const normalized = validateAndNormalizeSql(correctedSql, {
+      maxRows: 1000,
+      schemaObjects: schemaObjectsResult.rows
+    });
+
+    if (!normalized.ok) {
+      exampleReason = `corrected_sql_not_saved: ${normalized.errors.join("; ")}`;
+    } else {
+      await appDb.query(
+        `
+          INSERT INTO nl_sql_examples (
+            data_source_id,
+            question,
+            sql,
+            quality_score,
+            source
+          ) VALUES ($1, $2, $3, $4, 'feedback')
+        `,
+        [session.data_source_id, session.question, normalized.sql, rating / 5]
+      );
+      exampleSaved = true;
+    }
+  }
+
+  return json(res, 200, { ok: true, example_saved: exampleSaved, example_reason: exampleReason });
 }
 
 async function handleProviderUpsert(req, res) {
