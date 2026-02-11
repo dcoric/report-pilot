@@ -102,7 +102,12 @@ RAG:
 - `POST /v1/rag/reindex?data_source_id=...`
 - RAG reindex also runs automatically after introspection, semantic changes, and saved feedback examples.
 - `/v1/query/sessions/{id}/run` uses retrieved RAG chunks in prompt context and returns `citations.rag_documents`.
-- Retrieval is hybrid: lexical token matching + local embedding similarity (`RAG_EMBED_DIM`, default `64`).
+- Retrieval is hybrid: lexical token matching + embeddings + reranking.
+- Embeddings:
+  - `RAG_EMBED_PROVIDER=auto|openai|gemini|local`
+  - `RAG_EMBED_MODEL_OPENAI=text-embedding-3-small`
+  - `RAG_EMBED_MODEL_GEMINI=text-embedding-004`
+  - falls back to local hash embeddings when provider embeddings are unavailable.
 
 Quick provider setup example:
 

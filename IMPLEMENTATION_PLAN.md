@@ -52,7 +52,7 @@ Use this checklist as the execution tracker. Mark items done as implementation p
 - [x] Build embedding + retrieval pipeline (hybrid retrieval)
 - [x] Add RAG reindex trigger flow after introspection/semantic changes
 - [x] Use retrieved context in NL2SQL generation
-- [ ] Improve retrieval quality with provider embeddings and reranking (current: local hash embeddings + lexical)
+- [x] Improve retrieval quality with provider embeddings and reranking
 
 ## Phase 5 - Evaluation and Hardening
 

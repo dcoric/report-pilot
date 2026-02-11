@@ -67,8 +67,41 @@ class GeminiAdapter {
     return extractJsonObject(output.text);
   }
 
-  async embed() {
-    throw new Error("embed() is not implemented yet for Gemini adapter");
+  async embed(input) {
+    await this.healthCheck();
+
+    const model = input.model || "text-embedding-004";
+    const texts = Array.isArray(input.texts) ? input.texts : [];
+    if (texts.length === 0) {
+      throw new Error("embed input texts are required");
+    }
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(this.apiKey)}`;
+    const vectors = [];
+
+    for (const text of texts) {
+      const payload = {
+        content: {
+          parts: [
+            {
+              text
+            }
+          ]
+        }
+      };
+
+      const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs });
+      const values = response?.embedding?.values;
+      if (!Array.isArray(values) || values.length === 0) {
+        throw new Error("Gemini returned an empty embedding vector");
+      }
+      vectors.push(values);
+    }
+
+    return {
+      vectors,
+      model
+    };
   }
 }
 

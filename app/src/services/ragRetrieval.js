@@ -1,5 +1,6 @@
 const appDb = require("../lib/appDb");
-const { EMBEDDING_MODEL, embedText, cosineSimilarity } = require("./localEmbedding");
+const { LOCAL_EMBEDDING_MODEL, embedQueryForModel } = require("./embeddingRouter");
+const { cosineSimilarity } = require("./localEmbedding");
 
 async function retrieveRagContext(dataSourceId, question, opts = {}) {
   const limit = Number(opts.limit || 12);
@@ -9,6 +10,7 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
     return [];
   }
 
+  const embeddingModel = await selectEmbeddingModel(dataSourceId);
   const result = await appDb.query(
     `
       SELECT
@@ -26,30 +28,49 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
       ORDER BY rd.created_at DESC
       LIMIT 400
     `,
-    [dataSourceId, EMBEDDING_MODEL]
+    [dataSourceId, embeddingModel]
   );
 
   const tokens = tokenize(q);
-  const qVector = embedText(q);
+  const qVector = await embedQueryForModel(q, embeddingModel);
   const ranked = result.rows
     .map((row) => ({
       ...row,
-      score: computeHybridScore(q, tokens, qVector, row.content, row.vector_json)
+      score: computeHybridScore(q, tokens, qVector, row.content, row.vector_json),
+      embedding_model: embeddingModel
     }))
-    .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .filter((row) => row.score > 0);
 
-  if (ranked.length >= limit) {
-    return ranked.slice(0, limit);
+  const reranked = rerankDocuments(q, tokens, ranked);
+
+  if (reranked.length >= limit) {
+    return reranked.slice(0, limit);
   }
 
-  const usedIds = new Set(ranked.map((row) => row.id));
+  const usedIds = new Set(reranked.map((row) => row.id));
   const fill = result.rows
     .filter((row) => !usedIds.has(row.id))
-    .slice(0, Math.max(0, limit - ranked.length))
-    .map((row) => ({ ...row, score: 0 }));
+    .slice(0, Math.max(0, limit - reranked.length))
+    .map((row) => ({ ...row, score: 0, embedding_model: embeddingModel, rerank_score: 0 }));
 
-  return ranked.concat(fill);
+  return reranked.concat(fill);
+}
+
+async function selectEmbeddingModel(dataSourceId) {
+  const result = await appDb.query(
+    `
+      SELECT re.embedding_model, COUNT(*) AS doc_count
+      FROM rag_embeddings re
+      JOIN rag_documents rd ON rd.id = re.rag_document_id
+      WHERE rd.data_source_id = $1
+      GROUP BY re.embedding_model
+      ORDER BY doc_count DESC
+      LIMIT 1
+    `,
+    [dataSourceId]
+  );
+
+  return result.rows[0]?.embedding_model || LOCAL_EMBEDDING_MODEL;
 }
 
 function tokenize(text) {
@@ -65,6 +86,50 @@ function computeHybridScore(question, tokens, qVector, content, vectorJson) {
   const lexical = computeLexicalScore(question, tokens, content);
   const vector = computeVectorScore(qVector, vectorJson);
   return Number((lexical + (vector * 2)).toFixed(4));
+}
+
+function rerankDocuments(question, tokens, rows) {
+  const q = String(question || "").toLowerCase();
+  return rows
+    .map((row) => {
+      const content = String(row.content || "").toLowerCase();
+      const coverage = tokenCoverage(tokens, content);
+      const typeBoost = docTypeBoost(row.doc_type);
+      const exactBoost = q && content.includes(q) ? 1.0 : 0;
+      const rerankScore = Number((row.score + (coverage * 1.5) + typeBoost + exactBoost).toFixed(4));
+      return {
+        ...row,
+        rerank_score: rerankScore
+      };
+    })
+    .sort((a, b) => b.rerank_score - a.rerank_score);
+}
+
+function tokenCoverage(tokens, content) {
+  if (!tokens || tokens.length === 0) {
+    return 0;
+  }
+  const set = new Set(tokens);
+  let hits = 0;
+  for (const token of set) {
+    if (content.includes(token)) {
+      hits += 1;
+    }
+  }
+  return hits / set.size;
+}
+
+function docTypeBoost(docType) {
+  if (docType === "semantic") {
+    return 0.9;
+  }
+  if (docType === "example") {
+    return 0.8;
+  }
+  if (docType === "policy") {
+    return 0.5;
+  }
+  return 0.2;
 }
 
 function computeLexicalScore(question, tokens, content) {
@@ -90,6 +155,9 @@ function computeLexicalScore(question, tokens, content) {
 }
 
 function computeVectorScore(queryVector, vectorJson) {
+  if (!Array.isArray(queryVector) || queryVector.length === 0) {
+    return 0;
+  }
   const docVector = Array.isArray(vectorJson) ? vectorJson : null;
   if (!docVector || docVector.length === 0) {
     return 0;

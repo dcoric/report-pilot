@@ -595,7 +595,9 @@ async function handleRunSession(req, res, sessionId) {
       id: doc.id,
       doc_type: doc.doc_type,
       ref_id: doc.ref_id,
-      score: Number(doc.score || 0)
+      score: Number(doc.score || 0),
+      rerank_score: Number(doc.rerank_score || 0),
+      embedding_model: doc.embedding_model || null
     }));
     const confidence = computeConfidence({
       provider: usedProvider,

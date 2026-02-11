@@ -58,8 +58,41 @@ class OpenAiAdapter {
     return extractJsonObject(output.text);
   }
 
-  async embed() {
-    throw new Error("embed() is not implemented yet for OpenAI adapter");
+  async embed(input) {
+    await this.healthCheck();
+
+    const model = input.model || "text-embedding-3-small";
+    const texts = Array.isArray(input.texts) ? input.texts : [];
+    if (texts.length === 0) {
+      throw new Error("embed input texts are required");
+    }
+
+    const payload = {
+      model,
+      input: texts
+    };
+
+    const response = await postJson("https://api.openai.com/v1/embeddings", payload, {
+      timeoutMs: this.timeoutMs,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`
+      }
+    });
+
+    const vectors = Array.isArray(response?.data)
+      ? response.data
+          .sort((a, b) => a.index - b.index)
+          .map((item) => item.embedding)
+      : [];
+
+    if (vectors.length !== texts.length) {
+      throw new Error("OpenAI embedding response size mismatch");
+    }
+
+    return {
+      vectors,
+      model: response?.model || model
+    };
   }
 }
 

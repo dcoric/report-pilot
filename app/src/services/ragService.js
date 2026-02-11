@@ -1,14 +1,18 @@
 const crypto = require("crypto");
 const appDb = require("../lib/appDb");
-const { EMBEDDING_MODEL, embedText } = require("./localEmbedding");
+const { embedTextsForIndexing } = require("./embeddingRouter");
 
 async function reindexRagDocuments(dataSourceId) {
   const docs = await buildRagDocuments(dataSourceId);
+  const embedResponse = await embedTextsForIndexing(docs.map((doc) => doc.content));
+  const vectors = embedResponse.vectors || [];
+  const embeddingModel = embedResponse.embeddingModel;
 
   await appDb.withTransaction(async (client) => {
     await client.query("DELETE FROM rag_documents WHERE data_source_id = $1", [dataSourceId]);
 
-    for (const doc of docs) {
+    for (let idx = 0; idx < docs.length; idx += 1) {
+      const doc = docs[idx];
       const contentHash = sha256(doc.content);
       const insertResult = await client.query(
         `
@@ -26,7 +30,7 @@ async function reindexRagDocuments(dataSourceId) {
       );
 
       const ragDocumentId = insertResult.rows[0].id;
-      const vector = embedText(doc.content);
+      const vector = vectors[idx] || [];
       await client.query(
         `
           INSERT INTO rag_embeddings (
@@ -36,14 +40,15 @@ async function reindexRagDocuments(dataSourceId) {
             chunk_idx
           ) VALUES ($1, $2, $3, 0)
         `,
-        [ragDocumentId, EMBEDDING_MODEL, JSON.stringify(vector)]
+        [ragDocumentId, embeddingModel, JSON.stringify(vector)]
       );
     }
   });
 
   return {
     data_source_id: dataSourceId,
-    documents_indexed: docs.length
+    documents_indexed: docs.length,
+    embedding_model: embeddingModel
   };
 }
 
