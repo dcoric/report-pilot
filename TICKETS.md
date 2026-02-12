@@ -477,3 +477,115 @@ Build a production-ready internal UI that lets an analyst:
 - Phase E: AUTH-011, AUTH-012
 - Phase F: AUTH-015
 - Phase G (optional): AUTH-013
+
+---
+
+## Saved Reports Expansion (After Federation)
+
+## Ticket QUERY-001: Saved Query Data Model and APIs
+
+- Objective: Allow users to save a generated report query with a name for future reuse.
+- Scope:
+- Add persistence model for saved queries (owner, name, description, data source, SQL, default run params).
+- Add CRUD APIs for saved queries.
+- APIs:
+- `POST /v1/saved-queries`
+- `GET /v1/saved-queries`
+- `GET /v1/saved-queries/{id}`
+- `PUT /v1/saved-queries/{id}`
+- `DELETE /v1/saved-queries/{id}`
+- Acceptance Criteria:
+- User can save current query with required name.
+- User sees only permitted saved queries (respecting auth/roles).
+- Name collisions handled clearly (validation or auto-version policy).
+
+## Ticket QUERY-002: Parameterized Query Support
+
+- Objective: Support editable parameters when loading saved queries.
+- Scope:
+- Define parameter schema (name, type, required, default, allowed values).
+- Support SQL placeholders (for example `:start_date`, `:country`) and safe binding.
+- APIs:
+- `POST /v1/saved-queries/{id}/validate-params`
+- `POST /v1/saved-queries/{id}/run`
+- Acceptance Criteria:
+- User can modify params before execution.
+- Backend validates and safely binds params (no string interpolation risk).
+- Query runs successfully with defaults and with manual overrides.
+
+## Ticket QUERY-003: Saved Query Library UI
+
+- Objective: Provide list/search/filter UI for saved report queries.
+- Scope:
+- New page with table/grid of saved queries and metadata.
+- Quick actions: load, edit metadata, duplicate, delete.
+- APIs:
+- `GET /v1/saved-queries`
+- `DELETE /v1/saved-queries/{id}`
+- Acceptance Criteria:
+- User can find saved query by name and load in one click.
+- Empty/loading/error states are handled.
+- Deletion requires confirmation and updates list without full reload.
+
+## Ticket QUERY-004: Query Workspace Integration (Load -> Edit Params -> Run)
+
+- Objective: Integrate saved query execution into existing query workspace.
+- Scope:
+- “Save query” action after successful run.
+- “Load saved query” action that injects SQL and params into run form.
+- APIs:
+- `POST /v1/saved-queries`
+- `GET /v1/saved-queries/{id}`
+- `POST /v1/saved-queries/{id}/run`
+- Acceptance Criteria:
+- User can load saved query, adjust params manually, and click run.
+- Workspace shows loaded query source and last modified info.
+- Run results, citations, and feedback flow still work unchanged.
+
+## Ticket QUERY-005: Versioning and Change History (Recommended)
+
+- Objective: Preserve previous revisions of saved queries for safety and rollback.
+- Scope:
+- Revision history table with who/when/what changed.
+- Restore previous revision action.
+- APIs:
+- `GET /v1/saved-queries/{id}/versions`
+- `POST /v1/saved-queries/{id}/versions/{version_id}/restore`
+- Acceptance Criteria:
+- Every edit creates a new revision entry.
+- User can compare and restore previous SQL/params.
+- Audit links changes to authenticated user.
+
+## Ticket QUERY-006: Sharing and Access Control for Saved Queries
+
+- Objective: Allow controlled sharing of saved report queries across users/teams.
+- Scope:
+- Visibility modes: private, team/shared, org (as permitted by role).
+- Permission checks for view/edit/run/share.
+- APIs:
+- `POST /v1/saved-queries/{id}/share`
+- `GET /v1/saved-queries/{id}/access`
+- Acceptance Criteria:
+- Owner can share/unshare according to role policy.
+- Shared queries appear in recipient library.
+- Unauthorized users cannot access unshared private queries.
+
+## Ticket QUERY-007: Optional Scheduling Hook (Future-ready)
+
+- Objective: Prepare saved queries for scheduled report execution.
+- Scope:
+- Link saved query to scheduler payload contract (without full scheduler UI yet).
+- Store output format preference (`json`, `csv`, `xlsx`, etc.).
+- APIs:
+- `POST /v1/saved-queries/{id}/schedule-preview`
+- Acceptance Criteria:
+- Saved query can be represented as schedule-ready job payload.
+- Param defaults and export format flow into schedule preview.
+- No execution-side regressions for manual runs.
+
+## Suggested Saved Query Sequence
+
+- Phase H: QUERY-001, QUERY-003, QUERY-004
+- Phase I: QUERY-002, QUERY-006
+- Phase J: QUERY-005
+- Phase K (optional): QUERY-007
