@@ -28,6 +28,11 @@ Default ports:
 - `GET /health`
 - `GET /ready`
 
+## API Docs
+
+- Swagger UI: `http://localhost:8080/docs`
+- OpenAPI spec: `http://localhost:8080/openapi.yaml`
+
 Examples:
 
 ```bash

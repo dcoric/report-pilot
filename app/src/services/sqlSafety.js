@@ -34,7 +34,93 @@ function hasLimitClause(sql) {
   return /\blimit\s+\d+\b/i.test(sql);
 }
 
+function splitTopLevelCsv(selectPart) {
+  const items = [];
+  let current = "";
+  let depth = 0;
+  for (let i = 0; i < selectPart.length; i += 1) {
+    const ch = selectPart[i];
+    if (ch === "(") {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+      continue;
+    }
+    if (ch === "," && depth === 0) {
+      if (current.trim()) {
+        items.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    items.push(current.trim());
+  }
+  return items;
+}
+
+function isSingleRowAggregateQuery(sql) {
+  const text = String(sql || "").trim();
+  if (!text) {
+    return false;
+  }
+
+  // UNION-like constructs can return multiple sets.
+  if (/\b(union|intersect|except)\b/i.test(text)) {
+    return false;
+  }
+
+  // GROUP BY implies potentially many output rows.
+  if (/\bgroup\s+by\b/i.test(text)) {
+    return false;
+  }
+
+  // SELECT literal/constant style query without FROM is single row.
+  if (!/\bfrom\b/i.test(text)) {
+    return true;
+  }
+
+  const normalized = text.replace(/\s+/g, " ");
+  const selectMatch = normalized.match(/^\s*select\s+(.+?)\s+from\s+/i);
+  if (!selectMatch || !selectMatch[1]) {
+    return false;
+  }
+
+  const expressions = splitTopLevelCsv(selectMatch[1]);
+  if (expressions.length === 0) {
+    return false;
+  }
+
+  // Window functions can still produce many rows.
+  const hasWindow = expressions.some((expr) => /\bover\s*\(/i.test(expr));
+  if (hasWindow) {
+    return false;
+  }
+
+  // Treat aggregate-only projection as singleton result.
+  const AGGREGATE_FN =
+    /\b(count|sum|avg|min|max|bool_and|bool_or|array_agg|string_agg|json_agg|jsonb_agg)\s*\(/i;
+  return expressions.every((expr) => AGGREGATE_FN.test(expr));
+}
+
+function stripTrailingLimit(sql) {
+  const noSemi = stripTrailingSemicolon(sql);
+  const withoutLimit = noSemi.replace(/\s+limit\s+\d+\s*$/i, "").trim();
+  return `${withoutLimit};`;
+}
+
 function ensureLimit(sql, maxRows) {
+  if (isSingleRowAggregateQuery(sql)) {
+    // Aggregate singleton queries (COUNT/SUM/etc.) should not carry LIMIT.
+    return stripTrailingLimit(sql);
+  }
+
   if (hasLimitClause(sql)) {
     return sql;
   }

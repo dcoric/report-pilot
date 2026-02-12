@@ -4,7 +4,8 @@ info:
   version: 0.1.0
   description: API for NL-to-SQL reporting with multi-DB and multi-LLM support.
 servers:
-  - url: https://api.example.com
+  - url: /
+    description: Local runtime (same origin)
 tags:
   - name: Query
   - name: Admin

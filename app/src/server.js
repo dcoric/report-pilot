@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const http = require("http");
 const appDb = require("./lib/appDb");
 const { PostgresAdapter } = require("./adapters/postgresAdapter");
@@ -24,6 +26,49 @@ const ROUTING_STRATEGIES = new Set(["ordered_fallback", "cost_optimized", "laten
 const EXPLAIN_BUDGET_ENABLED = String(process.env.EXPLAIN_BUDGET_ENABLED || "true") === "true";
 const EXPLAIN_MAX_TOTAL_COST = Number(process.env.EXPLAIN_MAX_TOTAL_COST || 500000);
 const EXPLAIN_MAX_PLAN_ROWS = Number(process.env.EXPLAIN_MAX_PLAN_ROWS || 1000000);
+const OPENAPI_SPEC_PATH = path.resolve(__dirname, "../../docs/api/openapi.yaml");
+
+let cachedOpenApiSpec = null;
+
+function loadOpenApiSpec() {
+  if (cachedOpenApiSpec === null) {
+    cachedOpenApiSpec = fs.readFileSync(OPENAPI_SPEC_PATH, "utf8");
+  }
+  return cachedOpenApiSpec;
+}
+
+function swaggerUiHtml() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI-DB API Docs</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      SwaggerUIBundle({
+        url: "/openapi.yaml",
+        dom_id: "#swagger-ui"
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function serveSwaggerDocs(res) {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(swaggerUiHtml());
+}
+
+function serveOpenApiSpec(res) {
+  const spec = loadOpenApiSpec();
+  res.writeHead(200, { "Content-Type": "application/yaml; charset=utf-8" });
+  res.end(spec);
+}
 
 async function checkDatabase() {
   try {
@@ -1024,8 +1069,16 @@ async function routeRequest(req, res) {
     return json(res, 200, {
       service: "ai-db",
       status: "running",
-      endpoints: ["/health", "/ready", "/v1/*"]
+      endpoints: ["/health", "/ready", "/docs", "/openapi.yaml", "/v1/*"]
     });
+  }
+
+  if (req.method === "GET" && (pathname === "/docs" || pathname === "/docs/")) {
+    return serveSwaggerDocs(res);
+  }
+
+  if (req.method === "GET" && pathname === "/openapi.yaml") {
+    return serveOpenApiSpec(res);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {
