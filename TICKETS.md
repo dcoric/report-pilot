@@ -1,4 +1,4 @@
-# AI-DB UI Tasks
+# AI-DB Tickets
 
 ## Epic: MVP UI for NL-to-SQL with RAG-Grounded Reporting
 
@@ -209,12 +209,33 @@ Build a production-ready internal UI that lets an analyst:
 
 ---
 
+## Ticket BE-001: Query Result Export API (JSON, CSV, Excel, and Tabular Formats)
+
+- Objective: Add backend export capability so UI can download query results in common file formats.
+- Scope:
+- New export endpoint for a completed query attempt.
+- Supported formats: `json`, `csv`, `xlsx`, `tsv`, `parquet` (optional stretch: `ods`, `ndjson`).
+- Streaming/chunked response for large result sets.
+- Configurable file name + safe defaults (timestamp + question slug/attempt id).
+- APIs:
+- `POST /v1/query/sessions/{id}/export` (or `GET /v1/query/attempts/{attempt_id}/export?format=...`)
+- Acceptance Criteria:
+- Endpoint exports rows from a successful attempt without re-running LLM generation.
+- `Content-Type` and `Content-Disposition` headers are correct per format.
+- UTF-8 and delimiter/escaping rules are correct for CSV/TSV.
+- Excel export preserves column headers and basic numeric/date typing.
+- Export handles empty result sets and very large result sets without timeout/memory blowups.
+- Access control mirrors existing query session ownership rules.
+- API returns clear errors for unsupported formats.
+
+---
+
 ## Suggested Delivery Sequence
 
 - Sprint 1: UI-001, UI-002, UI-003, UI-004, UI-005
 - Sprint 2: UI-006, UI-007, UI-008, UI-009
 - Sprint 3: UI-010, UI-011, UI-012
-- Sprint 4: UI-013, UI-014, UI-015, UI-016
+- Sprint 4: UI-013, UI-014, UI-015, UI-016, BE-001
 
 ## Backend Dependencies / Notes for UI Team
 
