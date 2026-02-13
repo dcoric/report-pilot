@@ -69,6 +69,8 @@ Build a production-ready internal UI that lets an analyst:
 - New data source appears in list without full page refresh.
 - Validation errors are shown inline.
 
+## Ticket BE-003: Enable CORS support for Frontend (Issue #53) [DONE]
+
 ## Ticket UI-004: Introspection Flow and Status UX [DONE]
 
 - Objective: Trigger introspection and provide status feedback.
