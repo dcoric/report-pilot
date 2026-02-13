@@ -8,6 +8,7 @@ import { QueryWorkspace } from './pages/QueryWorkspace';
 import { Observability } from './pages/Observability';
 import { ReleaseGates } from './pages/ReleaseGates';
 import { NotFound } from './pages/NotFound';
+import { Settings } from './pages/Settings';
 
 function App() {
   return (
@@ -23,7 +24,7 @@ function App() {
           <Route path="/release-gates" element={<ReleaseGates />} />
 
           {/* Settings placeholder for now */}
-          <Route path="/settings" element={<div>Settings Page (Placeholder)</div>} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
 
         {/* 404 Route */}
