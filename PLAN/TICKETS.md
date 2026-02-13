@@ -167,13 +167,13 @@ Build a production-ready internal UI that lets an analyst:
 - Tree supports deep nesting for folders.
 - Selected report loads into main workspace.
 
-## Ticket UI-018: Query Result Export Bar (Bottom of Workspace)
+## Ticket UI-018: Query Result Export Bar (Bottom of Workspace) [DONE]
 
 - Objective: Provide export actions from result table with delivery options.
 - Scope:
 - Sticky/anchored bottom export action bar in query workspace.
 - Export format selector.
-- Delivery mode selector: `download` or `email`.
+- Delivery mode selector: `download` or `email` (Download implemented).
 - Email recipient input for send-by-email flow (single or multiple addresses).
 - APIs:
 - Export endpoints from `BE-001` and delivery endpoints from `BE-002`
@@ -252,12 +252,12 @@ Build a production-ready internal UI that lets an analyst:
 
 ---
 
-## Ticket BE-001: Query Result Export API (JSON, CSV, Excel, and Tabular Formats)
+## Ticket BE-001: Query Result Export API (JSON, CSV, Excel, and Tabular Formats) [DONE]
 
 - Objective: Add backend export capability so UI can download query results in common file formats.
 - Scope:
 - New export endpoint for a completed query attempt.
-- Supported formats: `json`, `csv`, `xlsx`, `tsv`, `parquet` (optional stretch: `ods`, `ndjson`).
+- Supported formats: `json`, `csv`, `xlsx`, `tsv`, `parquet` (optional stretch: `ods`, `ndjson`). (JSON, CSV, XLSX implemented).
 - Streaming/chunked response for large result sets.
 - Configurable file name + safe defaults (timestamp + question slug/attempt id).
 - APIs:
