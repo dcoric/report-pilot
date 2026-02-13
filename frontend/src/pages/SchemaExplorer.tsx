@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Database, Search, RefreshCw, Layers } from 'lucide-react';
+import { Database, Search, RefreshCw, Layers, Link as LinkIcon } from 'lucide-react';
 import { client } from '../lib/api/client';
 import { SchemaObjectList } from '../components/Schema/SchemaObjectList';
+import { JoinPolicyDialog } from '../components/Semantic/JoinPolicyDialog';
 import type { components } from '../lib/api/types';
 
 type DataSource = components['schemas']['DataSourceListResponse']['items'][number];
@@ -14,6 +15,7 @@ export const SchemaExplorer: React.FC = () => {
     const [isLoadingSources, setIsLoadingSources] = useState(true);
     const [isLoadingObjects, setIsLoadingObjects] = useState(false);
     const [filter, setFilter] = useState('');
+    const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false); // Join Dialog State
 
     // Fetch Data Sources on mount
     useEffect(() => {
@@ -72,6 +74,14 @@ export const SchemaExplorer: React.FC = () => {
                     <h1 className="text-2xl font-bold text-gray-900">Schema Explorer</h1>
                     <p className="text-gray-500 mt-1">Browse tables and views in your data sources.</p>
                 </div>
+                <button
+                    onClick={() => setIsJoinDialogOpen(true)}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    disabled={!selectedDataSourceId}
+                >
+                    <LinkIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
+                    Join Policies
+                </button>
             </div>
 
             <div className="flex flex-col gap-4 flex-1 overflow-hidden">
@@ -132,11 +142,17 @@ export const SchemaExplorer: React.FC = () => {
                         </div>
                     ) : (
                         <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
-                            <SchemaObjectList objects={schemaObjects} filter={filter} />
+                            <SchemaObjectList objects={schemaObjects} filter={filter} dataSourceId={selectedDataSourceId} />
                         </div>
                     )}
                 </div>
             </div>
+
+            <JoinPolicyDialog
+                isOpen={isJoinDialogOpen}
+                onClose={() => setIsJoinDialogOpen(false)}
+                dataSourceId={selectedDataSourceId}
+            />
         </div>
     );
 };

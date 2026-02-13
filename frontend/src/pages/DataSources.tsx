@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Database, RefreshCw } from 'lucide-react';
+import { Plus, Database, RefreshCw, Sparkles } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
@@ -94,6 +94,23 @@ export const DataSources: React.FC = () => {
         }
     };
 
+    const handleReindex = async (id: string, name: string) => {
+        try {
+            const { error } = await client.POST('/v1/rag/reindex', {
+                params: { query: { data_source_id: id } }
+            });
+
+            if (error) {
+                toast.error(`Failed to trigger reindex for ${name}`);
+            } else {
+                toast.success(`RAG reindexing started for ${name}`);
+            }
+        } catch (err) {
+            console.error(err);
+            toast.error("An error occurred");
+        }
+    };
+
     useEffect(() => {
         fetchDataSources();
     }, []);
@@ -176,6 +193,16 @@ export const DataSources: React.FC = () => {
                                         title="Introspect Schema"
                                     >
                                         <RefreshCw size={16} className={introspectingIds.has(ds.id) ? 'animate-spin text-blue-500' : ''} />
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleReindex(ds.id, ds.name);
+                                        }}
+                                        className="text-gray-500 hover:text-purple-600"
+                                        title="Reindex RAG Documents"
+                                    >
+                                        <Sparkles size={16} />
                                     </button>
                                 </div>
                             </div>
