@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import { AppShell } from './components/Layout/AppShell';
 import { Dashboard } from './pages/Dashboard';
 import { DataSources } from './pages/DataSources';
@@ -10,6 +11,7 @@ import { NotFound } from './pages/NotFound';
 function App() {
   return (
     <Router>
+      <Toaster position="top-right" richColors />
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<Dashboard />} />
