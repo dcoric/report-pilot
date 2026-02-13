@@ -6,13 +6,15 @@ import {
     Search,
     Activity,
     ShieldCheck,
-    Settings
+    Settings,
+    Layers
 } from 'lucide-react';
 import styles from './AppShell.module.css';
 
 const NAV_ITEMS = [
     { path: '/', label: 'Dasbhoard', icon: LayoutDashboard },
     { path: '/data-sources', label: 'Data Sources', icon: Database },
+    { path: '/schema', label: 'Schema Explorer', icon: Layers },
     { path: '/query', label: 'Query Workspace', icon: Search },
     { path: '/observability', label: 'Observability', icon: Activity },
     { path: '/release-gates', label: 'Release Gates', icon: ShieldCheck },
