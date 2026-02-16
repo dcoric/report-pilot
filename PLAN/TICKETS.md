@@ -328,6 +328,31 @@ Build a production-ready internal UI that lets an analyst:
 - Success toast confirms removal and list refreshes without full page reload.
 - Attempting to delete a non-existent data source returns 404.
 
+## Ticket BUG-001: PostgreSQL Interval/Object Values Render as [object Object] in Query Results [DONE]
+
+- Objective: Fix query result rendering for PostgreSQL complex types (interval, date arithmetic, etc.) that are returned as objects by the `pg` driver.
+- Severity: Medium
+- Reported: 2026-02-16
+- Reproduction:
+  - Run prompt: "what movies are not returned and who has them with contact info order by longest number of days"
+  - Generated SQL uses `(CURRENT_DATE - r.rental_date) AS days_outstanding`
+  - The `days_outstanding` column renders as `[object Object]` instead of a human-readable value.
+- Root Cause:
+  - The `pg` Node.js driver returns PostgreSQL interval types as JavaScript objects (e.g., `{ days: 123, hours: 4, ... }`) rather than strings.
+  - `JSON.stringify()` in the backend HTTP response serializer converts these objects to `[object Object]`.
+  - The frontend receives the broken string and renders it as-is.
+- Affected Files:
+  - `app/src/adapters/postgresAdapter.js` — returns raw `pg` driver rows without type normalization.
+  - `app/src/lib/http.js` — `JSON.stringify` cannot serialize `pg` interval objects.
+  - `frontend/src/pages/QueryWorkspace.tsx` — renders cell values with `String(row[col])`.
+- Fix:
+  - Add a row sanitization step in `postgresAdapter.executeReadOnly()` that converts any non-primitive cell values (objects) to their string representation before returning.
+  - This handles intervals, dates, and any other complex `pg` types generically.
+- Acceptance Criteria:
+  - `days_outstanding` and similar interval columns display as readable text (e.g., "7264 days" or equivalent).
+  - No regression for other column types (strings, numbers, booleans, nulls, dates).
+  - Export (JSON, CSV, XLSX) also produces correct values for interval columns.
+
 ---
 
 ## Suggested Delivery Sequence
