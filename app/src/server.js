@@ -10,7 +10,11 @@ const { evaluateExplainBudget } = require("./services/queryBudget");
 const { buildCitations, computeConfidence } = require("./services/queryResponse");
 const { reindexRagDocuments } = require("./services/ragService");
 const { retrieveRagContext } = require("./services/ragRetrieval");
-const { buildObservabilityMetrics, loadLatestBenchmarkReleaseGates } = require("./services/observabilityService");
+const {
+  buildObservabilityMetrics,
+  loadLatestBenchmarkReleaseGates,
+  buildBenchmarkCommand
+} = require("./services/observabilityService");
 const { exportQueryResult, SUPPORTED_FORMATS } = require("./services/exportService");
 const { createDelivery, getDeliveryStatus } = require("./services/deliveryService");
 const { OpenAiAdapter } = require("./adapters/llm/openAiAdapter");
@@ -1079,6 +1083,11 @@ async function handleReleaseGates(_req, res) {
   return json(res, 200, payload);
 }
 
+async function handleBenchmarkCommand(_req, res) {
+  const payload = buildBenchmarkCommand();
+  return json(res, 200, payload);
+}
+
 async function handleCreateBenchmarkReport(req, res) {
   const body = await readJsonBody(req);
   const {
@@ -1271,6 +1280,10 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/v1/observability/release-gates") {
     return handleReleaseGates(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/observability/benchmark-command") {
+    return handleBenchmarkCommand(req, res);
   }
 
   if (req.method === "POST" && pathname === "/v1/observability/release-gates/report") {

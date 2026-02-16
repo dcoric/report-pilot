@@ -45,21 +45,10 @@ const MOCK_GATES: ReleaseGateData = {
     ]
 };
 
-const benchmarkDataSourceName = import.meta.env.VITE_BENCHMARK_DATA_SOURCE_NAME || 'dvdrental';
-const benchmarkDbUser = import.meta.env.VITE_BENCHMARK_DB_USER || 'postgres';
-const benchmarkDbPassword = import.meta.env.VITE_BENCHMARK_DB_PASSWORD || 'postgres';
-const benchmarkFixturePort = import.meta.env.VITE_BENCHMARK_FIXTURE_PORT || '5440';
-const benchmarkConnectionHost = import.meta.env.VITE_BENCHMARK_CONNECTION_HOST || 'host.docker.internal';
-const benchmarkOracleHost = import.meta.env.VITE_BENCHMARK_ORACLE_HOST || 'localhost';
-const benchmarkConnectionRef = import.meta.env.VITE_BENCHMARK_CONNECTION_REF
-    || `postgresql://${benchmarkDbUser}:${benchmarkDbPassword}@${benchmarkConnectionHost}:${benchmarkFixturePort}/${benchmarkDataSourceName}`;
-const benchmarkOracleConn = import.meta.env.VITE_BENCHMARK_ORACLE_CONN
-    || `postgresql://${benchmarkDbUser}:${benchmarkDbPassword}@${benchmarkOracleHost}:${benchmarkFixturePort}/${benchmarkDataSourceName}`;
-
-const BENCHMARK_CLI_COMMAND = [
-    `BENCHMARK_DATA_SOURCE_NAME=${benchmarkDataSourceName} \\`,
-    `BENCHMARK_CONNECTION_REF=${benchmarkConnectionRef} \\`,
-    `BENCHMARK_ORACLE_CONN=${benchmarkOracleConn} \\`,
+const FALLBACK_BENCHMARK_CLI_COMMAND = [
+    "BENCHMARK_DATA_SOURCE_NAME='dvdrental' \\",
+    "BENCHMARK_CONNECTION_REF='postgresql://postgres:postgres@host.docker.internal:5440/dvdrental' \\",
+    "BENCHMARK_ORACLE_CONN='postgresql://postgres:postgres@localhost:5440/dvdrental' \\",
     'npm run benchmark:mvp'
 ].join('\n');
 
@@ -234,6 +223,22 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [noReport, setNoReport] = useState(false);
+    const [benchmarkCommand, setBenchmarkCommand] = useState(FALLBACK_BENCHMARK_CLI_COMMAND);
+
+    const fetchBenchmarkCommand = useCallback(async () => {
+        try {
+            const { data: apiData, response, error } = await client.GET('/v1/observability/benchmark-command');
+            if (!response.ok || error) {
+                return;
+            }
+            const command = typeof apiData.command === 'string' ? apiData.command.trim() : '';
+            if (command) {
+                setBenchmarkCommand(command);
+            }
+        } catch {
+            // Keep fallback command when API fetch fails.
+        }
+    }, []);
 
     const fetchData = useCallback(async (notifyRefresh = false) => {
         try {
@@ -273,16 +278,18 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
 
     useEffect(() => {
         fetchData();
-    }, [fetchData]);
+        fetchBenchmarkCommand();
+    }, [fetchData, fetchBenchmarkCommand]);
 
     const handleRefresh = () => {
         setRefreshing(true);
+        fetchBenchmarkCommand();
         fetchData(true);
     };
 
     const handleCopyBenchmarkCommand = async () => {
         try {
-            await navigator.clipboard.writeText(BENCHMARK_CLI_COMMAND);
+            await navigator.clipboard.writeText(benchmarkCommand);
             toast.success('Benchmark command copied to clipboard.');
         } catch {
             toast.error('Clipboard copy failed. Use the command shown in the panel.');
@@ -302,7 +309,7 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
                 </div>
 
                 <div className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto">
-                    <pre className="text-xs leading-6">{BENCHMARK_CLI_COMMAND}</pre>
+                    <pre className="text-xs leading-6">{benchmarkCommand}</pre>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">

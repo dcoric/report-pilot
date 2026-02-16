@@ -441,6 +441,17 @@ paths:
                   message:
                     type: string
                 required: [error, message]
+  /v1/observability/benchmark-command:
+    get:
+      tags: [Observability]
+      summary: Benchmark CLI command derived from runtime configuration
+      responses:
+        "200":
+          description: Shell command and environment values for running the benchmark
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BenchmarkCommandResponse"
   /v1/observability/release-gates/report:
     post:
       tags: [Observability]
@@ -757,6 +768,16 @@ components:
     ObservabilityMetricsResponse:
       type: object
       additionalProperties: true
+    BenchmarkCommandResponse:
+      type: object
+      properties:
+        command:
+          type: string
+        env:
+          type: object
+          additionalProperties:
+            type: string
+      required: [command, env]
     ReleaseGatesResponse:
       type: object
       additionalProperties: true
