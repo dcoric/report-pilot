@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
     Play,
     Copy,
@@ -21,6 +22,7 @@ import type { components } from '../lib/api/types';
 
 // Types
 type RunResponse = components['schemas']['RunSessionResponse'];
+type PromptHistoryItem = components['schemas']['PromptHistoryItem'];
 
 interface LlmProvider {
     id: string;
@@ -107,6 +109,10 @@ export const QueryWorkspace: React.FC = () => {
     const [maxRows, setMaxRows] = useState(1000);
     const [timeout, setTimeout] = useState(60);
     const [isReadOnly, setIsReadOnly] = useState(false);
+    const [promptHistory, setPromptHistory] = useState<PromptHistoryItem[]>([]);
+    const [isPromptHistoryOpen, setIsPromptHistoryOpen] = useState(false);
+    const [isPromptHistoryLoading, setIsPromptHistoryLoading] = useState(false);
+    const [promptHistoryQuery, setPromptHistoryQuery] = useState('');
 
     // Export controls
     const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
@@ -120,6 +126,15 @@ export const QueryWorkspace: React.FC = () => {
     const [sqlHeight, setSqlHeight] = useState(initialLayout.sqlHeight);
 
     const dragStateRef = useRef<{ section: SectionKey; startY: number; startHeight: number } | null>(null);
+    const promptHistoryRef = useRef<HTMLDivElement | null>(null);
+    const promptHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
+    const promptHistoryPanelRef = useRef<HTMLDivElement | null>(null);
+    const [promptHistoryPosition, setPromptHistoryPosition] = useState<{ top: number; left: number; width: number; panelMaxHeight: number }>({
+        top: 0,
+        left: 0,
+        width: 620,
+        panelMaxHeight: 420,
+    });
 
     // --- Effects ---
     useEffect(() => {
@@ -177,9 +192,112 @@ export const QueryWorkspace: React.FC = () => {
         };
     }, []);
 
+    useEffect(() => {
+        if (!isPromptHistoryOpen) return;
+
+        const onDocumentClick = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            const clickedButtonArea = promptHistoryRef.current && target && promptHistoryRef.current.contains(target);
+            const clickedPanelArea = promptHistoryPanelRef.current && target && promptHistoryPanelRef.current.contains(target);
+            if (!clickedButtonArea && !clickedPanelArea) {
+                setIsPromptHistoryOpen(false);
+            }
+        };
+
+        const onEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setIsPromptHistoryOpen(false);
+            }
+        };
+
+        window.addEventListener('mousedown', onDocumentClick);
+        window.addEventListener('keydown', onEscape);
+        return () => {
+            window.removeEventListener('mousedown', onDocumentClick);
+            window.removeEventListener('keydown', onEscape);
+        };
+    }, [isPromptHistoryOpen]);
+
+    useEffect(() => {
+        if (!isPromptHistoryOpen) return;
+
+        const updatePosition = () => {
+            const button = promptHistoryButtonRef.current;
+            if (!button) return;
+
+            const rect = button.getBoundingClientRect();
+            const viewportPadding = 16;
+            const desiredWidth = Math.min(620, window.innerWidth - viewportPadding * 2);
+            const left = Math.max(viewportPadding, Math.min(rect.right - desiredWidth, window.innerWidth - desiredWidth - viewportPadding));
+
+            const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+            const spaceAbove = rect.top - viewportPadding;
+            const showBelow = spaceBelow >= 260 || spaceBelow >= spaceAbove;
+            const availableHeight = Math.max(120, Math.floor((showBelow ? spaceBelow : spaceAbove) - 8));
+            const panelMaxHeight = Math.min(520, availableHeight);
+            const top = showBelow
+                ? rect.bottom + 8
+                : Math.max(viewportPadding, rect.top - panelMaxHeight - 8);
+
+            setPromptHistoryPosition({ top, left, width: desiredWidth, panelMaxHeight });
+        };
+
+        updatePosition();
+        window.addEventListener('resize', updatePosition);
+        window.addEventListener('scroll', updatePosition, true);
+
+        return () => {
+            window.removeEventListener('resize', updatePosition);
+            window.removeEventListener('scroll', updatePosition, true);
+        };
+    }, [isPromptHistoryOpen]);
+
+    useEffect(() => {
+        if (!selectedDataSourceId) {
+            setPromptHistory([]);
+            return;
+        }
+
+        void fetchPromptHistory(false);
+    }, [selectedDataSourceId]);
+
+    useEffect(() => {
+        if (!isPromptHistoryOpen) return;
+        if (!selectedDataSourceId) return;
+
+        void fetchPromptHistory(true);
+    }, [isPromptHistoryOpen, selectedDataSourceId]);
+
     // --- Actions ---
+    const fetchPromptHistory = async (showLoading = true) => {
+        if (showLoading) {
+            setIsPromptHistoryLoading(true);
+        }
+        try {
+            const { data } = await client.GET('/v1/query/prompts/history', {
+                params: {
+                    query: {
+                        data_source_id: selectedDataSourceId || undefined,
+                        limit: 100,
+                    },
+                },
+            });
+
+            setPromptHistory(data?.items || []);
+        } catch (error) {
+            console.error(error);
+            setPromptHistory([]);
+        } finally {
+            if (showLoading) {
+                setIsPromptHistoryLoading(false);
+            }
+        }
+    };
+
     const handleAsk = async () => {
         if (!selectedDataSourceId || !question.trim()) return;
+        const normalizedQuestion = question.trim();
+        const cachedSql = promptHistory.find((item) => item.question.trim() === normalizedQuestion && item.latest_sql)?.latest_sql || null;
 
         setIsGenerating(true);
         setGeneratedSql('');
@@ -198,7 +316,11 @@ export const QueryWorkspace: React.FC = () => {
                 console.error(error);
             } else if (data) {
                 setSessionId(data.session_id);
-                await generateSql(data.session_id);
+                await generateSql(data.session_id, cachedSql || undefined);
+                void fetchPromptHistory(false);
+                if (cachedSql) {
+                    toast.success('Used cached SQL from prompt history');
+                }
             }
         } catch (err) {
             console.error(err);
@@ -208,10 +330,10 @@ export const QueryWorkspace: React.FC = () => {
         }
     };
 
-    const generateSql = async (sessId: string) => {
+    const generateSql = async (sessId: string, sqlOverride?: string) => {
         const { data } = await client.POST('/v1/query/sessions/{sessionId}/run', {
             params: { path: { sessionId: sessId } },
-            body: {}
+            body: sqlOverride ? { sql_override: sqlOverride } : {}
         });
 
         if (data) {
@@ -308,6 +430,10 @@ export const QueryWorkspace: React.FC = () => {
             startHeight: section === 'prompt' ? promptHeight : sqlHeight,
         };
     };
+
+    const filteredPromptHistory = promptHistoryQuery.trim()
+        ? promptHistory.filter((item) => item.question.toLowerCase().includes(promptHistoryQuery.trim().toLowerCase()))
+        : promptHistory;
 
     return (
         <div className="h-full flex overflow-hidden">
@@ -417,9 +543,77 @@ export const QueryWorkspace: React.FC = () => {
                                         <span className="text-xs text-gray-500">s</span>
                                     </div>
 
-                                    <button className="ml-auto px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
-                                        Prompt History
-                                    </button>
+                                    <div ref={promptHistoryRef} className="ml-auto relative">
+                                        <button
+                                            ref={promptHistoryButtonRef}
+                                            type="button"
+                                            onClick={() => setIsPromptHistoryOpen((prev) => !prev)}
+                                            className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
+                                        >
+                                            Prompt History
+                                        </button>
+                                        {isPromptHistoryOpen && typeof document !== 'undefined' && createPortal(
+                                            <div
+                                                ref={promptHistoryPanelRef}
+                                                className="fixed rounded-xl border border-gray-200 bg-white shadow-2xl z-[200] overflow-hidden flex flex-col"
+                                                style={{
+                                                    top: promptHistoryPosition.top,
+                                                    left: promptHistoryPosition.left,
+                                                    width: promptHistoryPosition.width,
+                                                    maxHeight: promptHistoryPosition.panelMaxHeight,
+                                                }}
+                                            >
+                                                <div className="px-5 pt-4 pb-3 border-b border-gray-100 bg-gray-50/60">
+                                                    <div className="text-sm font-semibold text-gray-800 mb-2">Prompt History</div>
+                                                    <input
+                                                        type="text"
+                                                        value={promptHistoryQuery}
+                                                        onChange={(e) => setPromptHistoryQuery(e.target.value)}
+                                                        placeholder="Search prompt history..."
+                                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    />
+                                                </div>
+                                                <div className="overflow-auto p-2 min-h-0 flex-1">
+                                                    {isPromptHistoryLoading && (
+                                                        <div className="px-4 py-10 text-sm text-gray-500 flex items-center justify-center gap-2">
+                                                            <Loader2 size={14} className="animate-spin" />
+                                                            Loading prompt history...
+                                                        </div>
+                                                    )}
+                                                    {!isPromptHistoryLoading && filteredPromptHistory.length === 0 && (
+                                                        <div className="px-4 py-10 text-sm text-gray-500 text-center">
+                                                            No prompts found.
+                                                        </div>
+                                                    )}
+                                                    {!isPromptHistoryLoading && filteredPromptHistory.map((item) => (
+                                                        <button
+                                                            key={item.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setQuestion(item.question);
+                                                                if (item.latest_sql) {
+                                                                    setGeneratedSql(item.latest_sql);
+                                                                    setOriginalSql(item.latest_sql);
+                                                                }
+                                                                setIsPromptHistoryOpen(false);
+                                                            }}
+                                                            className="w-full text-left px-4 py-3.5 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 transition-colors mb-1 last:mb-0"
+                                                            title={item.question}
+                                                        >
+                                                            <div className="text-sm font-medium text-gray-800 line-clamp-2 break-words leading-5">{item.question}</div>
+                                                            <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
+                                                                <span>{new Date(item.created_at).toLocaleString()}</span>
+                                                                <span className={`font-medium ${item.latest_sql ? 'text-emerald-700' : 'text-gray-400'}`}>
+                                                                    {item.latest_sql ? 'SQL cached' : 'No SQL'}
+                                                                </span>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>,
+                                            document.body
+                                        )}
+                                    </div>
                                     <button
                                         onClick={handleAsk}
                                         disabled={isGenerating || !question.trim() || !selectedDataSourceId}

@@ -13,6 +13,35 @@ tags:
   - name: Providers
   - name: Observability
 paths:
+  /v1/query/prompts/history:
+    get:
+      tags: [Query]
+      summary: List prompt history for the current user
+      parameters:
+        - in: query
+          name: data_source_id
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: q
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Prompt history entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptHistoryResponse"
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -491,6 +520,30 @@ components:
       schema:
         type: string
   schemas:
+    PromptHistoryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        question:
+          type: string
+        data_source_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        latest_sql:
+          type: string
+          nullable: true
+      required: [id, question, data_source_id, created_at]
+    PromptHistoryResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PromptHistoryItem"
+      required: [items]
     CreateSessionRequest:
       type: object
       properties:
@@ -516,6 +569,9 @@ components:
           enum: [openai, gemini, deepseek]
         model:
           type: string
+        sql_override:
+          type: string
+          description: Optional SQL to execute directly, skipping LLM generation.
         max_rows:
           type: integer
           minimum: 1
