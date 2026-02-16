@@ -4,7 +4,6 @@ import { format } from 'date-fns';
 import { client } from '../lib/api/client';
 import { toast } from 'sonner';
 
-// Mock types for loose schema
 interface ReleaseGateData {
     status: 'PASS' | 'FAIL' | 'WARNING';
     run_date: string;
@@ -25,6 +24,8 @@ interface ReleaseGateData {
     }[];
 }
 
+type AnyRecord = Record<string, unknown>;
+
 const MOCK_GATES: ReleaseGateData = {
     status: 'PASS',
     run_date: new Date().toISOString(),
@@ -44,22 +45,183 @@ const MOCK_GATES: ReleaseGateData = {
     ]
 };
 
+function isRecord(value: unknown): value is AnyRecord {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function toBool(value: unknown): boolean | null {
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    return null;
+}
+
+function toIso(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function safeFormatTimestamp(value: string, pattern: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '-' : format(date, pattern);
+}
+
+function makeCheck(
+    id: string,
+    name: string,
+    description: string,
+    threshold: string,
+    actual: string,
+    status: boolean | null
+): ReleaseGateData['checks'][number] {
+    return {
+        id,
+        name,
+        description,
+        threshold,
+        actual,
+        status: status ? 'PASS' : 'FAIL'
+    };
+}
+
+function normalizeUiShape(data: AnyRecord): ReleaseGateData | null {
+    const statusRaw = typeof data.status === 'string' ? data.status.toUpperCase() : null;
+    const status = statusRaw === 'PASS' || statusRaw === 'FAIL' || statusRaw === 'WARNING' ? statusRaw : null;
+    const summaryRaw = isRecord(data.summary) ? data.summary : null;
+    const checksRaw = Array.isArray(data.checks) ? data.checks : null;
+    if (!status || !summaryRaw || !checksRaw) {
+        return null;
+    }
+
+    return {
+        status,
+        run_date: toIso(data.run_date) || new Date().toISOString(),
+        dataset_version: typeof data.dataset_version === 'string' ? data.dataset_version : 'Latest benchmark',
+        summary: {
+            total_tests: toNumber(summaryRaw.total_tests),
+            passed_tests: toNumber(summaryRaw.passed_tests),
+            failed_tests: toNumber(summaryRaw.failed_tests),
+            accuracy_score: toNumber(summaryRaw.accuracy_score)
+        },
+        checks: checksRaw
+            .map((check, index) => {
+                if (!isRecord(check)) {
+                    return null;
+                }
+                const checkStatusRaw = typeof check.status === 'string' ? check.status.toUpperCase() : 'FAIL';
+                const checkStatus = checkStatusRaw === 'PASS' ? 'PASS' : 'FAIL';
+                return {
+                    id: typeof check.id === 'string' ? check.id : `check_${index}`,
+                    name: typeof check.name === 'string' ? check.name : 'Unnamed Check',
+                    description: typeof check.description === 'string' ? check.description : '-',
+                    status: checkStatus,
+                    threshold: typeof check.threshold === 'string' ? check.threshold : '-',
+                    actual: typeof check.actual === 'string' ? check.actual : '-'
+                };
+            })
+            .filter((check): check is ReleaseGateData['checks'][number] => check !== null)
+    };
+}
+
+function normalizeBackendShape(data: AnyRecord): ReleaseGateData | null {
+    const summary = isRecord(data.summary) ? data.summary : null;
+    if (!summary) {
+        return null;
+    }
+
+    const releaseGates = isRecord(data.release_gates)
+        ? data.release_gates
+        : (isRecord(summary.release_gates) ? summary.release_gates : null);
+
+    const totalTests = toNumber(summary.total_cases);
+    const passedTests = toNumber(summary.correct_cases);
+    const failedTests = Math.max(0, totalTests - passedTests);
+    const accuracyScore = Number((toNumber(summary.correctness_rate) * 100).toFixed(2));
+
+    const checks: ReleaseGateData['checks'] = [
+        makeCheck(
+            'correctness_ge_85pct',
+            'Correctness',
+            'Correctness rate must be at least 85%',
+            '>= 85%',
+            `${accuracyScore.toFixed(2)}%`,
+            releaseGates ? toBool(releaseGates.correctness_ge_85pct) : null
+        ),
+        makeCheck(
+            'critical_safety_violations_eq_0',
+            'Critical Safety Violations',
+            'Critical safety violations must be zero',
+            '= 0',
+            String(toNumber(summary.critical_safety_violations)),
+            releaseGates ? toBool(releaseGates.critical_safety_violations_eq_0) : null
+        ),
+        makeCheck(
+            'p95_latency_le_8s',
+            'P95 Latency',
+            'P95 end-to-end latency must stay under 8000ms',
+            '<= 8000ms',
+            summary.p95_latency_ms === null ? 'n/a' : `${toNumber(summary.p95_latency_ms)}ms`,
+            releaseGates ? toBool(releaseGates.p95_latency_le_8s) : null
+        ),
+        makeCheck(
+            'sql_validation_pass_rate_ge_98pct',
+            'SQL Validation Pass Rate',
+            'SQL validation pass rate must be at least 98%',
+            '>= 98%',
+            `${(toNumber(summary.sql_validation_pass_rate) * 100).toFixed(2)}%`,
+            releaseGates ? toBool(releaseGates.sql_validation_pass_rate_ge_98pct) : null
+        )
+    ];
+
+    const allPassed = releaseGates ? toBool(releaseGates.all_passed) : null;
+    const status: ReleaseGateData['status'] = allPassed === null ? 'WARNING' : (allPassed ? 'PASS' : 'FAIL');
+
+    return {
+        status,
+        run_date: toIso(data.run_date) || new Date().toISOString(),
+        dataset_version: typeof data.dataset_file === 'string'
+            ? data.dataset_file
+            : (typeof data.data_source_id === 'string' ? data.data_source_id : 'Latest benchmark'),
+        summary: {
+            total_tests: totalTests,
+            passed_tests: passedTests,
+            failed_tests: failedTests,
+            accuracy_score: accuracyScore
+        },
+        checks
+    };
+}
+
+function normalizeReleaseGatesPayload(payload: unknown): ReleaseGateData | null {
+    if (!isRecord(payload)) {
+        return null;
+    }
+    return normalizeUiShape(payload) || normalizeBackendShape(payload);
+}
+
 export const ReleaseGates: React.FC = () => {
     const [data, setData] = useState<ReleaseGateData | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
-            const { data: apiData } = await client.GET('/v1/observability/release-gates');
-
-            if (apiData && Object.keys(apiData).length > 0) {
-                // Cast loose schema
-                setData(apiData as unknown as ReleaseGateData);
-            } else {
-                // Fallback to mock if API not ready
+            try {
+                const { data: apiData } = await client.GET('/v1/observability/release-gates');
+                const normalized = normalizeReleaseGatesPayload(apiData);
+                setData(normalized || MOCK_GATES);
+            } catch (_error) {
                 setData(MOCK_GATES);
+            } finally {
+                setLoading(false);
             }
-            setLoading(false);
         };
         fetchData();
     }, []);
@@ -80,7 +242,7 @@ export const ReleaseGates: React.FC = () => {
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">Release Gates</h1>
                         <p className="text-sm text-gray-500">
-                            Last Checked: {format(new Date(data.run_date), 'MMM d, yyyy HH:mm')} • Dataset: {data.dataset_version}
+                            Last Checked: {safeFormatTimestamp(data.run_date, 'MMM d, yyyy HH:mm')} • Dataset: {data.dataset_version}
                         </p>
                     </div>
                 </div>
@@ -108,7 +270,7 @@ export const ReleaseGates: React.FC = () => {
                     <p className={`text-sm mt-1 ${data.status === 'PASS' ? 'text-green-700' : 'text-amber-700'}`}>
                         {data.status === 'PASS'
                             ? 'All critical gates passed. The system is performing within defined thresholds.'
-                            : 'Some checks failed. unexpected behavior may occur.'}
+                            : 'Some checks failed or are unavailable; unexpected behavior may occur.'}
                     </p>
                 </div>
             </div>

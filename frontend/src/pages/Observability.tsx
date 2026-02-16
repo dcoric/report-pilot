@@ -4,7 +4,6 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { client } from '../lib/api/client';
 import { format } from 'date-fns';
 
-// Mock types since the API schema is loose
 interface MetricsData {
     summary: {
         total_queries: number;
@@ -26,6 +25,8 @@ interface MetricsData {
     }[];
 }
 
+type AnyRecord = Record<string, unknown>;
+
 const MOCK_DATA: MetricsData = {
     summary: {
         total_queries: 1245,
@@ -40,10 +41,143 @@ const MOCK_DATA: MetricsData = {
         errors: Math.random() > 0.8 ? Math.floor(Math.random() * 3) : 0
     })),
     recent_failures: [
-        { id: 'sess_1', timestamp: new Date().toISOString(), question: "Sales last year", error: "Context window exceeded" },
-        { id: 'sess_2', timestamp: new Date(Date.now() - 3600000).toISOString(), question: "Active users by region", error: "Database timeout" }
+        { id: 'sess_1', timestamp: new Date().toISOString(), question: 'Sales last year', error: 'Context window exceeded' },
+        { id: 'sess_2', timestamp: new Date(Date.now() - 3600000).toISOString(), question: 'Active users by region', error: 'Database timeout' }
     ]
 };
+
+function isRecord(value: unknown): value is AnyRecord {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function toIso(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function safeFormatTimestamp(value: string, pattern: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '-' : format(date, pattern);
+}
+
+function normalizeHistory(value: unknown): MetricsData['history'] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((item) => {
+            if (!isRecord(item)) {
+                return null;
+            }
+            const timestamp = toIso(item.timestamp);
+            if (!timestamp) {
+                return null;
+            }
+            return {
+                timestamp,
+                queries: toNumber(item.queries),
+                latency: toNumber(item.latency),
+                errors: toNumber(item.errors)
+            };
+        })
+        .filter((item): item is MetricsData['history'][number] => item !== null);
+}
+
+function normalizeFailures(value: unknown): MetricsData['recent_failures'] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((item, index) => {
+            if (!isRecord(item)) {
+                return null;
+            }
+            const timestamp = toIso(item.timestamp);
+            if (!timestamp) {
+                return null;
+            }
+            return {
+                id: typeof item.id === 'string' ? item.id : `failure_${index}`,
+                timestamp,
+                question: typeof item.question === 'string' ? item.question : '-',
+                error: typeof item.error === 'string' ? item.error : 'Unknown error'
+            };
+        })
+        .filter((item): item is MetricsData['recent_failures'][number] => item !== null);
+}
+
+function normalizeLegacyShape(data: AnyRecord): MetricsData | null {
+    const summaryRaw = isRecord(data.summary) ? data.summary : null;
+    if (!summaryRaw) {
+        return null;
+    }
+
+    return {
+        summary: {
+            total_queries: toNumber(summaryRaw.total_queries),
+            avg_latency_ms: toNumber(summaryRaw.avg_latency_ms),
+            success_rate: toNumber(summaryRaw.success_rate),
+            error_count: toNumber(summaryRaw.error_count)
+        },
+        history: normalizeHistory(data.history),
+        recent_failures: normalizeFailures(data.recent_failures)
+    };
+}
+
+function normalizeBackendShape(data: AnyRecord): MetricsData | null {
+    const totals = isRecord(data.totals) ? data.totals : null;
+    const latency = isRecord(data.latency_ms) ? data.latency_ms : null;
+    const generation = latency && isRecord(latency.generation) ? latency.generation : null;
+
+    if (!totals || !generation) {
+        return null;
+    }
+
+    const totalQueries = toNumber(totals.attempts);
+
+    let errorCount = 0;
+    if (Array.isArray(data.provider_failures)) {
+        for (const item of data.provider_failures) {
+            if (!isRecord(item)) {
+                continue;
+            }
+            errorCount += toNumber(item.failures);
+        }
+    }
+
+    const successRate = totalQueries > 0
+        ? Math.max(0, Number((((totalQueries - errorCount) / totalQueries) * 100).toFixed(2)))
+        : 100;
+
+    return {
+        summary: {
+            total_queries: totalQueries,
+            avg_latency_ms: toNumber(generation.avg),
+            success_rate: successRate,
+            error_count: errorCount
+        },
+        history: [],
+        recent_failures: []
+    };
+}
+
+function normalizeMetricsPayload(payload: unknown): MetricsData | null {
+    if (!isRecord(payload)) {
+        return null;
+    }
+
+    return normalizeLegacyShape(payload) || normalizeBackendShape(payload);
+}
 
 export const Observability: React.FC = () => {
     const [metrics, setMetrics] = useState<MetricsData | null>(null);
@@ -51,22 +185,20 @@ export const Observability: React.FC = () => {
 
     useEffect(() => {
         const fetchMetrics = async () => {
-            // Try to fetch real data
-            const { data } = await client.GET('/v1/observability/metrics', {
-                params: { query: { window_hours: 24 } }
-            });
+            try {
+                const { data } = await client.GET('/v1/observability/metrics', {
+                    params: { query: { window_hours: 24 } }
+                });
 
-            if (data && Object.keys(data).length > 0) {
-                // If real data exists and looks valid (simple check), use it
-                // For now, we assume the API might not be fully ready or returns a different shape
-                // so we might default to mock if it's empty.
-                // In a real scenario, we'd cast/validate 'data'.
-                setMetrics(data as unknown as MetricsData);
-            } else {
+                const normalized = normalizeMetricsPayload(data);
+                setMetrics(normalized || MOCK_DATA);
+            } catch (_error) {
                 setMetrics(MOCK_DATA);
+            } finally {
+                setLoading(false);
             }
-            setLoading(false);
         };
+
         fetchMetrics();
     }, []);
 
@@ -82,7 +214,6 @@ export const Observability: React.FC = () => {
                 <h1 className="text-2xl font-bold text-gray-900">Observability</h1>
             </div>
 
-            {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between">
@@ -130,59 +261,65 @@ export const Observability: React.FC = () => {
                 </div>
             </div>
 
-            {/* Charts */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                     <h3 className="text-lg font-medium text-gray-900 mb-6">Query Volume & Errors</h3>
                     <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={history}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis
-                                    dataKey="timestamp"
-                                    tickFormatter={(str) => format(new Date(str), 'HH:mm')}
-                                    tick={{ fontSize: 12, fill: '#6B7280' }}
-                                />
-                                <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} />
-                                <Tooltip
-                                    labelFormatter={(label) => format(new Date(label), 'MMM d, HH:mm')}
-                                />
-                                <Bar dataKey="queries" fill="#3B82F6" name="Queries" radius={[4, 4, 0, 0]} />
-                                <Bar dataKey="errors" fill="#EF4444" name="Errors" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
+                        {history.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-sm text-gray-500">No time-series data available.</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={history}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                    <XAxis
+                                        dataKey="timestamp"
+                                        tickFormatter={(str) => safeFormatTimestamp(String(str), 'HH:mm')}
+                                        tick={{ fontSize: 12, fill: '#6B7280' }}
+                                    />
+                                    <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} />
+                                    <Tooltip
+                                        labelFormatter={(label) => safeFormatTimestamp(String(label), 'MMM d, HH:mm')}
+                                    />
+                                    <Bar dataKey="queries" fill="#3B82F6" name="Queries" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="errors" fill="#EF4444" name="Errors" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </div>
                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                     <h3 className="text-lg font-medium text-gray-900 mb-6">Latency Trend (ms)</h3>
                     <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={history}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                                <XAxis
-                                    dataKey="timestamp"
-                                    tickFormatter={(str) => format(new Date(str), 'HH:mm')}
-                                    tick={{ fontSize: 12, fill: '#6B7280' }}
-                                />
-                                <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} />
-                                <Tooltip
-                                    labelFormatter={(label) => format(new Date(label), 'MMM d, HH:mm')}
-                                />
-                                <Area
-                                    type="monotone"
-                                    dataKey="latency"
-                                    stroke="#8B5CF6"
-                                    fill="#8B5CF6"
-                                    fillOpacity={0.1}
-                                    name="Latency (ms)"
-                                />
-                            </AreaChart>
-                        </ResponsiveContainer>
+                        {history.length === 0 ? (
+                            <div className="h-full flex items-center justify-center text-sm text-gray-500">No latency trend data available.</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={history}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                    <XAxis
+                                        dataKey="timestamp"
+                                        tickFormatter={(str) => safeFormatTimestamp(String(str), 'HH:mm')}
+                                        tick={{ fontSize: 12, fill: '#6B7280' }}
+                                    />
+                                    <YAxis tick={{ fontSize: 12, fill: '#6B7280' }} />
+                                    <Tooltip
+                                        labelFormatter={(label) => safeFormatTimestamp(String(label), 'MMM d, HH:mm')}
+                                    />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="latency"
+                                        stroke="#8B5CF6"
+                                        fill="#8B5CF6"
+                                        fillOpacity={0.1}
+                                        name="Latency (ms)"
+                                    />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </div>
             </div>
 
-            {/* Recent Failures */}
             <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
                     <h3 className="text-lg font-medium text-gray-900">Recent Failures</h3>
@@ -200,7 +337,7 @@ export const Observability: React.FC = () => {
                             {recent_failures.map((fail) => (
                                 <tr key={fail.id}>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {format(new Date(fail.timestamp), 'MMM d, HH:mm:ss')}
+                                        {safeFormatTimestamp(fail.timestamp, 'MMM d, HH:mm:ss')}
                                     </td>
                                     <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
                                         {fail.question}
