@@ -20,7 +20,7 @@ function validateRecipients(emails) {
  * @param {Object} opts
  * @param {string} opts.sessionId
  * @param {string} opts.deliveryMode  'download' | 'email'
- * @param {string} opts.format        'json' | 'csv' | 'xlsx'
+ * @param {string} opts.format        'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet'
  * @param {string[]} [opts.recipients]
  * @param {string} opts.requestedBy
  * @returns {Promise<Object>} delivery record (for download mode includes buffer)

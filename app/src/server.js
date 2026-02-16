@@ -865,8 +865,8 @@ async function handleExportSession(req, res, sessionId) {
     });
     res.end(buffer);
   } catch (err) {
-    if (err.message === "Session not found") {
-      return json(res, 404, { error: "not_found", message: "Session not found" });
+    if (err.message === "Session not found" || err.message === "No successful query attempts found for this session") {
+      return json(res, 404, { error: "not_found", message: err.message });
     }
     console.error("[export] failed:", err);
     return internalError(res);
@@ -911,7 +911,7 @@ async function handleExportDeliver(req, res, sessionId) {
     if (err.statusCode === 400) {
       return badRequest(res, err.message);
     }
-    if (err.message === "Session not found" || err.message === "No query attempts found for this session") {
+    if (err.message === "Session not found" || err.message === "No successful query attempts found for this session") {
       return json(res, 404, { error: "not_found", message: err.message });
     }
     console.error("[export/deliver] failed:", err);

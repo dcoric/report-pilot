@@ -68,6 +68,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OkResponse"
+  /v1/query/sessions/{sessionId}/export:
+    post:
+      tags: [Export]
+      summary: Download query results in selected format
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+      responses:
+        "200":
+          description: Export file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Unsupported format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error]
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/query/sessions/{sessionId}/export/deliver:
     post:
       tags: [Export]
@@ -285,6 +329,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/JobAcceptedResponse"
   /v1/llm/providers:
+    get:
+      tags: [Providers]
+      summary: List configured LLM providers
+      responses:
+        "200":
+          description: Provider configs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmProviderListResponse"
     post:
       tags: [Providers]
       summary: Register or update an LLM provider config
@@ -652,6 +706,31 @@ components:
         enabled:
           type: boolean
       required: [provider, enabled]
+    LlmProviderListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              provider:
+                type: string
+                enum: [openai, gemini, deepseek]
+              default_model:
+                type: string
+              enabled:
+                type: boolean
+              created_at:
+                type: string
+                format: date-time
+              updated_at:
+                type: string
+                format: date-time
+            required: [id, provider, default_model, enabled, created_at, updated_at]
+      required: [items]
     RoutingRuleRequest:
       type: object
       properties:
@@ -699,6 +778,13 @@ components:
           type: object
           additionalProperties: true
       required: [run_date, dataset_file, summary]
+    ExportRequest:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [json, csv, xlsx, tsv, parquet]
+          default: json
     ExportDeliverRequest:
       type: object
       properties:
@@ -707,7 +793,7 @@ components:
           enum: [download, email]
         format:
           type: string
-          enum: [json, csv, xlsx]
+          enum: [json, csv, xlsx, tsv, parquet]
           default: json
         recipients:
           type: array
@@ -740,7 +826,7 @@ components:
           enum: [download, email]
         format:
           type: string
-          enum: [json, csv, xlsx]
+          enum: [json, csv, xlsx, tsv, parquet]
         recipients:
           type: array
           items:

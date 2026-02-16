@@ -128,6 +128,175 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/query/sessions/{sessionId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Download query results in selected format */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    sessionId: components["parameters"]["SessionId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ExportRequest"];
+                };
+            };
+            responses: {
+                /** @description Export file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Unsupported format */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message?: string;
+                        };
+                    };
+                };
+                /** @description Session not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/query/sessions/{sessionId}/export/deliver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deliver an export via download or email */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    sessionId: components["parameters"]["SessionId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ExportDeliverRequest"];
+                };
+            };
+            responses: {
+                /** @description Download file (when delivery_mode is download) */
+                200: {
+                    headers: {
+                        /** @description Export delivery tracking ID */
+                        "x-export-id"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Email delivery accepted (async) */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExportDeliverAccepted"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/exports/{exportId}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check export delivery status */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    exportId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Delivery status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExportDeliveryStatus"];
+                    };
+                };
+                /** @description Export delivery not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/data-sources": {
         parameters: {
             query?: never;
@@ -217,6 +386,18 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["OkResponse"];
+                    };
+                };
+                /** @description Data source not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
                     };
                 };
             };
@@ -469,7 +650,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List all configured LLM providers */
+        /** List configured LLM providers */
         get: {
             parameters: {
                 query?: never;
@@ -479,24 +660,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description List of providers */
+                /** @description Provider configs */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": {
-                            items: {
-                                id: string;
-                                provider: string;
-                                default_model: string;
-                                enabled: boolean;
-                                /** Format: date-time */
-                                created_at: string;
-                                /** Format: date-time */
-                                updated_at: string;
-                            }[];
-                        };
+                        "application/json": components["schemas"]["LlmProviderListResponse"];
                     };
                 };
             };
@@ -864,6 +1034,19 @@ export interface components {
             provider: string;
             enabled: boolean;
         };
+        LlmProviderListResponse: {
+            items: {
+                id: string;
+                /** @enum {string} */
+                provider: "openai" | "gemini" | "deepseek";
+                default_model: string;
+                enabled: boolean;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+        };
         RoutingRuleRequest: {
             data_source_id: string;
             /** @enum {string} */
@@ -891,6 +1074,50 @@ export interface components {
             summary: {
                 [key: string]: unknown;
             };
+        };
+        ExportRequest: {
+            /**
+             * @default json
+             * @enum {string}
+             */
+            format: "json" | "csv" | "xlsx" | "tsv" | "parquet";
+        };
+        ExportDeliverRequest: {
+            /** @enum {string} */
+            delivery_mode: "download" | "email";
+            /**
+             * @default json
+             * @enum {string}
+             */
+            format: "json" | "csv" | "xlsx" | "tsv" | "parquet";
+            /** @description Required when delivery_mode is email */
+            recipients?: string[];
+        };
+        ExportDeliverAccepted: {
+            export_id: string;
+            /** @enum {string} */
+            status: "processing";
+            /** @enum {string} */
+            delivery_mode: "email";
+        };
+        ExportDeliveryStatus: {
+            id: string;
+            session_id: string;
+            /** @enum {string} */
+            delivery_mode: "download" | "email";
+            /** @enum {string} */
+            format: "json" | "csv" | "xlsx" | "tsv" | "parquet";
+            recipients?: string[];
+            /** @enum {string} */
+            status: "pending" | "processing" | "completed" | "failed";
+            error_message?: string | null;
+            file_name?: string | null;
+            file_size_bytes?: number | null;
+            requested_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string | null;
         };
     };
     responses: never;

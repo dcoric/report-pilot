@@ -313,6 +313,81 @@ Build a production-ready internal UI that lets an analyst:
 - Failed deliveries surface actionable status and error reason.
 - Delivery events are auditable.
 
+## Ticket EXP-001: JSON Export Contract Hardening [DONE]
+
+- Objective: Lock down JSON export behavior so it is stable and testable across all query result shapes.
+- Scope:
+- Export response for `format=json` from existing session export endpoint.
+- Normalize complex database values into JSON-safe primitives before serialization.
+- Add automated coverage for empty sets, null-heavy rows, and special characters.
+- APIs:
+- `POST /v1/query/sessions/{id}/export` with body `{ "format": "json" }`
+- Acceptance Criteria:
+- Response returns `application/json` and a `.json` filename.
+- File payload is valid JSON and preserves row/column structure.
+- Values containing quotes, unicode, and newlines round-trip without corruption.
+- Unsupported/invalid session states return clear API errors.
+
+## Ticket EXP-002: CSV Export Robustness and Compatibility [DONE]
+
+- Objective: Ensure CSV export is spreadsheet-friendly and handles edge-case data safely.
+- Scope:
+- Export response for `format=csv`.
+- Enforce UTF-8 encoding and correct CSV escaping rules.
+- Add regression tests for commas, quotes, line breaks, and delimiter collisions.
+- APIs:
+- `POST /v1/query/sessions/{id}/export` with body `{ "format": "csv" }`
+- Acceptance Criteria:
+- Response returns `text/csv` and a `.csv` filename.
+- Header row is present and column ordering matches query output.
+- Cells with commas/quotes/newlines are escaped correctly.
+- Large result sets complete without server crash or truncated output.
+
+## Ticket EXP-003: XLSX Export Typing and Workbook Quality [DONE]
+
+- Objective: Deliver production-ready Excel exports with usable typing and column fidelity.
+- Scope:
+- Export response for `format=xlsx`.
+- Ensure workbook/sheet generation preserves headers and basic numeric/date typing.
+- Add tests for mixed data types and empty result sets.
+- APIs:
+- `POST /v1/query/sessions/{id}/export` with body `{ "format": "xlsx" }`
+- Acceptance Criteria:
+- Response returns the XLSX content type and a `.xlsx` filename.
+- Workbook opens cleanly in Excel/Sheets with one results sheet.
+- Numeric and date-like values are not coerced to broken placeholder strings.
+- Empty result exports still include schema headers when available.
+
+## Ticket EXP-004: TSV Export Implementation [DONE]
+
+- Objective: Implement tab-separated export support to match the format already exposed in UI.
+- Scope:
+- Add backend support for `format=tsv`.
+- Reuse CSV serialization path with TSV delimiter and TSV-safe escaping.
+- Wire format into validation/constants so endpoint accepts it.
+- APIs:
+- `POST /v1/query/sessions/{id}/export` with body `{ "format": "tsv" }`
+- Acceptance Criteria:
+- Response returns `text/tab-separated-values` and a `.tsv` filename.
+- Export endpoint no longer rejects `tsv` as unsupported format.
+- Tab/newline/quote-containing values are serialized without column drift.
+- Query Workspace download succeeds end-to-end for TSV.
+
+## Ticket EXP-005: Parquet Export Implementation [DONE]
+
+- Objective: Implement Parquet export support for analytics/warehouse interoperability.
+- Scope:
+- Add backend support for `format=parquet`.
+- Define schema inference rules from query result columns and nullability.
+- Stream or buffer output safely for large datasets and validate resulting files.
+- APIs:
+- `POST /v1/query/sessions/{id}/export` with body `{ "format": "parquet" }`
+- Acceptance Criteria:
+- Response returns Parquet content type and a `.parquet` filename.
+- Export endpoint no longer rejects `parquet` as unsupported format.
+- Generated file can be read by at least one standard consumer (DuckDB, Pandas, or Spark).
+- Type inference fallback path is documented and covered by tests.
+
 ## Ticket BE-003: Remove Data Source API and UI Action [DONE]
 
 - Objective: Allow users to delete a data source and its dependent data (schema objects, semantic entities, etc.).

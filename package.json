@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",
-    "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js"
+    "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
+    "test": "node --test app/test/**/*.test.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -16,6 +17,7 @@
     "csv-stringify": "^6.6.0",
     "node-sql-parser": "^5.3.8",
     "nodemailer": "^8.0.1",
+    "parquetjs-lite": "^0.8.7",
     "pg": "^8.13.1",
     "xlsx": "^0.18.5"
   }
