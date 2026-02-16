@@ -59,9 +59,10 @@ export const ExportBar: React.FC<ExportBarProps> = ({ sessionId, hasResults }) =
             document.body.removeChild(a);
 
             toast.success(`Exported as ${format.toUpperCase()}`);
-        } catch (err: any) {
-            console.error('Export error:', err);
-            toast.error(err.message || "Failed to export results");
+        } catch (error) {
+            console.error('Export error:', error);
+            const message = error instanceof Error ? error.message : 'Failed to export results';
+            toast.error(message);
         } finally {
             setIsExporting(false);
         }

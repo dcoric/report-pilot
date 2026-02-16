@@ -24,6 +24,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 };
 
 type TabType = 'results' | 'metadata' | 'citations' | 'query-plan';
+type ExportFormat = 'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet';
 
 export const QueryWorkspace: React.FC = () => {
     // --- State ---
@@ -49,7 +50,7 @@ export const QueryWorkspace: React.FC = () => {
     const [isReadOnly, setIsReadOnly] = useState(false);
 
     // Export controls
-    const [exportFormat, setExportFormat] = useState<'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet'>('csv');
+    const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
     const [isExporting, setIsExporting] = useState(false);
 
     // --- Effects ---
@@ -140,7 +141,7 @@ export const QueryWorkspace: React.FC = () => {
         try {
             await navigator.clipboard.writeText(generatedSql);
             toast.success('SQL copied to clipboard');
-        } catch (err) {
+        } catch {
             toast.error('Failed to copy');
         }
     };
@@ -182,8 +183,9 @@ export const QueryWorkspace: React.FC = () => {
             document.body.removeChild(a);
 
             toast.success(`Exported as ${exportFormat.toUpperCase()}`);
-        } catch (err: any) {
-            toast.error(err.message || "Failed to export");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to export';
+            toast.error(message);
         } finally {
             setIsExporting(false);
         }
@@ -500,7 +502,7 @@ export const QueryWorkspace: React.FC = () => {
                                 <span className="text-xs font-semibold text-gray-600">Export Format:</span>
                                 <select
                                     value={exportFormat}
-                                    onChange={(e) => setExportFormat(e.target.value as any)}
+                                    onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
                                     className="px-3 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 >
                                     <option value="json">JSON</option>

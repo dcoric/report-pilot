@@ -19,7 +19,7 @@ client.use({
                 if (data && typeof data === 'object' && 'message' in data) {
                     errorMessage = data.message;
                 }
-            } catch (e) {
+            } catch {
                 // ignore JSON parse errors
             }
 

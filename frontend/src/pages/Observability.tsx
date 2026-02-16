@@ -192,7 +192,7 @@ export const Observability: React.FC = () => {
 
                 const normalized = normalizeMetricsPayload(data);
                 setMetrics(normalized || MOCK_DATA);
-            } catch (_error) {
+            } catch {
                 setMetrics(MOCK_DATA);
             } finally {
                 setLoading(false);

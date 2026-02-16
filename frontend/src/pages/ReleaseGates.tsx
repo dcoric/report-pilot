@@ -217,7 +217,7 @@ export const ReleaseGates: React.FC = () => {
                 const { data: apiData } = await client.GET('/v1/observability/release-gates');
                 const normalized = normalizeReleaseGatesPayload(apiData);
                 setData(normalized || MOCK_GATES);
-            } catch (_error) {
+            } catch {
                 setData(MOCK_GATES);
             } finally {
                 setLoading(false);

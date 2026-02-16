@@ -65,7 +65,11 @@ export const Settings: React.FC = () => {
         fetchData();
     }, []);
 
-    const handleRoutingChange = (dsId: string, field: keyof RoutingRule, value: any) => {
+    const handleRoutingChange = <K extends keyof RoutingRule>(
+        dsId: string,
+        field: K,
+        value: RoutingRule[K]
+    ) => {
         setRoutingRules(prev => ({
             ...prev,
             [dsId]: { ...prev[dsId], [field]: value }

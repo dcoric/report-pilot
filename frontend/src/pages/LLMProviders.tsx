@@ -81,7 +81,8 @@ export const LLMProviders: React.FC = () => {
                 toast.success(`${PROVIDER_DISPLAY_NAMES[p.provider] || p.provider} ${!p.enabled ? 'enabled' : 'disabled'}`);
                 fetchProviders();
             }
-        } catch (err) {
+        } catch (error) {
+            console.error("Failed to toggle provider", error);
             toast.error("An error occurred");
         } finally {
             setTogglingIds(prev => {

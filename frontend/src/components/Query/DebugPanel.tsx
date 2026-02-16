@@ -4,7 +4,20 @@ import { BookOpen, Clock, Database, ChevronRight } from 'lucide-react';
 interface DebugPanelProps {
     isOpen: boolean;
     onClose: () => void;
-    metadata: any; // Using any for flexibility with untyped RAG extensions
+    metadata: DebugMetadata | null;
+}
+
+interface RagDocument {
+    source?: string;
+    content?: string;
+    score?: number;
+}
+
+interface DebugMetadata {
+    duration_ms?: number;
+    row_count?: number;
+    confidence?: number;
+    rag_documents?: RagDocument[];
 }
 
 export const DebugPanel: React.FC<DebugPanelProps> = ({ isOpen, onClose, metadata }) => {
@@ -39,7 +52,11 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ isOpen, onClose, metadat
                         </div>
                         <div className="flex justify-between">
                             <span className="text-gray-500">Confidence:</span>
-                            <span className="font-mono text-gray-900">{(metadata?.confidence * 100).toFixed(1)}%</span>
+                            <span className="font-mono text-gray-900">
+                                {typeof metadata?.confidence === 'number'
+                                    ? `${(metadata.confidence * 100).toFixed(1)}%`
+                                    : '-'}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -52,11 +69,13 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ isOpen, onClose, metadat
                     </h4>
                     {metadata?.rag_documents ? (
                         <ul className="space-y-2">
-                            {metadata.rag_documents.map((doc: any, idx: number) => (
+                            {metadata.rag_documents.map((doc: RagDocument, idx: number) => (
                                 <li key={idx} className="bg-blue-50 p-2 rounded border border-blue-100 text-xs">
                                     <div className="font-medium text-blue-800 mb-1 truncate">{doc.source || 'Unknown Source'}</div>
                                     <p className="text-gray-600 line-clamp-3">{doc.content}</p>
-                                    <div className="mt-1 text-blue-400 text-[10px] text-right">Score: {doc.score?.toFixed(3)}</div>
+                                    <div className="mt-1 text-blue-400 text-[10px] text-right">
+                                        Score: {typeof doc.score === 'number' ? doc.score.toFixed(3) : '-'}
+                                    </div>
                                 </li>
                             ))}
                         </ul>
