@@ -5,7 +5,7 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false") === "true";
 const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
-const SMTP_FROM = process.env.SMTP_FROM || "AI-DB Reports <noreply@ai-db.local>";
+const SMTP_FROM = process.env.SMTP_FROM || "Report Pilot Reports <noreply@report-pilot.local>";
 
 let transporter = null;
 

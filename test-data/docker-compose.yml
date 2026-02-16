@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: ai-db-dvdrental-postgres
+    container_name: report-pilot-dvdrental-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dvdrental}
@@ -22,7 +22,7 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: ai-db-dvdrental-pgadmin
+    container_name: report-pilot-dvdrental-pgadmin
     restart: unless-stopped
     depends_on:
       db:

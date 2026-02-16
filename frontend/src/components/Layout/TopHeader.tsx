@@ -22,7 +22,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             {/* Logo */}
             <div className="flex items-center gap-2 font-bold text-gray-800">
                 <Database className="w-5 h-5 text-blue-600" />
-                <span>AI-DB</span>
+                <span>Report Pilot</span>
             </div>
 
             {/* Current Connection Selector */}

@@ -37,7 +37,7 @@ export const AppShell: React.FC = () => {
             <aside className={styles.sidebar}>
                 <div className={styles.sidebarHeader}>
                     <LayoutDashboard className="mr-2" size={24} />
-                    <span>AI-DB Console</span>
+                    <span>Report Pilot Console</span>
                 </div>
 
                 <div className={styles.sidebarContent}>

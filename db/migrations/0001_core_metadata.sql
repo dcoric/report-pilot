@@ -1,4 +1,4 @@
--- Core metadata schema for AI-DB (PostgreSQL MVP)
+-- Core metadata schema for Report Pilot (PostgreSQL MVP)
 -- This migration defines internal control-plane tables, not customer analytics tables.
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

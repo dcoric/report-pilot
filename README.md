@@ -1,8 +1,8 @@
-# AI-DB Local Runtime
+# Report Pilot Local Runtime
 
 This repository now includes a local Docker setup with:
 
-- `app`: minimal AI-DB service runtime (Node.js), auto-runs SQL migrations on startup.
+- `app`: minimal Report Pilot service runtime (Node.js), auto-runs SQL migrations on startup.
 - `db`: dedicated PostgreSQL instance for app metadata and app data.
 
 ## Prerequisites
@@ -13,7 +13,7 @@ This repository now includes a local Docker setup with:
 ## Run
 
 ```bash
-cd /Users/dcoric/Projects/ai-db
+cd /Users/dcoric/Projects/report-pilot
 cp .env.example .env
 docker compose up --build
 ```
@@ -133,8 +133,8 @@ curl -X POST http://localhost:8080/v1/llm/providers \
 
 Benchmark assets:
 
-- Dataset: `/Users/dcoric/Projects/ai-db/docs/evals/dvdrental-mvp-benchmark.json` (60 reporting prompts)
-- Runner: `/Users/dcoric/Projects/ai-db/app/src/benchmark/runMvpBenchmark.js`
+- Dataset: `/Users/dcoric/Projects/report-pilot/docs/evals/dvdrental-mvp-benchmark.json` (60 reporting prompts)
+- Runner: `/Users/dcoric/Projects/report-pilot/app/src/benchmark/runMvpBenchmark.js`
 
 Recommended flow with the dvdrental fixture:
 
@@ -154,10 +154,10 @@ npm run benchmark:mvp
 
 Report outputs:
 
-- JSON and Markdown reports in `/Users/dcoric/Projects/ai-db/docs/evals/reports`
+- JSON and Markdown reports in `/Users/dcoric/Projects/report-pilot/docs/evals/reports`
 - Benchmark summary is also persisted to the app DB via `POST /v1/observability/release-gates/report`
 - Runner exits with code `2` when one or more MVP release gates fail.
 
 Progress tracker:
 
-- `/Users/dcoric/Projects/ai-db/IMPLEMENTATION_PLAN.md`
+- `/Users/dcoric/Projects/report-pilot/IMPLEMENTATION_PLAN.md`

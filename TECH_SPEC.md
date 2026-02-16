@@ -1,4 +1,4 @@
-# AI-DB Technical Specification
+# Report Pilot Technical Specification
 
 ## 1) Objective
 

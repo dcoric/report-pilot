@@ -302,7 +302,7 @@ async function exportParquet(rows, columnOrder) {
   }
 
   const schema = new parquet.ParquetSchema(schemaDefinition);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-db-export-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "report-pilot-export-"));
   const filePath = path.join(tempDir, `export-${Date.now()}.parquet`);
 
   let writer;

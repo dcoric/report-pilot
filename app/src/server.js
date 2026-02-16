@@ -45,7 +45,7 @@ function swaggerUiHtml() {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI-DB API Docs</title>
+    <title>Report Pilot API Docs</title>
     <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   </head>
   <body>
@@ -1172,7 +1172,7 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/") {
     return json(res, 200, {
-      service: "ai-db",
+      service: "report-pilot",
       status: "running",
       endpoints: ["/health", "/ready", "/docs", "/openapi.yaml", "/v1/*"]
     });

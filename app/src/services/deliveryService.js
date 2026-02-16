@@ -123,7 +123,7 @@ async function processEmailDelivery(deliveryId, sessionId, format, recipients) {
 
     await sendExportEmail({
       recipients,
-      subject: `AI-DB Export: ${question.substring(0, 80)}`,
+      subject: `Report Pilot Export: ${question.substring(0, 80)}`,
       textBody: `Your requested export for the query "${question}" is attached.\n\nFormat: ${format.toUpperCase()}\nFile: ${filename}`,
       fileBuffer: buffer,
       fileName: filename,

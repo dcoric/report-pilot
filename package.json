@@ -1,9 +1,9 @@
 {
-  "name": "ai-db",
+  "name": "report-pilot",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "AI-DB NL to SQL backend (bootstrap runtime)",
+  "description": "Report Pilot NL to SQL backend (bootstrap runtime)",
   "scripts": {
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",

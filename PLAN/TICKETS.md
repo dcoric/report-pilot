@@ -1,4 +1,4 @@
-# AI-DB Tickets
+# Report Pilot Tickets
 
 ## Epic: MVP UI for NL-to-SQL with RAG-Grounded Reporting
 

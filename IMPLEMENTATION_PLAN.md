@@ -1,4 +1,4 @@
-# AI-DB Implementation Plan
+# Report Pilot Implementation Plan
 
 Use this checklist as the execution tracker. Mark items done as implementation progresses.
 
