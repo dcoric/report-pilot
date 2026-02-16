@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Database, Search, User, ChevronDown } from 'lucide-react';
+import appLogo from '../../assets/Report Pilot.png';
 
 interface TopHeaderProps {
     currentConnection?: string;
@@ -21,7 +22,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         <header className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-4 flex-shrink-0">
             {/* Logo */}
             <div className="flex items-center gap-2 font-bold text-gray-800">
-                <Database className="w-5 h-5 text-blue-600" />
+                <img src={appLogo} alt="Report Pilot logo" className="w-5 h-5 object-contain" />
                 <span>Report Pilot</span>
             </div>
 

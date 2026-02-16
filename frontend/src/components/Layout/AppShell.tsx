@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import styles from './AppShell.module.css';
 import { useDataSource } from '../../hooks/useDataSource';
+import appLogo from '../../assets/Report Pilot.png';
 
 const NAV_ITEMS = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,7 +33,9 @@ export const AppShell: React.FC = () => {
             {/* Sidebar */}
             <aside className={styles.sidebar}>
                 <div className={styles.sidebarHeader}>
-                    <LayoutDashboard className="mr-2" size={24} />
+                    <div className="mr-2 h-7 w-7 rounded-md bg-white p-1 shadow-sm flex items-center justify-center">
+                        <img src={appLogo} alt="Report Pilot logo" className="h-full w-full object-contain" />
+                    </div>
                     <span>Report Pilot</span>
                 </div>
 
