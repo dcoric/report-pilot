@@ -297,7 +297,7 @@ Build a production-ready internal UI that lets an analyst:
 - Access control mirrors existing query session ownership rules.
 - API returns clear errors for unsupported formats.
 
-## Ticket BE-002: Export Delivery API (Download + Email)
+## Ticket BE-002: Export Delivery API (Download + Email) [DONE]
 
 - Objective: Add delivery channels for exports so users can either download immediately or send to email.
 - Scope:
