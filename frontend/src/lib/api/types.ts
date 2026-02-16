@@ -188,6 +188,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/data-sources/{dataSourceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a data source and its dependent data */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    dataSourceId: components["parameters"]["DataSourceId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Data source deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OkResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/data-sources/{dataSourceId}/introspect": {
         parameters: {
             query?: never;

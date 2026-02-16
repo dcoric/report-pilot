@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Database, RefreshCw, Sparkles } from 'lucide-react';
+import { Plus, Database, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
@@ -13,6 +13,7 @@ export const DataSources: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [introspectingIds, setIntrospectingIds] = useState<Set<string>>(new Set());
+    const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
     const fetchDataSources = async () => {
         setIsLoading(true);
@@ -91,6 +92,26 @@ export const DataSources: React.FC = () => {
                 return next;
             });
             toast.error(`Failed to introspect ${ds.name}`);
+        }
+    };
+
+    const handleDelete = async (ds: DataSource) => {
+        try {
+            const { error } = await client.DELETE('/v1/data-sources/{dataSourceId}', {
+                params: { path: { dataSourceId: ds.id } }
+            });
+
+            if (error) {
+                toast.error(`Failed to remove ${ds.name}`);
+            } else {
+                toast.success(`${ds.name} removed successfully`);
+                fetchDataSources();
+            }
+        } catch (err) {
+            console.error(err);
+            toast.error("An error occurred while removing the data source");
+        } finally {
+            setDeleteConfirmId(null);
         }
     };
 
@@ -204,6 +225,39 @@ export const DataSources: React.FC = () => {
                                     >
                                         <Sparkles size={16} />
                                     </button>
+                                    {deleteConfirmId === ds.id ? (
+                                        <span className="flex items-center gap-1">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDelete(ds);
+                                                }}
+                                                className="text-xs bg-red-600 text-white px-2 py-0.5 rounded hover:bg-red-700"
+                                            >
+                                                Confirm
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setDeleteConfirmId(null);
+                                                }}
+                                                className="text-xs text-gray-500 hover:text-gray-700 px-1"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </span>
+                                    ) : (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeleteConfirmId(ds.id);
+                                            }}
+                                            className="text-gray-500 hover:text-red-600"
+                                            title="Remove Data Source"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         ))

@@ -155,6 +155,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DataSourceResponse"
+  /v1/data-sources/{dataSourceId}:
+    delete:
+      tags: [Admin]
+      summary: Delete a data source and its dependent data
+      parameters:
+        - $ref: "#/components/parameters/DataSourceId"
+      responses:
+        "200":
+          description: Data source deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          description: Data source not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/data-sources/{dataSourceId}/introspect:
     post:
       tags: [Admin]

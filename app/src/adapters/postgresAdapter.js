@@ -161,7 +161,19 @@ class PostgresAdapter {
       const rows = Array.isArray(result.rows) ? result.rows : [];
       const columns = result.fields ? result.fields.map((field) => field.name) : [];
       const truncated = rows.length > maxRows;
-      const safeRows = truncated ? rows.slice(0, maxRows) : rows;
+      const slicedRows = truncated ? rows.slice(0, maxRows) : rows;
+      const safeRows = slicedRows.map((row) => {
+        const sanitized = {};
+        for (const key of Object.keys(row)) {
+          const val = row[key];
+          if (val !== null && typeof val === "object" && !(val instanceof Date)) {
+            sanitized[key] = formatPgObject(val);
+          } else {
+            sanitized[key] = val;
+          }
+        }
+        return sanitized;
+      });
 
       return {
         columns,
@@ -182,6 +194,26 @@ class PostgresAdapter {
   quoteIdentifier(identifier) {
     return `"${String(identifier).replace(/"/g, "\"\"")}"`;
   }
+}
+
+function formatPgObject(val) {
+  // pg interval objects: { years, months, days, hours, minutes, seconds, milliseconds }
+  if ("days" in val || "hours" in val || "minutes" in val || "seconds" in val || "months" in val || "years" in val) {
+    const parts = [];
+    if (val.years) parts.push(`${val.years} year${val.years !== 1 ? "s" : ""}`);
+    if (val.months) parts.push(`${val.months} month${val.months !== 1 ? "s" : ""}`);
+    if (val.days) parts.push(`${val.days} day${val.days !== 1 ? "s" : ""}`);
+    if (val.hours) parts.push(`${val.hours} hour${val.hours !== 1 ? "s" : ""}`);
+    if (val.minutes) parts.push(`${val.minutes} minute${val.minutes !== 1 ? "s" : ""}`);
+    if (val.seconds) parts.push(`${val.seconds} second${val.seconds !== 1 ? "s" : ""}`);
+    return parts.length > 0 ? parts.join(" ") : "0 seconds";
+  }
+  // Arrays
+  if (Array.isArray(val)) {
+    return JSON.stringify(val);
+  }
+  // Generic fallback: JSON representation
+  return JSON.stringify(val);
 }
 
 function parseIndexColumns(indexDef) {

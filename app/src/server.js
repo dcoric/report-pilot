@@ -132,6 +132,19 @@ async function handleListDataSources(_req, res) {
   return json(res, 200, { items: result.rows });
 }
 
+async function handleDeleteDataSource(_req, res, dataSourceId) {
+  const result = await appDb.query(
+    "DELETE FROM data_sources WHERE id = $1 RETURNING id",
+    [dataSourceId]
+  );
+
+  if (result.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  return json(res, 200, { ok: true, id: dataSourceId });
+}
+
 async function runIntrospectionJob(jobId, dataSource) {
   try {
     await appDb.query(
@@ -1179,6 +1192,11 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/v1/data-sources") {
     return handleListDataSources(req, res);
+  }
+
+  const deleteDataSourceMatch = pathname.match(/^\/v1\/data-sources\/([^/]+)$/);
+  if (req.method === "DELETE" && deleteDataSourceMatch) {
+    return handleDeleteDataSource(req, res, deleteDataSourceMatch[1]);
   }
 
   const introspectMatch = pathname.match(/^\/v1\/data-sources\/([^/]+)\/introspect$/);
