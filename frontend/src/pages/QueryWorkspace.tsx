@@ -488,7 +488,7 @@ export const QueryWorkspace: React.FC = () => {
                                             Prompt History
                                         </button>
                                         {isPromptHistoryOpen && (
-                                            <div className="absolute right-0 top-full mt-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-md border border-gray-200 bg-white shadow-lg z-30">
+                                            <div className="absolute right-0 bottom-full mb-2 w-[460px] max-w-[calc(100vw-2rem)] rounded-md border border-gray-200 bg-white shadow-lg z-50">
                                                 <div className="p-3 border-b border-gray-100">
                                                     <input
                                                         type="text"
