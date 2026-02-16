@@ -35,125 +35,6 @@ Build a production-ready internal UI that lets an analyst:
 
 ---
 
-## Ticket UI-001: App Shell and Routing [DONE]
-
-- Objective: Create base app layout, navigation, route skeletons.
-- Scope: phpMyAdmin-like shell with left tree sidebar + main workspace regions and route skeletons.
-- APIs: none (layout only).
-- Acceptance Criteria:
-- Routes exist and render placeholder content.
-- Active route highlighting works.
-- 404 page exists.
-- Sidebar is expandable/collapsible and supports nested tree nodes.
-- Main area supports stacked prompt -> SQL -> result layout sections.
-
-## Ticket UI-002: Typed API Client and Error Model [DONE]
-
-- Objective: Build reusable API layer with typed request/response wrappers.
-- Scope: `GET/POST` wrapper, timeout, error normalization, retry policy (read-only requests only).
-- APIs: all endpoints in `/docs` OpenAPI.
-- Acceptance Criteria:
-- Every feature page uses shared client.
-- API errors are displayed as user-friendly messages.
-- Request IDs from response headers are logged for debugging.
-
-## Ticket UI-003: Data Source Management [DONE]
-
-- Objective: Let user create and list data sources.
-- Scope: List table + create form modal.
-- APIs:
-- `GET /v1/data-sources`
-- `POST /v1/data-sources`
-- Acceptance Criteria:
-- User can add Postgres source (name, db type, connection ref).
-- New data source appears in list without full page refresh.
-- Validation errors are shown inline.
-
-## Ticket BE-003: Enable CORS support for Frontend (Issue #53) [DONE]
-
-## Ticket UI-004: Introspection Flow and Status UX [DONE]
-
-- Objective: Trigger introspection and provide status feedback.
-- Scope: “Introspect” action on selected data source, progress indicator, completion confirmation.
-- APIs:
-- `POST /v1/data-sources/{id}/introspect`
-- `GET /v1/schema-objects?data_source_id=...`
-- Acceptance Criteria:
-- User can trigger introspection from list/detail view.
-- UI shows pending/running state.
-- Completion is inferred by polling schema objects until non-empty.
-- Failure state is shown when timeout threshold is reached.
-
-## Ticket UI-005: Schema Explorer [DONE]
-
-- Objective: Display introspected schema objects for selected data source.
-- Scope: Search/filter/sort schema object list.
-- APIs:
-- `GET /v1/schema-objects?data_source_id=...`
-- Acceptance Criteria:
-- User can filter by schema/object name.
-- Empty state explains that introspection is required.
-- Object type and description are visible.
-
-## Ticket UI-006: Semantic Entity Editor [DONE]
-
-- Objective: Create/update semantic entities used by RAG.
-- Scope: Form for table/column/metric/dimension/rule entities.
-- APIs:
-- `POST /v1/semantic-entities`
-- Acceptance Criteria:
-- User can create semantic entity with required fields.
-- Edit mode supported via `id` in payload.
-- Success toast confirms that reindex is auto-triggered asynchronously.
-
-## Ticket UI-007: Metric Definition Editor [DONE]
-
-- Objective: Create/update metric SQL definitions.
-- Scope: Form with semantic entity ID, SQL expression, grain, optional filters JSON.
-- APIs:
-- `POST /v1/metric-definitions`
-- Acceptance Criteria:
-- Required fields validated client-side.
-- JSON field validation for `filters_json`.
-- Save success and error states handled.
-
-## Ticket UI-008: Join Policy Editor [DONE]
-
-- Objective: Create/update approved join policies.
-- Scope: Form for left/right refs, join type, on-clause, approved flag, notes.
-- APIs:
-- `POST /v1/join-policies`
-- Acceptance Criteria:
-- Approved policies can be created and edited.
-- Validation ensures all required fields are supplied.
-- Save result shown with returned policy ID.
-
-## Ticket UI-009: RAG Reindex Console Action [DONE]
-
-- Objective: Give admins explicit reindex control.
-- Scope: Button/action on semantic/schema screens.
-- APIs:
-- `POST /v1/rag/reindex?data_source_id=...`
-- Acceptance Criteria:
-- Reindex can be manually triggered.
-- Result shows documents indexed and embedding model.
-- Error state includes returned API message.
-
-## Ticket UI-010: Query Workspace (NL Question -> Run) [DONE]
-
-- Objective: Core analyst experience for creating/running query sessions.
-- Scope: Question input, SQL editor, run controls (`provider/model/max_rows/timeout_ms`), session creation and execution.
-- APIs:
-- `POST /v1/query/sessions`
-- `POST /v1/query/sessions/{id}/run`
-- Acceptance Criteria:
-- User can submit prompt and run in one flow.
-- Generated SQL is displayed in an editable editor before rerun.
-- User can manually modify SQL and click run/play again.
-- SQL, columns, rows, duration, provider, confidence are shown.
-- SQL block is copyable.
-- Large row sets are virtualized/paginated in UI.
-
 ## Ticket UI-017: Sidebar Tree UX (Connections -> Reports -> Folders)
 
 - Objective: Implement left navigation as a hierarchical tree for fast switching.
@@ -169,103 +50,6 @@ Build a production-ready internal UI that lets an analyst:
 - Tree supports deep nesting for folders.
 - Selected report loads into main workspace.
 
-## Ticket UI-018: Query Result Export Bar (Bottom of Workspace) [DONE]
-
-- Objective: Provide export actions from result table with delivery options.
-- Scope:
-- Sticky/anchored bottom export action bar in query workspace.
-- Export format selector.
-- Delivery mode selector: `download` or `email` (Download implemented).
-- Email recipient input for send-by-email flow (single or multiple addresses).
-- APIs:
-- Export endpoints from `BE-001` and delivery endpoints from `BE-002`
-- Acceptance Criteria:
-- Export actions are visible at bottom after successful run.
-- User can choose format (`json`, `csv`, `xlsx`, `tsv`, `parquet` at minimum).
-- Download mode returns file for selected format.
-- Email mode sends export to provided email(s) with validation and success/error feedback.
-
-## Ticket UI-011: Query Citations and RAG Debug Panel [DONE]
-
-- Objective: Expose grounding details for trust and debugging.
-- Scope: Collapsible panel for schema/semantic/metric/join citations and `rag_documents`.
-- APIs:
-- Uses `/v1/query/sessions/{id}/run` response payload.
-- Acceptance Criteria:
-- Citations are grouped by type.
-- RAG docs show score and rerank score.
-- Empty citation states are shown clearly.
-
-## Ticket UI-012: Feedback Capture UX [DONE]
-
-- Objective: Collect rating and corrected SQL from users.
-- Scope: Feedback form attached to latest query result.
-- APIs:
-- `POST /v1/query/sessions/{id}/feedback`
-- Acceptance Criteria:
-- Rating 1-5 enforced.
-- Optional corrected SQL and comment supported.
-- UI shows whether corrected SQL was saved as an example.
-
-## Ticket UI-013: Provider Config and Routing UI [DONE]
-
-- Objective: Manage LLM providers and routing rules per data source.
-- Scope: Provider settings panel + routing rule form.
-- APIs:
-- `POST /v1/llm/providers`
-- `POST /v1/llm/routing-rules`
-- `GET /v1/health/providers`
-- Acceptance Criteria:
-- User can enable/disable provider, set default model, and API key ref.
-- User can configure primary/fallback providers for a data source.
-- Provider health shown with status badges.
-
-## Ticket UI-019: LLM Provider Management Page [DONE]
-
-- Objective: Provide a dedicated CRUD interface for LLM providers, matching the Data Sources management pattern.
-- Scope:
-- New "LLM Providers" page with table listing all configured providers.
-- "Add Provider" dialog modal (same UX pattern as Add Data Source).
-- Enable/disable toggle per provider from the list.
-- Provider health status badges from `/v1/health/providers`.
-- Query Workspace provider/model dropdowns dynamically populated from configured providers.
-- Routing rules page updated to use only enabled providers in dropdowns.
-- Backend `GET /v1/llm/providers` endpoint added.
-- APIs:
-- `GET /v1/llm/providers` (new)
-- `POST /v1/llm/providers`
-- `GET /v1/health/providers`
-- Acceptance Criteria:
-- User can add a new LLM provider via dialog (provider type, API key ref, default model, enabled flag).
-- Provider list shows name, default model, enabled status, health badge, and created date.
-- User can enable/disable providers directly from the list.
-- Query Workspace provider dropdown shows only enabled providers from the database.
-- Selecting a provider in Query Workspace auto-fills its default model.
-- LLM Providers link appears in the sidebar navigation between Data Sources and Schema Explorer.
-- Settings page simplified to show only routing rules, using enabled providers from API.
-
-## Ticket UI-014: Observability Dashboard [DONE]
-
-- Objective: Provide operational visibility for query quality and reliability.
-- Scope: Metrics cards + charts + provider failure table.
-- APIs:
-- `GET /v1/observability/metrics?window_hours=...`
-- Acceptance Criteria:
-- User can switch time window.
-- Generation and execution latency stats are visible.
-- Token usage, query cost metrics, provider failures are visible.
-
-## Ticket UI-015: Release Gates View [DONE]
-
-- Objective: Show MVP release readiness from benchmark reports.
-- Scope: Dedicated page for latest release gate status.
-- APIs:
-- `GET /v1/observability/release-gates`
-- Acceptance Criteria:
-- PASS/FAIL badges per gate.
-- Shows run date and source report metadata.
-- Handles no-report (`404`) state with clear CTA.
-
 ## Ticket UI-016: QA and UX Hardening
 
 - Objective: Validate all flows and edge cases before MVP signoff.
@@ -276,157 +60,50 @@ Build a production-ready internal UI that lets an analyst:
 - Error boundaries and retry actions exist on all critical pages.
 - Accessibility basics pass (keyboard nav, labels, focus states).
 
----
+## Ticket UI-020: Prompt History in Query Workspace
 
-## Ticket BE-001: Query Result Export API (JSON, CSV, Excel, and Tabular Formats) [DONE]
-
-- Objective: Add backend export capability so UI can download query results in common file formats.
+- Objective: Let users view and reuse prior prompts to speed up iterative analysis.
 - Scope:
-- New export endpoint for a completed query attempt.
-- Supported formats: `json`, `csv`, `xlsx`, `tsv`, `parquet` (optional stretch: `ods`, `ndjson`). (JSON, CSV, XLSX implemented).
-- Streaming/chunked response for large result sets.
-- Configurable file name + safe defaults (timestamp + question slug/attempt id).
+- Persist prompt history per user (and optionally per data source/session context).
+- Add a prompt history panel/dropdown in Query Workspace with search and recency ordering.
+- Allow one-click reuse of a previous prompt into the input box.
 - APIs:
-- `POST /v1/query/sessions/{id}/export` (or `GET /v1/query/attempts/{attempt_id}/export?format=...`)
+- `GET /v1/query/prompts/history`
+- `POST /v1/query/prompts/history` (or integrate write-on-run in existing run/session endpoint)
 - Acceptance Criteria:
-- Endpoint exports rows from a successful attempt without re-running LLM generation.
-- `Content-Type` and `Content-Disposition` headers are correct per format.
-- UTF-8 and delimiter/escaping rules are correct for CSV/TSV.
-- Excel export preserves column headers and basic numeric/date typing.
-- Export handles empty result sets and very large result sets without timeout/memory blowups.
-- Access control mirrors existing query session ownership rules.
-- API returns clear errors for unsupported formats.
+- Prompt history is visible in Query Workspace and ordered by newest first.
+- User can select a historical prompt and populate the current prompt input.
+- History view handles empty state and large history lists gracefully.
 
-## Ticket BE-002: Export Delivery API (Download + Email) [DONE]
+## Ticket UI-021: Edit API Key for Existing LLM Provider
 
-- Objective: Add delivery channels for exports so users can either download immediately or send to email.
+- Objective: Allow secure API key updates for already configured providers.
 - Scope:
-- Delivery mode contract: `download` and `email`.
-- Email delivery pipeline with recipient validation, async job handling, and delivery status tracking.
-- Reusable for both ad-hoc exports and scheduled report runs.
+- Add “Edit API Key” action in LLM Provider management UI.
+- Key input is masked and never shows previously stored key material.
+- Support provider key rotation without recreating the provider record.
 - APIs:
-- `POST /v1/query/sessions/{id}/export/deliver`
-- `GET /v1/exports/{export_id}/status`
+- `PATCH /v1/llm/providers/{id}` (or `POST /v1/llm/providers` with update semantics)
 - Acceptance Criteria:
-- Download delivery returns file/stream as expected.
-- Email delivery accepts one or multiple recipient emails and sends the selected format.
-- Failed deliveries surface actionable status and error reason.
-- Delivery events are auditable.
+- User can update API key for an existing provider from the UI.
+- Existing key is not exposed in plaintext in API responses or UI.
+- Updated key is used on subsequent provider health checks/query runs.
 
-## Ticket EXP-001: JSON Export Contract Hardening [DONE]
+## Ticket UI-022: Custom LLM Provider Support (Local API / Custom URL / API Key)
 
-- Objective: Lock down JSON export behavior so it is stable and testable across all query result shapes.
+- Objective: Support non-predefined/custom LLM providers for local/self-hosted or third-party compatible APIs.
 - Scope:
-- Export response for `format=json` from existing session export endpoint.
-- Normalize complex database values into JSON-safe primitives before serialization.
-- Add automated coverage for empty sets, null-heavy rows, and special characters.
+- Extend provider form to include a custom provider type.
+- Allow custom base URL, API key, model default, and provider display name.
+- Validate URL format and connection test/health status for custom providers.
 - APIs:
-- `POST /v1/query/sessions/{id}/export` with body `{ "format": "json" }`
+- `POST /v1/llm/providers`
+- `GET /v1/llm/providers`
+- `GET /v1/health/providers`
 - Acceptance Criteria:
-- Response returns `application/json` and a `.json` filename.
-- File payload is valid JSON and preserves row/column structure.
-- Values containing quotes, unicode, and newlines round-trip without corruption.
-- Unsupported/invalid session states return clear API errors.
-
-## Ticket EXP-002: CSV Export Robustness and Compatibility [DONE]
-
-- Objective: Ensure CSV export is spreadsheet-friendly and handles edge-case data safely.
-- Scope:
-- Export response for `format=csv`.
-- Enforce UTF-8 encoding and correct CSV escaping rules.
-- Add regression tests for commas, quotes, line breaks, and delimiter collisions.
-- APIs:
-- `POST /v1/query/sessions/{id}/export` with body `{ "format": "csv" }`
-- Acceptance Criteria:
-- Response returns `text/csv` and a `.csv` filename.
-- Header row is present and column ordering matches query output.
-- Cells with commas/quotes/newlines are escaped correctly.
-- Large result sets complete without server crash or truncated output.
-
-## Ticket EXP-003: XLSX Export Typing and Workbook Quality [DONE]
-
-- Objective: Deliver production-ready Excel exports with usable typing and column fidelity.
-- Scope:
-- Export response for `format=xlsx`.
-- Ensure workbook/sheet generation preserves headers and basic numeric/date typing.
-- Add tests for mixed data types and empty result sets.
-- APIs:
-- `POST /v1/query/sessions/{id}/export` with body `{ "format": "xlsx" }`
-- Acceptance Criteria:
-- Response returns the XLSX content type and a `.xlsx` filename.
-- Workbook opens cleanly in Excel/Sheets with one results sheet.
-- Numeric and date-like values are not coerced to broken placeholder strings.
-- Empty result exports still include schema headers when available.
-
-## Ticket EXP-004: TSV Export Implementation [DONE]
-
-- Objective: Implement tab-separated export support to match the format already exposed in UI.
-- Scope:
-- Add backend support for `format=tsv`.
-- Reuse CSV serialization path with TSV delimiter and TSV-safe escaping.
-- Wire format into validation/constants so endpoint accepts it.
-- APIs:
-- `POST /v1/query/sessions/{id}/export` with body `{ "format": "tsv" }`
-- Acceptance Criteria:
-- Response returns `text/tab-separated-values` and a `.tsv` filename.
-- Export endpoint no longer rejects `tsv` as unsupported format.
-- Tab/newline/quote-containing values are serialized without column drift.
-- Query Workspace download succeeds end-to-end for TSV.
-
-## Ticket EXP-005: Parquet Export Implementation [DONE]
-
-- Objective: Implement Parquet export support for analytics/warehouse interoperability.
-- Scope:
-- Add backend support for `format=parquet`.
-- Define schema inference rules from query result columns and nullability.
-- Stream or buffer output safely for large datasets and validate resulting files.
-- APIs:
-- `POST /v1/query/sessions/{id}/export` with body `{ "format": "parquet" }`
-- Acceptance Criteria:
-- Response returns Parquet content type and a `.parquet` filename.
-- Export endpoint no longer rejects `parquet` as unsupported format.
-- Generated file can be read by at least one standard consumer (DuckDB, Pandas, or Spark).
-- Type inference fallback path is documented and covered by tests.
-
-## Ticket BE-003: Remove Data Source API and UI Action [DONE]
-
-- Objective: Allow users to delete a data source and its dependent data (schema objects, semantic entities, etc.).
-- Scope:
-- `DELETE /v1/data-sources/{id}` backend endpoint with cascading cleanup.
-- Trash icon action button in the Data Sources list UI with confirmation dialog.
-- APIs:
-- `DELETE /v1/data-sources/{id}`
-- Acceptance Criteria:
-- User can remove a data source from the list via an action button.
-- Confirmation dialog prevents accidental deletion.
-- Backend cascades deletion to dependent schema objects, semantic entities, metric definitions, join policies, and RAG documents.
-- Success toast confirms removal and list refreshes without full page reload.
-- Attempting to delete a non-existent data source returns 404.
-
-## Ticket BUG-001: PostgreSQL Interval/Object Values Render as [object Object] in Query Results [DONE]
-
-- Objective: Fix query result rendering for PostgreSQL complex types (interval, date arithmetic, etc.) that are returned as objects by the `pg` driver.
-- Severity: Medium
-- Reported: 2026-02-16
-- Reproduction:
-  - Run prompt: "what movies are not returned and who has them with contact info order by longest number of days"
-  - Generated SQL uses `(CURRENT_DATE - r.rental_date) AS days_outstanding`
-  - The `days_outstanding` column renders as `[object Object]` instead of a human-readable value.
-- Root Cause:
-  - The `pg` Node.js driver returns PostgreSQL interval types as JavaScript objects (e.g., `{ days: 123, hours: 4, ... }`) rather than strings.
-  - `JSON.stringify()` in the backend HTTP response serializer converts these objects to `[object Object]`.
-  - The frontend receives the broken string and renders it as-is.
-- Affected Files:
-  - `app/src/adapters/postgresAdapter.js` — returns raw `pg` driver rows without type normalization.
-  - `app/src/lib/http.js` — `JSON.stringify` cannot serialize `pg` interval objects.
-  - `frontend/src/pages/QueryWorkspace.tsx` — renders cell values with `String(row[col])`.
-- Fix:
-  - Add a row sanitization step in `postgresAdapter.executeReadOnly()` that converts any non-primitive cell values (objects) to their string representation before returning.
-  - This handles intervals, dates, and any other complex `pg` types generically.
-- Acceptance Criteria:
-  - `days_outstanding` and similar interval columns display as readable text (e.g., "7264 days" or equivalent).
-  - No regression for other column types (strings, numbers, booleans, nulls, dates).
-  - Export (JSON, CSV, XLSX) also produces correct values for interval columns.
+- User can create a provider with a custom/local API base URL and API key.
+- Custom provider appears in provider lists and can be enabled/disabled like built-in providers.
+- Query Workspace can select and run with an enabled custom provider.
 
 ---
 
