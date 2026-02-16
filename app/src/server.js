@@ -89,6 +89,10 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function isUuid(value) {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function triggerRagReindexAsync(dataSourceId) {
   if (!dataSourceId) {
     return;
@@ -456,12 +460,16 @@ async function handlePromptHistory(req, res, requestUrl) {
   const requestedLimit = Number(requestUrl.searchParams.get("limit") || 20);
   const limit = clamp(Number.isFinite(requestedLimit) ? requestedLimit : 20, 1, 200);
 
+  if (dataSourceId && !isUuid(dataSourceId)) {
+    return badRequest(res, "data_source_id must be a valid UUID");
+  }
+
   const result = await appDb.query(
     `
       SELECT id, question, data_source_id, created_at
       FROM query_sessions
       WHERE user_id = $1
-        AND ($2::text IS NULL OR data_source_id = $2)
+        AND ($2::uuid IS NULL OR data_source_id = $2::uuid)
         AND ($3::text = '' OR question ILIKE '%' || $3 || '%')
       ORDER BY created_at DESC
       LIMIT $4
