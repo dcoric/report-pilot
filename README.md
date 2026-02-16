@@ -153,7 +153,7 @@ BENCHMARK_ORACLE_CONN=postgresql://postgres:postgres@localhost:5440/dvdrental \
 npm run benchmark:mvp
 ```
 
-Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by a dynamic offset so the latest rental lands around yesterday (relative to system time).
+Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by dynamic offsets so the latest rental and latest payment land around yesterday (relative to system time), then caps shifted values at current system date/time to avoid future-dated rows.
 
 Report outputs:
 
