@@ -1,12 +1,10 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppShell } from './components/Layout/AppShell';
 import { Dashboard } from './pages/Dashboard';
 import { DataSources } from './pages/DataSources';
 import { SchemaExplorer } from './pages/SchemaExplorer';
 import { QueryWorkspace } from './pages/QueryWorkspace';
-import { Observability } from './pages/Observability';
-import { ReleaseGates } from './pages/ReleaseGates';
 import { NotFound } from './pages/NotFound';
 import { Settings } from './pages/Settings';
 import { LLMProviders } from './pages/LLMProviders';
@@ -22,8 +20,8 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/data-sources" element={<DataSources />} />
           <Route path="/schema" element={<SchemaExplorer />} />
-          <Route path="/observability" element={<Observability />} />
-          <Route path="/release-gates" element={<ReleaseGates />} />
+          <Route path="/observability" element={<Navigate to="/dashboard?tab=observability" replace />} />
+          <Route path="/release-gates" element={<Navigate to="/dashboard?tab=release-gates" replace />} />
           <Route path="/llm-providers" element={<LLMProviders />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

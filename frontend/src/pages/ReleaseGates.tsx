@@ -207,7 +207,11 @@ function normalizeReleaseGatesPayload(payload: unknown): ReleaseGateData | null 
     return normalizeUiShape(payload) || normalizeBackendShape(payload);
 }
 
-export const ReleaseGates: React.FC = () => {
+interface ReleaseGatesProps {
+    embedded?: boolean;
+}
+
+export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) => {
     const [data, setData] = useState<ReleaseGateData | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -231,16 +235,16 @@ export const ReleaseGates: React.FC = () => {
         // In real app, POST to /v1/observability/benchmarks/run
     };
 
-    if (loading) return <div className="p-8 text-center text-gray-500">Loading release status...</div>;
-    if (!data) return <div className="p-8 text-center text-gray-500">No release data found.</div>;
+    if (loading) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>Loading release status...</div>;
+    if (!data) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>No release data found.</div>;
 
     return (
-        <div className="p-8 max-w-5xl mx-auto space-y-8 h-full overflow-y-auto">
+        <div className={embedded ? 'space-y-8 h-full overflow-y-auto' : 'p-8 max-w-5xl mx-auto space-y-8 h-full overflow-y-auto'}>
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <ShieldCheck className={`w-8 h-8 ${data.status === 'PASS' ? 'text-green-600' : 'text-amber-500'}`} />
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900">Release Gates</h1>
+                        {!embedded && <h1 className="text-2xl font-bold text-gray-900">Release Gates</h1>}
                         <p className="text-sm text-gray-500">
                             Last Checked: {safeFormatTimestamp(data.run_date, 'MMM d, yyyy HH:mm')} • Dataset: {data.dataset_version}
                         </p>

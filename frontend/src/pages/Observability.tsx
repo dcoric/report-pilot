@@ -179,7 +179,11 @@ function normalizeMetricsPayload(payload: unknown): MetricsData | null {
     return normalizeLegacyShape(payload) || normalizeBackendShape(payload);
 }
 
-export const Observability: React.FC = () => {
+interface ObservabilityProps {
+    embedded?: boolean;
+}
+
+export const Observability: React.FC<ObservabilityProps> = ({ embedded = false }) => {
     const [metrics, setMetrics] = useState<MetricsData | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -202,17 +206,19 @@ export const Observability: React.FC = () => {
         fetchMetrics();
     }, []);
 
-    if (loading) return <div className="p-8 text-center text-gray-500">Loading metrics...</div>;
-    if (!metrics) return <div className="p-8 text-center text-gray-500">No metrics available.</div>;
+    if (loading) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>Loading metrics...</div>;
+    if (!metrics) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>No metrics available.</div>;
 
     const { summary, history, recent_failures } = metrics;
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-8 h-full overflow-y-auto">
-            <div className="flex items-center gap-3 mb-2">
-                <Activity className="w-8 h-8 text-blue-600" />
-                <h1 className="text-2xl font-bold text-gray-900">Observability</h1>
-            </div>
+        <div className={embedded ? 'space-y-8 h-full overflow-y-auto' : 'p-8 max-w-7xl mx-auto space-y-8 h-full overflow-y-auto'}>
+            {!embedded && (
+                <div className="flex items-center gap-3 mb-2">
+                    <Activity className="w-8 h-8 text-blue-600" />
+                    <h1 className="text-2xl font-bold text-gray-900">Observability</h1>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">

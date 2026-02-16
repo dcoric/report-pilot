@@ -4,8 +4,6 @@ import {
     LayoutDashboard,
     Database,
     Search,
-    Activity,
-    ShieldCheck,
     Settings,
     Layers,
     Server,
@@ -20,8 +18,6 @@ const NAV_ITEMS = [
     { path: '/llm-providers', label: 'LLM Providers', icon: Server },
     { path: '/schema', label: 'Schema Explorer', icon: Layers },
     { path: '/query', label: 'Query Workspace', icon: Search },
-    { path: '/observability', label: 'Observability', icon: Activity },
-    { path: '/release-gates', label: 'Release Gates', icon: ShieldCheck },
 ];
 
 export const AppShell: React.FC = () => {
@@ -37,7 +33,7 @@ export const AppShell: React.FC = () => {
             <aside className={styles.sidebar}>
                 <div className={styles.sidebarHeader}>
                     <LayoutDashboard className="mr-2" size={24} />
-                    <span>Report Pilot Console</span>
+                    <span>Report Pilot</span>
                 </div>
 
                 <div className={styles.sidebarContent}>
