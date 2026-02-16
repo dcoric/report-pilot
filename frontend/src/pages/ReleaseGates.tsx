@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { ShieldCheck, CheckCircle, AlertCircle, Play } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ShieldCheck, CheckCircle, AlertCircle, Copy, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { client } from '../lib/api/client';
 import { toast } from 'sonner';
@@ -44,6 +44,13 @@ const MOCK_GATES: ReleaseGateData = {
         { id: 'c5', name: 'Semantic Accuracy', description: 'Result matches golden label intent', status: 'FAIL', threshold: '> 90%', actual: '89.5%' } // Intentionally failed for demo
     ]
 };
+
+const FALLBACK_BENCHMARK_CLI_COMMAND = [
+    "BENCHMARK_DATA_SOURCE_NAME='dvdrental' \\",
+    "BENCHMARK_CONNECTION_REF='postgresql://postgres:postgres@host.docker.internal:5440/dvdrental' \\",
+    "BENCHMARK_ORACLE_CONN='postgresql://postgres:postgres@localhost:5440/dvdrental' \\",
+    'npm run benchmark:mvp'
+].join('\n');
 
 function isRecord(value: unknown): value is AnyRecord {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -214,28 +221,118 @@ interface ReleaseGatesProps {
 export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) => {
     const [data, setData] = useState<ReleaseGateData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [noReport, setNoReport] = useState(false);
+    const [benchmarkCommand, setBenchmarkCommand] = useState(FALLBACK_BENCHMARK_CLI_COMMAND);
 
-    useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const { data: apiData } = await client.GET('/v1/observability/release-gates');
-                const normalized = normalizeReleaseGatesPayload(apiData);
-                setData(normalized || MOCK_GATES);
-            } catch {
-                setData(MOCK_GATES);
-            } finally {
-                setLoading(false);
+    const fetchBenchmarkCommand = useCallback(async () => {
+        try {
+            const { data: apiData, response, error } = await client.GET('/v1/observability/benchmark-command');
+            if (!response.ok || error) {
+                return;
             }
-        };
-        fetchData();
+            const command = typeof apiData.command === 'string' ? apiData.command.trim() : '';
+            if (command) {
+                setBenchmarkCommand(command);
+            }
+        } catch {
+            // Keep fallback command when API fetch fails.
+        }
     }, []);
 
-    const handleRunBenchmark = () => {
-        toast.info("Triggering new benchmark run... (Mock)");
-        // In real app, POST to /v1/observability/benchmarks/run
+    const fetchData = useCallback(async (notifyRefresh = false) => {
+        try {
+            const { data: apiData, response, error } = await client.GET('/v1/observability/release-gates');
+
+            if (response.status === 404) {
+                setNoReport(true);
+                setData(null);
+                if (notifyRefresh) {
+                    toast.info('No benchmark report found yet.');
+                }
+                return;
+            }
+
+            if (error) {
+                throw new Error('release_gates_request_failed');
+            }
+
+            const normalized = normalizeReleaseGatesPayload(apiData);
+            setNoReport(false);
+            setData(normalized || MOCK_GATES);
+
+            if (notifyRefresh) {
+                toast.success('Release gate status refreshed.');
+            }
+        } catch {
+            setNoReport(false);
+            setData(MOCK_GATES);
+            if (notifyRefresh) {
+                toast.error('Failed to refresh release gates. Showing fallback data.');
+            }
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+        fetchBenchmarkCommand();
+    }, [fetchData, fetchBenchmarkCommand]);
+
+    const handleRefresh = () => {
+        setRefreshing(true);
+        fetchBenchmarkCommand();
+        fetchData(true);
+    };
+
+    const handleCopyBenchmarkCommand = async () => {
+        try {
+            await navigator.clipboard.writeText(benchmarkCommand);
+            toast.success('Benchmark command copied to clipboard.');
+        } catch {
+            toast.error('Clipboard copy failed. Use the command shown in the panel.');
+        }
     };
 
     if (loading) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>Loading release status...</div>;
+
+    if (noReport) {
+        return (
+            <div className={embedded ? 'space-y-6 h-full overflow-y-auto' : 'p-8 max-w-5xl mx-auto space-y-6 h-full overflow-y-auto'}>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-6">
+                    <h2 className="text-lg font-semibold text-amber-800">No benchmark report found</h2>
+                    <p className="text-sm text-amber-700 mt-2">
+                        Run the benchmark from terminal, then click refresh to load the latest release gate status.
+                    </p>
+                </div>
+
+                <div className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto">
+                    <pre className="text-xs leading-6">{benchmarkCommand}</pre>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                    <button
+                        onClick={handleCopyBenchmarkCommand}
+                        className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                    >
+                        <Copy size={16} />
+                        Copy Benchmark Command
+                    </button>
+                    <button
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                        {refreshing ? 'Refreshing...' : 'Refresh Status'}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     if (!data) return <div className={embedded ? 'py-10 text-center text-gray-500' : 'p-8 text-center text-gray-500'}>No release data found.</div>;
 
     return (
@@ -250,13 +347,23 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
                         </p>
                     </div>
                 </div>
-                <button
-                    onClick={handleRunBenchmark}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm"
-                >
-                    <Play size={16} />
-                    Run Benchmark
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleCopyBenchmarkCommand}
+                        className="flex items-center gap-2 px-4 py-2 border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50 transition-colors shadow-sm"
+                    >
+                        <Copy size={16} />
+                        Copy CLI Command
+                    </button>
+                    <button
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                        {refreshing ? 'Refreshing...' : 'Refresh Status'}
+                    </button>
+                </div>
             </div>
 
             {/* Overall Status Banner */}

@@ -873,6 +873,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/observability/benchmark-command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Benchmark CLI command derived from runtime configuration */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Shell command and environment values for running the benchmark */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BenchmarkCommandResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/observability/release-gates/report": {
         parameters: {
             query?: never;
@@ -1060,6 +1096,12 @@ export interface components {
         };
         ObservabilityMetricsResponse: {
             [key: string]: unknown;
+        };
+        BenchmarkCommandResponse: {
+            command: string;
+            env: {
+                [key: string]: string;
+            };
         };
         ReleaseGatesResponse: {
             [key: string]: unknown;

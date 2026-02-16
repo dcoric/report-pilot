@@ -4,6 +4,9 @@ const appDb = require("../lib/appDb");
 
 const DEFAULT_REPORT_DIR =
   process.env.BENCHMARK_REPORT_DIR || path.join(process.cwd(), "docs", "evals", "reports");
+const DEFAULT_BENCHMARK_DATA_SOURCE = "dvdrental";
+const DEFAULT_BENCHMARK_CONNECTION_REF = "postgresql://postgres:postgres@host.docker.internal:5440/dvdrental";
+const DEFAULT_BENCHMARK_ORACLE_CONN = "postgresql://postgres:postgres@localhost:5440/dvdrental";
 
 async function buildObservabilityMetrics(opts = {}) {
   const windowHours = clampWindowHours(opts.windowHours);
@@ -189,6 +192,42 @@ async function loadLatestBenchmarkReleaseGates(reportDir = DEFAULT_REPORT_DIR) {
   };
 }
 
+function buildBenchmarkCommand() {
+  const dataSourceName = process.env.BENCHMARK_DATA_SOURCE_NAME || DEFAULT_BENCHMARK_DATA_SOURCE;
+  const fallbackConn = process.env.BENCHMARK_DATA_SOURCE_CONN || DEFAULT_BENCHMARK_ORACLE_CONN;
+  const connectionRef = process.env.BENCHMARK_CONNECTION_REF || fallbackConn || DEFAULT_BENCHMARK_CONNECTION_REF;
+  const oracleConn = process.env.BENCHMARK_ORACLE_CONN || fallbackConn || DEFAULT_BENCHMARK_ORACLE_CONN;
+  const appBaseUrl = process.env.BENCHMARK_APP_BASE_URL || "";
+  const provider = process.env.BENCHMARK_PROVIDER || "";
+  const model = process.env.BENCHMARK_MODEL || "";
+
+  const env = {
+    BENCHMARK_DATA_SOURCE_NAME: dataSourceName,
+    BENCHMARK_CONNECTION_REF: connectionRef,
+    BENCHMARK_ORACLE_CONN: oracleConn
+  };
+
+  if (provider) {
+    env.BENCHMARK_PROVIDER = provider;
+  }
+  if (model) {
+    env.BENCHMARK_MODEL = model;
+  }
+  if (appBaseUrl) {
+    env.BENCHMARK_APP_BASE_URL = appBaseUrl;
+  }
+
+  const commandLines = Object.entries(env).map(
+    ([key, value]) => `${key}=${toShellLiteral(value)} \\`
+  );
+  commandLines.push("npm run benchmark:mvp");
+
+  return {
+    command: commandLines.join("\n"),
+    env
+  };
+}
+
 function normalizeTokenUsage(raw) {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -259,7 +298,14 @@ function clampWindowHours(value) {
   return Math.max(1, Math.min(24 * 30, Math.round(n)));
 }
 
+function toShellLiteral(value) {
+  const source = String(value ?? "");
+  const escaped = source.replace(/'/g, "'\\''");
+  return `'${escaped}'`;
+}
+
 module.exports = {
   buildObservabilityMetrics,
-  loadLatestBenchmarkReleaseGates
+  loadLatestBenchmarkReleaseGates,
+  buildBenchmarkCommand
 };

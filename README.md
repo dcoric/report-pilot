@@ -107,6 +107,7 @@ Observability:
 
 - `GET /v1/observability/metrics?window_hours=24`
 - `GET /v1/observability/release-gates`
+- `GET /v1/observability/benchmark-command`
 - `POST /v1/observability/release-gates/report`
 
 RAG:
