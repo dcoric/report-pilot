@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import styles from './AppShell.module.css';
 import { useDataSource } from '../../hooks/useDataSource';
-import appLogo from '../../assets/Report Pilot.png';
+import appLogo from '../../assets/report-pilot.png';
 
 const NAV_ITEMS = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },

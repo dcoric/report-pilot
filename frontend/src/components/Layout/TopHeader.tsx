@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Database, Search, User, ChevronDown } from 'lucide-react';
-import appLogo from '../../assets/Report Pilot.png';
+import appLogo from '../../assets/report-pilot.png';
 
 interface TopHeaderProps {
     currentConnection?: string;
