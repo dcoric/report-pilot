@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import Editor, { type OnMount } from '@monaco-editor/react';
 import {
     Play,
     Copy,
@@ -13,6 +14,8 @@ import {
     ChevronRight,
     GripHorizontal
 } from 'lucide-react';
+import type { editor } from 'monaco-editor';
+import { format as formatSql } from 'sql-formatter';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
 import { Sidebar } from '../components/Layout/Sidebar';
@@ -126,6 +129,8 @@ export const QueryWorkspace: React.FC = () => {
     const [sqlHeight, setSqlHeight] = useState(initialLayout.sqlHeight);
 
     const dragStateRef = useRef<{ section: SectionKey; startY: number; startHeight: number } | null>(null);
+    const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+    const sqlFormattingProviderRef = useRef<{ dispose: () => void } | null>(null);
     const promptHistoryRef = useRef<HTMLDivElement | null>(null);
     const promptHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
     const promptHistoryPanelRef = useRef<HTMLDivElement | null>(null);
@@ -268,6 +273,13 @@ export const QueryWorkspace: React.FC = () => {
         void fetchPromptHistory(true);
     }, [isPromptHistoryOpen, selectedDataSourceId]);
 
+    useEffect(() => {
+        return () => {
+            sqlFormattingProviderRef.current?.dispose();
+            sqlFormattingProviderRef.current = null;
+        };
+    }, []);
+
     // --- Actions ---
     const fetchPromptHistory = async (showLoading = true) => {
         if (showLoading) {
@@ -378,6 +390,41 @@ export const QueryWorkspace: React.FC = () => {
     const handleReset = () => {
         setGeneratedSql(originalSql);
         toast.info('SQL reset to original');
+    };
+
+    const handleSqlEditorMount: OnMount = (editorInstance, monaco) => {
+        sqlEditorRef.current = editorInstance;
+
+        if (!sqlFormattingProviderRef.current) {
+            sqlFormattingProviderRef.current = monaco.languages.registerDocumentFormattingEditProvider('sql', {
+                provideDocumentFormattingEdits(model: editor.ITextModel) {
+                    try {
+                        const formatted = formatSql(model.getValue(), { language: 'postgresql' });
+                        return [{ range: model.getFullModelRange(), text: formatted }];
+                    } catch (error) {
+                        console.error('SQL formatting failed:', error);
+                        return [];
+                    }
+                },
+            });
+        }
+    };
+
+    const handleFormatSql = async () => {
+        if (!generatedSql.trim()) return;
+
+        const action = sqlEditorRef.current?.getAction('editor.action.formatDocument');
+        if (!action) {
+            toast.error('SQL formatter is not available');
+            return;
+        }
+
+        try {
+            await action.run();
+        } catch (error) {
+            console.error('Failed to format SQL:', error);
+            toast.error('Failed to format SQL');
+        }
     };
 
     const handleExport = async () => {
@@ -673,7 +720,11 @@ export const QueryWorkspace: React.FC = () => {
                             <button className="px-2 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
                                 <Eye size={14} />
                             </button>
-                            <button className="px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-800">
+                            <button
+                                onClick={handleFormatSql}
+                                className="px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={!generatedSql || isReadOnly}
+                            >
                                 Format SQL
                             </button>
                             <button
@@ -690,7 +741,7 @@ export const QueryWorkspace: React.FC = () => {
                     {isSqlExpanded && (
                         <div
                             id="query-sql-section"
-                            className="bg-gray-50 overflow-auto"
+                            className="bg-gray-50 overflow-hidden"
                             style={{ height: sqlHeight }}
                         >
                             {isGenerating ? (
@@ -703,13 +754,25 @@ export const QueryWorkspace: React.FC = () => {
                                     <div className="px-4 py-1 text-xs text-gray-500 bg-gray-100 border-b border-gray-200">
                                         Generated SQL
                                     </div>
-                                    <textarea
-                                        className="w-full flex-1 p-4 font-mono text-xs text-gray-800 bg-white resize-none focus:outline-none"
-                                        value={generatedSql}
-                                        onChange={(e) => setGeneratedSql(e.target.value)}
-                                        spellCheck={false}
-                                        readOnly={isReadOnly}
-                                    />
+                                    <div className="flex-1 min-h-0">
+                                        <Editor
+                                            height="100%"
+                                            language="sql"
+                                            value={generatedSql}
+                                            onChange={(value) => setGeneratedSql(value ?? '')}
+                                            onMount={handleSqlEditorMount}
+                                            options={{
+                                                automaticLayout: true,
+                                                fontSize: 12,
+                                                lineNumbersMinChars: 3,
+                                                minimap: { enabled: false },
+                                                readOnly: isReadOnly,
+                                                scrollBeyondLastLine: false,
+                                                tabSize: 2,
+                                                wordWrap: 'on',
+                                            }}
+                                        />
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="h-full min-h-20 flex items-center justify-center text-gray-400 text-sm p-4 text-center">

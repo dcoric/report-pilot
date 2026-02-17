@@ -105,6 +105,22 @@ Build a production-ready internal UI that lets an analyst:
 - Custom provider appears in provider lists and can be enabled/disabled like built-in providers.
 - Query Workspace can select and run with an enabled custom provider.
 
+## Ticket UI-023: Monaco SQL Editor + In-Editor Formatting
+
+- Objective: Upgrade Query Workspace SQL editing with Monaco and reliable formatting.
+- Scope:
+- Replace SQL textarea with `@monaco-editor/react` in Query Workspace.
+- Keep SQL value synchronized with existing query session state.
+- Wire existing `Format SQL` action to Monaco document formatting.
+- Register SQL formatting provider via `sql-formatter` (PostgreSQL dialect).
+- APIs:
+- none (frontend-only UX improvement)
+- Acceptance Criteria:
+- SQL section renders Monaco editor with SQL syntax highlighting.
+- Editing SQL updates the same state used by run/copy/reset actions.
+- Clicking `Format SQL` reformats SQL content inside the editor.
+- Read-only mode keeps editor non-editable and disables format action.
+
 ---
 
 ## Suggested Delivery Sequence
