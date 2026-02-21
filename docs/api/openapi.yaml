@@ -357,6 +357,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JobAcceptedResponse"
+  /v1/rag/notes:
+    get:
+      tags: [Admin]
+      summary: List RAG notes for a data source
+      parameters:
+        - in: query
+          name: data_source_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: RAG notes list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagNoteListResponse"
+    post:
+      tags: [Admin]
+      summary: Create or update a RAG note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RagNoteRequest"
+      responses:
+        "200":
+          description: RAG note upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagNoteResponse"
+  /v1/rag/notes/{noteId}:
+    delete:
+      tags: [Admin]
+      summary: Delete a RAG note
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: RAG note deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/OkResponse"
+                  - type: object
+                    properties:
+                      id:
+                        type: string
+                    required: [id]
+        "404":
+          description: RAG note not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/llm/providers:
     get:
       tags: [Providers]
@@ -516,6 +580,12 @@ components:
     DataSourceId:
       in: path
       name: dataSourceId
+      required: true
+      schema:
+        type: string
+    NoteId:
+      in: path
+      name: noteId
       required: true
       schema:
         type: string
@@ -752,6 +822,50 @@ components:
         id:
           type: string
       required: [id]
+    RagNoteRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        data_source_id:
+          type: string
+        title:
+          type: string
+          maxLength: 200
+        content:
+          type: string
+          maxLength: 20000
+        active:
+          type: boolean
+      required: [data_source_id, title, content]
+    RagNoteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        data_source_id:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, data_source_id, title, content, active, created_at, updated_at]
+    RagNoteListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagNoteResponse"
+      required: [items]
     LlmProviderRequest:
       type: object
       properties:

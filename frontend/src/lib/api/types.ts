@@ -683,6 +683,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/rag/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List RAG notes for a data source */
+        get: {
+            parameters: {
+                query: {
+                    data_source_id: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description RAG notes list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RagNoteListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create or update a RAG note */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RagNoteRequest"];
+                };
+            };
+            responses: {
+                /** @description RAG note upserted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RagNoteResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rag/notes/{noteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a RAG note */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    noteId: components["parameters"]["NoteId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description RAG note deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok: boolean;
+                            id: string;
+                        };
+                    };
+                };
+                /** @description RAG note not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/llm/providers": {
         parameters: {
             query?: never;
@@ -1112,6 +1227,33 @@ export interface components {
         JoinPolicyResponse: {
             id: string;
         };
+        RagNoteRequest: {
+            id?: string;
+            data_source_id: string;
+            /**
+             * @maxLength 200
+             */
+            title: string;
+            /**
+             * @maxLength 20000
+             */
+            content: string;
+            active?: boolean;
+        };
+        RagNoteResponse: {
+            id: string;
+            data_source_id: string;
+            title: string;
+            content: string;
+            active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RagNoteListResponse: {
+            items: components["schemas"]["RagNoteResponse"][];
+        };
         LlmProviderRequest: {
             /** @enum {string} */
             provider: "openai" | "gemini" | "deepseek";
@@ -1219,6 +1361,7 @@ export interface components {
     parameters: {
         SessionId: string;
         DataSourceId: string;
+        NoteId: string;
     };
     requestBodies: never;
     headers: never;
