@@ -34,6 +34,10 @@ function hasLimitClause(sql) {
   return /\blimit\s+\d+\b/i.test(sql);
 }
 
+function hasTopClause(sql) {
+  return /^\s*select\s+(?:distinct\s+)?top\s+\(?\d+\)?\b/i.test(sql);
+}
+
 function splitTopLevelCsv(selectPart) {
   const items = [];
   let current = "";
@@ -115,10 +119,30 @@ function stripTrailingLimit(sql) {
   return `${withoutLimit};`;
 }
 
-function ensureLimit(sql, maxRows) {
+function ensureLimit(sql, maxRows, dialect = "postgres") {
   if (isSingleRowAggregateQuery(sql)) {
     // Aggregate singleton queries (COUNT/SUM/etc.) should not carry LIMIT.
-    return stripTrailingLimit(sql);
+    if (dialect === "postgres") {
+      return stripTrailingLimit(sql);
+    }
+    return `${stripTrailingSemicolon(sql)};`;
+  }
+
+  if (dialect === "mssql") {
+    if (hasTopClause(sql)) {
+      return `${stripTrailingSemicolon(sql)};`;
+    }
+
+    if (/^\s*select\b/i.test(sql)) {
+      const baseSql = stripTrailingSemicolon(sql);
+      const withTop = /^\s*select\s+distinct\b/i.test(baseSql)
+        ? baseSql.replace(/^\s*select\s+distinct\b/i, `SELECT DISTINCT TOP ${Number(maxRows)}`)
+        : baseSql.replace(/^\s*select\b/i, `SELECT TOP ${Number(maxRows)}`);
+      return `${withTop};`;
+    }
+
+    // CTE + SELECT and other complex forms are kept as-is; row slicing is still enforced in adapter output.
+    return `${stripTrailingSemicolon(sql)};`;
   }
 
   if (hasLimitClause(sql)) {
@@ -130,6 +154,7 @@ function ensureLimit(sql, maxRows) {
 function validateAndNormalizeSql(rawSql, opts = {}) {
   const maxRows = Number(opts.maxRows || 1000);
   const schemaObjects = Array.isArray(opts.schemaObjects) ? opts.schemaObjects : [];
+  const dialect = String(opts.dialect || "postgres").toLowerCase();
 
   let sql = sanitizeGeneratedSql(rawSql);
   if (!sql) {
@@ -145,9 +170,9 @@ function validateAndNormalizeSql(rawSql, opts = {}) {
     };
   }
 
-  sql = ensureLimit(sql, maxRows);
+  sql = ensureLimit(sql, maxRows, dialect);
 
-  const refsCheck = validateAstReadOnly(sql, schemaObjects);
+  const refsCheck = validateAstReadOnly(sql, schemaObjects, dialect);
   if (!refsCheck.ok) {
     return { ok: false, sql, errors: refsCheck.errors, refs: refsCheck.refs };
   }

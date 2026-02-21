@@ -2,8 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const appDb = require("./lib/appDb");
-const { PostgresAdapter } = require("./adapters/postgresAdapter");
-const { runPostgresIntrospection } = require("./services/introspectionService");
+const { createDatabaseAdapter, isSupportedDbType } = require("./adapters/dbAdapterFactory");
+const { runIntrospection } = require("./services/introspectionService");
 const { generateSqlWithRouting } = require("./services/llmSqlService");
 const { validateAndNormalizeSql } = require("./services/sqlSafety");
 const { evaluateExplainBudget } = require("./services/queryBudget");
@@ -107,13 +107,14 @@ function triggerRagReindexAsync(dataSourceId) {
 async function handleCreateDataSource(req, res) {
   const body = await readJsonBody(req);
   const { name, db_type: dbType, connection_ref: connectionRef } = body;
+  const normalizedDbType = String(dbType || "").trim().toLowerCase();
 
   if (!name || !dbType || !connectionRef) {
     return badRequest(res, "name, db_type and connection_ref are required");
   }
 
-  if (dbType !== "postgres") {
-    return badRequest(res, "Only postgres is supported in the current implementation");
+  if (!isSupportedDbType(normalizedDbType)) {
+    return badRequest(res, "Unsupported db_type. Supported values: postgres, mssql");
   }
 
   const result = await appDb.query(
@@ -122,7 +123,7 @@ async function handleCreateDataSource(req, res) {
       VALUES ($1, $2, $3, 'active')
       RETURNING id, name, db_type, status
     `,
-    [name, dbType, connectionRef]
+    [name, normalizedDbType, connectionRef]
   );
 
   return json(res, 201, result.rows[0]);
@@ -164,7 +165,7 @@ async function runIntrospectionJob(jobId, dataSource) {
       [jobId]
     );
 
-    await runPostgresIntrospection(dataSource);
+    await runIntrospection(dataSource);
     await reindexRagDocuments(dataSource.id);
 
     await appDb.query(
@@ -198,8 +199,8 @@ async function handleIntrospect(req, res, dataSourceId) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
   }
 
-  if (dataSource.db_type !== "postgres") {
-    return badRequest(res, "Only postgres introspection is supported right now");
+  if (!isSupportedDbType(dataSource.db_type)) {
+    return badRequest(res, `Unsupported db_type for introspection: ${dataSource.db_type}`);
   }
 
   const jobInsert = await appDb.query(
@@ -524,9 +525,10 @@ async function handleRunSession(req, res, sessionId) {
   }
 
   const session = sessionResult.rows[0];
-  if (session.db_type !== "postgres") {
-    return badRequest(res, "Only postgres data sources are supported for execution");
+  if (!isSupportedDbType(session.db_type)) {
+    return badRequest(res, `Unsupported db_type for execution: ${session.db_type}`);
   }
+  const sqlDialect = session.db_type === "mssql" ? "mssql" : "postgres";
 
   const schemaObjectsResult = await appDb.query(
     `
@@ -606,6 +608,7 @@ async function handleRunSession(req, res, sessionId) {
     try {
       const generation = await generateSqlWithRouting({
         dataSourceId: session.data_source_id,
+        dialect: sqlDialect,
         question: session.question,
         maxRows,
         requestedProvider,
@@ -630,13 +633,19 @@ async function handleRunSession(req, res, sessionId) {
     }
   }
 
-  const adapter = new PostgresAdapter(session.connection_ref);
+  let adapter;
+  try {
+    adapter = createDatabaseAdapter(session.db_type, session.connection_ref);
+  } catch (err) {
+    return badRequest(res, err.message);
+  }
   const generationStartedAt = Date.now();
 
   try {
     const safety = validateAndNormalizeSql(generatedSql, {
       maxRows,
-      schemaObjects: schemaObjectsResult.rows
+      schemaObjects: schemaObjectsResult.rows,
+      dialect: sqlDialect
     });
 
     let validationErrors = [];
@@ -692,7 +701,7 @@ async function handleRunSession(req, res, sessionId) {
       return json(res, 400, { error: "invalid_sql", details: validationErrors, sql: generatedSql });
     }
 
-    if (EXPLAIN_BUDGET_ENABLED) {
+    if (EXPLAIN_BUDGET_ENABLED && sqlDialect === "postgres") {
       const explainRows = await adapter.explain(safeSql);
       const budget = evaluateExplainBudget(explainRows, {
         maxTotalCost: EXPLAIN_MAX_TOTAL_COST,
@@ -841,9 +850,14 @@ async function handleFeedback(req, res, sessionId) {
 
   const sessionResult = await appDb.query(
     `
-      SELECT id, data_source_id, question
-      FROM query_sessions
-      WHERE id = $1
+      SELECT
+        qs.id,
+        qs.data_source_id,
+        qs.question,
+        ds.db_type
+      FROM query_sessions qs
+      JOIN data_sources ds ON ds.id = qs.data_source_id
+      WHERE qs.id = $1
     `,
     [sessionId]
   );
@@ -875,7 +889,8 @@ async function handleFeedback(req, res, sessionId) {
 
     const normalized = validateAndNormalizeSql(correctedSql, {
       maxRows: 1000,
-      schemaObjects: schemaObjectsResult.rows
+      schemaObjects: schemaObjectsResult.rows,
+      dialect: session.db_type === "mssql" ? "mssql" : "postgres"
     });
 
     if (!normalized.ok) {

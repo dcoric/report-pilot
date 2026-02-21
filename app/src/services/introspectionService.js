@@ -1,9 +1,9 @@
 const crypto = require("crypto");
-const { PostgresAdapter } = require("../adapters/postgresAdapter");
+const { createDatabaseAdapter } = require("../adapters/dbAdapterFactory");
 const appDb = require("../lib/appDb");
 
-async function runPostgresIntrospection(dataSource) {
-  const adapter = new PostgresAdapter(dataSource.connection_ref);
+async function runIntrospection(dataSource) {
+  const adapter = createDatabaseAdapter(dataSource.db_type, dataSource.connection_ref);
   try {
     const snapshot = await adapter.introspectSchema();
     await persistSnapshot(dataSource.id, snapshot);
@@ -136,5 +136,5 @@ function computeObjectHash(object, allColumns, allRelationships) {
 }
 
 module.exports = {
-  runPostgresIntrospection
+  runIntrospection
 };

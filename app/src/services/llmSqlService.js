@@ -12,6 +12,7 @@ async function generateSqlWithRouting(input) {
     dataSourceId,
     question,
     maxRows,
+    dialect,
     requestedProvider,
     requestedModel,
     schemaObjects,
@@ -26,6 +27,7 @@ async function generateSqlWithRouting(input) {
   const routingRule = await loadRoutingRule(dataSourceId);
   const providerOrder = buildProviderOrder(requestedProvider, routingRule, providerConfigs);
   const prompt = buildSqlPrompt({
+    dialect,
     question,
     maxRows,
     schemaObjects,
@@ -45,8 +47,7 @@ async function generateSqlWithRouting(input) {
       const adapter = buildAdapter(provider, providerConfig, requestedModel);
       const output = await adapter.generate({
         prompt,
-        systemPrompt:
-          "Generate a single PostgreSQL SELECT query for reporting. Output only SQL, no explanation.",
+        systemPrompt: buildSqlSystemPrompt(dialect),
         model: requestedModel || providerConfig?.default_model || undefined,
         temperature: 0,
         maxTokens: 900
@@ -91,7 +92,7 @@ async function generateSqlWithRouting(input) {
     throw new Error(`All LLM providers failed. Reasons: ${reasons}`);
   }
 
-  const fallbackSql = generateSqlFromQuestion(question, schemaObjects, maxRows);
+  const fallbackSql = generateSqlFromQuestion(question, schemaObjects, maxRows, dialect);
   attempts.push({
     provider: "local-fallback",
     model: "rule-based-v0",
@@ -214,6 +215,9 @@ async function loadRoutingRule(dataSourceId) {
 }
 
 function buildSqlPrompt(context) {
+  const dialect = String(context.dialect || "postgres").toLowerCase();
+  const dialectLabel = dialect === "mssql" ? "Microsoft SQL Server (T-SQL)" : "PostgreSQL";
+
   const schemaLines = (context.schemaObjects || [])
     .slice(0, 40)
     .map((obj) => `- ${obj.schema_name}.${obj.object_name} (${obj.object_type})`);
@@ -246,8 +250,10 @@ function buildSqlPrompt(context) {
 
   return [
     "Task:",
-    "Generate one PostgreSQL SELECT query for the user question.",
-    `Apply LIMIT ${Number(context.maxRows)} if query can return multiple rows.`,
+    `Generate one ${dialectLabel} SELECT query for the user question.`,
+    dialect === "mssql"
+      ? `Apply TOP ${Number(context.maxRows)} if query can return multiple rows.`
+      : `Apply LIMIT ${Number(context.maxRows)} if query can return multiple rows.`,
     "",
     "Rules:",
     "- Use only the schema objects listed below.",
@@ -275,6 +281,14 @@ function buildSqlPrompt(context) {
     "Retrieved RAG context (highest relevance):",
     ragLines.length > 0 ? ragLines.join("\n") : "- none"
   ].join("\n");
+}
+
+function buildSqlSystemPrompt(dialect) {
+  const normalized = String(dialect || "postgres").toLowerCase();
+  if (normalized === "mssql") {
+    return "Generate a single Microsoft SQL Server (T-SQL) SELECT query for reporting. Output only SQL, no explanation.";
+  }
+  return "Generate a single PostgreSQL SELECT query for reporting. Output only SQL, no explanation.";
 }
 
 function indent(text, spaces) {

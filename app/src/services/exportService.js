@@ -1,5 +1,5 @@
 const appDb = require("../lib/appDb");
-const { PostgresAdapter } = require("../adapters/postgresAdapter");
+const { createDatabaseAdapter } = require("../adapters/dbAdapterFactory");
 const { stringify } = require("csv-stringify/sync"); // Synchronous for simplicity in MVP, or stream
 const xlsx = require("xlsx");
 const parquet = require("parquetjs-lite");
@@ -73,7 +73,7 @@ async function exportQueryResult(sessionId, format = "json") {
 
   // 3. Re-execute the SQL (Read-Only)
   // Note: For very large datasets, we should stream. For MVP, we load into memory.
-  const adapter = new PostgresAdapter(session.connection_ref);
+  const adapter = createDatabaseAdapter(session.db_type, session.connection_ref);
   let rows = [];
   let columns = [];
   try {

@@ -63,6 +63,12 @@ docker compose down -v
   - `EXPLAIN_MAX_TOTAL_COST=500000`
   - `EXPLAIN_MAX_PLAN_ROWS=1000000`
 
+## Testing Data Sources
+
+For local test DB setup (dvdrental Docker fixture, AdventureWorks on SQL Server Express, and connection strings), see:
+
+- `test-data/README.md`
+
 ## Current API (Implemented)
 
 Health:
@@ -140,7 +146,7 @@ Benchmark assets:
 Recommended flow with the dvdrental fixture:
 
 ```bash
-# 1) Start dvdrental test DB
+# 1) Start dvdrental test DB (see test-data/README.md for connection strings)
 docker compose -f test-data/docker-compose.yml up -d
 
 # 2) Start app stack (metadata DB + API)

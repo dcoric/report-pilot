@@ -92,7 +92,7 @@ const getInitialLayout = (): LayoutState => {
 
 export const QueryWorkspace: React.FC = () => {
     // --- State ---
-    const { selectedDataSourceId } = useDataSource();
+    const { dataSources, selectedDataSourceId } = useDataSource();
 
     const [question, setQuestion] = useState('');
 
@@ -130,7 +130,6 @@ export const QueryWorkspace: React.FC = () => {
 
     const dragStateRef = useRef<{ section: SectionKey; startY: number; startHeight: number } | null>(null);
     const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-    const sqlFormattingProviderRef = useRef<{ dispose: () => void } | null>(null);
     const promptHistoryRef = useRef<HTMLDivElement | null>(null);
     const promptHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
     const promptHistoryPanelRef = useRef<HTMLDivElement | null>(null);
@@ -273,12 +272,9 @@ export const QueryWorkspace: React.FC = () => {
         void fetchPromptHistory(true);
     }, [isPromptHistoryOpen, selectedDataSourceId]);
 
-    useEffect(() => {
-        return () => {
-            sqlFormattingProviderRef.current?.dispose();
-            sqlFormattingProviderRef.current = null;
-        };
-    }, []);
+    const selectedDataSource = dataSources.find((ds) => ds.id === selectedDataSourceId);
+    const sqlFormatterDialect: 'postgresql' | 'transactsql' =
+        selectedDataSource?.db_type === 'mssql' ? 'transactsql' : 'postgresql';
 
     // --- Actions ---
     const fetchPromptHistory = async (showLoading = true) => {
@@ -392,35 +388,24 @@ export const QueryWorkspace: React.FC = () => {
         toast.info('SQL reset to original');
     };
 
-    const handleSqlEditorMount: OnMount = (editorInstance, monaco) => {
+    const handleSqlEditorMount: OnMount = (editorInstance) => {
         sqlEditorRef.current = editorInstance;
-
-        if (!sqlFormattingProviderRef.current) {
-            sqlFormattingProviderRef.current = monaco.languages.registerDocumentFormattingEditProvider('sql', {
-                provideDocumentFormattingEdits(model: editor.ITextModel) {
-                    try {
-                        const formatted = formatSql(model.getValue(), { language: 'postgresql' });
-                        return [{ range: model.getFullModelRange(), text: formatted }];
-                    } catch (error) {
-                        console.error('SQL formatting failed:', error);
-                        return [];
-                    }
-                },
-            });
-        }
     };
 
-    const handleFormatSql = async () => {
+    const handleFormatSql = () => {
         if (!generatedSql.trim()) return;
 
-        const action = sqlEditorRef.current?.getAction('editor.action.formatDocument');
-        if (!action) {
+        const editorInstance = sqlEditorRef.current;
+        const model = editorInstance?.getModel();
+        if (!editorInstance || !model) {
             toast.error('SQL formatter is not available');
             return;
         }
 
         try {
-            await action.run();
+            const formatted = formatSql(model.getValue(), { language: sqlFormatterDialect });
+            editorInstance.executeEdits('format-sql', [{ range: model.getFullModelRange(), text: formatted }]);
+            editorInstance.pushUndoStop();
         } catch (error) {
             console.error('Failed to format SQL:', error);
             toast.error('Failed to format SQL');

@@ -1048,7 +1048,7 @@ export interface components {
         CreateDataSourceRequest: {
             name: string;
             /** @enum {string} */
-            db_type: "postgres";
+            db_type: "postgres" | "mssql";
             connection_ref: string;
         };
         DataSourceResponse: {

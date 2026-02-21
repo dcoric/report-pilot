@@ -138,7 +138,7 @@ class PostgresAdapter {
   }
 
   async validateSql(sql) {
-    return validateAstReadOnly(sql, []);
+    return validateAstReadOnly(sql, [], this.dialect());
   }
 
   async explain(sql) {

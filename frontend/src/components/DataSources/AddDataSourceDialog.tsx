@@ -11,7 +11,7 @@ interface AddDataSourceDialogProps {
 
 export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen, onClose, onSuccess }) => {
     const [name, setName] = useState('');
-    const [dbType, setDbType] = useState<'postgres'>('postgres');
+    const [dbType, setDbType] = useState<'postgres' | 'mssql'>('postgres');
     const [connectionRef, setConnectionRef] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -76,9 +76,10 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                         <select
                             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={dbType}
-                            onChange={(e) => setDbType(e.target.value as 'postgres')}
+                            onChange={(e) => setDbType(e.target.value as 'postgres' | 'mssql')}
                         >
                             <option value="postgres">PostgreSQL</option>
+                            <option value="mssql">MS SQL Server</option>
                         </select>
                     </div>
 
@@ -90,9 +91,13 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={connectionRef}
                             onChange={(e) => setConnectionRef(e.target.value)}
-                            placeholder="env:DATABASE_URL"
+                            placeholder={
+                                dbType === 'mssql'
+                                    ? 'Server=172.28.64.1,1433;Database=AdventureWorks2022;User Id=report_pilot;Password=...;Encrypt=True;TrustServerCertificate=True;'
+                                    : 'postgresql://user:password@host:5432/database'
+                            }
                         />
-                        <p className="text-xs text-gray-500 mt-1">Reference to an environment variable containing the connection string.</p>
+                        <p className="text-xs text-gray-500 mt-1">Paste a full database connection string for the selected engine.</p>
                     </div>
 
                     <div className="flex justify-end gap-2 mt-4">

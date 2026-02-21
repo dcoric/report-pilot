@@ -1,4 +1,4 @@
-function generateSqlFromQuestion(question, schemaObjects, maxRows) {
+function generateSqlFromQuestion(question, schemaObjects, maxRows, dialect = "postgres") {
   const normalizedQuestion = String(question || "").toLowerCase();
   const limit = Number.isFinite(Number(maxRows)) ? Number(maxRows) : 1000;
 
@@ -7,12 +7,15 @@ function generateSqlFromQuestion(question, schemaObjects, maxRows) {
   }
 
   const selectedObject = pickObjectFromQuestion(normalizedQuestion, schemaObjects) || schemaObjects[0];
-  const qualifiedTable = `${quoteIdentifier(selectedObject.schema_name)}.${quoteIdentifier(selectedObject.object_name)}`;
+  const qualifiedTable = `${quoteIdentifier(selectedObject.schema_name, dialect)}.${quoteIdentifier(selectedObject.object_name, dialect)}`;
 
   if (isCountQuestion(normalizedQuestion)) {
     return `SELECT COUNT(*) AS total_count FROM ${qualifiedTable};`;
   }
 
+  if (dialect === "mssql") {
+    return `SELECT TOP ${limit} * FROM ${qualifiedTable};`;
+  }
   return `SELECT * FROM ${qualifiedTable} LIMIT ${limit};`;
 }
 
@@ -32,7 +35,10 @@ function pickObjectFromQuestion(question, schemaObjects) {
   });
 }
 
-function quoteIdentifier(identifier) {
+function quoteIdentifier(identifier, dialect = "postgres") {
+  if (dialect === "mssql") {
+    return `[${String(identifier).replace(/]/g, "]]")}]`;
+  }
   return `"${String(identifier).replace(/"/g, "\"\"")}"`;
 }
 

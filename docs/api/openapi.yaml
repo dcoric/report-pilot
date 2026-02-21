@@ -628,7 +628,7 @@ components:
           type: string
         db_type:
           type: string
-          enum: [postgres]
+          enum: [postgres, mssql]
         connection_ref:
           type: string
       required: [name, db_type, connection_ref]
