@@ -60,7 +60,8 @@ async function buildRagDocuments(dataSourceId) {
     semanticEntitiesResult,
     metricDefinitionsResult,
     joinPoliciesResult,
-    examplesResult
+    examplesResult,
+    ragNotesResult
   ] = await Promise.all([
     appDb.query(
       `
@@ -137,6 +138,15 @@ async function buildRagDocuments(dataSourceId) {
         WHERE data_source_id = $1
         ORDER BY created_at DESC
         LIMIT 200
+      `,
+      [dataSourceId]
+    ),
+    appDb.query(
+      `
+        SELECT id, title, content
+        FROM rag_notes
+        WHERE data_source_id = $1 AND active = TRUE
+        ORDER BY created_at DESC
       `,
       [dataSourceId]
     )
@@ -253,6 +263,18 @@ async function buildRagDocuments(dataSourceId) {
     });
   }
 
+  for (const note of ragNotesResult.rows) {
+    docs.push({
+      docType: "policy",
+      refId: String(note.id),
+      metadata: {
+        source: "rag_note",
+        title: note.title
+      },
+      content: [`note ${note.title}`, note.content].join("\n")
+    });
+  }
+
   return docs;
 }
 
@@ -273,5 +295,8 @@ function sha256(content) {
 }
 
 module.exports = {
-  reindexRagDocuments
+  reindexRagDocuments,
+  __private: {
+    buildRagDocuments
+  }
 };

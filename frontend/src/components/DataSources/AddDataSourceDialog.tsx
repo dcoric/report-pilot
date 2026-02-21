@@ -49,8 +49,8 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
                 <div className="flex justify-between items-center p-4 border-b">
                     <h2 className="text-lg font-semibold">Add Data Source</h2>
                     <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
@@ -58,66 +58,69 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                        <input
-                            type="text"
-                            required
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            placeholder="e.g. Production DB"
-                        />
-                    </div>
+                <div className="p-4 overflow-y-auto flex-1">
+                    <form id="add-data-source-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                            <input
+                                type="text"
+                                required
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="e.g. Production DB"
+                            />
+                        </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Database Type</label>
-                        <select
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            value={dbType}
-                            onChange={(e) => setDbType(e.target.value as 'postgres' | 'mssql')}
-                        >
-                            <option value="postgres">PostgreSQL</option>
-                            <option value="mssql">MS SQL Server</option>
-                        </select>
-                    </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Database Type</label>
+                            <select
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={dbType}
+                                onChange={(e) => setDbType(e.target.value as 'postgres' | 'mssql')}
+                            >
+                                <option value="postgres">PostgreSQL</option>
+                                <option value="mssql">MS SQL Server</option>
+                            </select>
+                        </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Connection String Reference</label>
-                        <input
-                            type="text"
-                            required
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            value={connectionRef}
-                            onChange={(e) => setConnectionRef(e.target.value)}
-                            placeholder={
-                                dbType === 'mssql'
-                                    ? 'Server=172.28.64.1,1433;Database=AdventureWorks2022;User Id=report_pilot;Password=...;Encrypt=True;TrustServerCertificate=True;'
-                                    : 'postgresql://user:password@host:5432/database'
-                            }
-                        />
-                        <p className="text-xs text-gray-500 mt-1">Paste a full database connection string for the selected engine.</p>
-                    </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Connection String Reference</label>
+                            <input
+                                type="text"
+                                required
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={connectionRef}
+                                onChange={(e) => setConnectionRef(e.target.value)}
+                                placeholder={
+                                    dbType === 'mssql'
+                                        ? 'Server=172.28.64.1,1433;Database=AdventureWorks2022;User Id=report_pilot;Password=...;Encrypt=True;TrustServerCertificate=True;'
+                                        : 'postgresql://user:password@host:5432/database'
+                                }
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Paste a full database connection string for the selected engine.</p>
+                        </div>
+                    </form>
+                </div>
 
-                    <div className="flex justify-end gap-2 mt-4">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-                            disabled={isSubmitting}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                            disabled={isSubmitting}
-                        >
-                            {isSubmitting ? 'Adding...' : 'Add Data Source'}
-                        </button>
-                    </div>
-                </form>
+                <div className="border-t p-4 bg-gray-50 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-100"
+                        disabled={isSubmitting}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        form="add-data-source-form"
+                        type="submit"
+                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                        disabled={isSubmitting}
+                    >
+                        {isSubmitting ? 'Adding...' : 'Add Data Source'}
+                    </button>
+                </div>
             </div>
         </div>
     );

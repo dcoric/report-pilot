@@ -60,3 +60,12 @@ Use this checklist as the execution tracker. Mark items done as implementation p
 - [x] Add automated benchmark runner and scoring report
 - [x] Add observability (latency, query cost, provider failures)
 - [x] Meet MVP release gates from `TECH_SPEC.md`
+
+## Phase 6 - RAG Authoring
+
+- [x] Add migration for manual RAG notes storage (`rag_notes`)
+- [x] Add RAG notes CRUD API with validation and auto async reindex
+- [x] Include active RAG notes in RAG build/index pipeline as policy docs
+- [x] Add Data Sources UI modal for list/create/edit/delete RAG notes
+- [x] Update OpenAPI and generated frontend API types for note endpoints
+- [x] Add backend tests for migration, API behavior, and RAG note indexing

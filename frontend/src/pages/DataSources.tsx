@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Database, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { Plus, Database, RefreshCw, Sparkles, Trash2, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
 import { AddDataSourceDialog } from '../components/DataSources/AddDataSourceDialog';
+import { RagNotesDialog } from '../components/DataSources/RagNotesDialog';
 import type { components } from '../lib/api/types';
 
 type DataSource = components['schemas']['DataSourceListResponse']['items'][number];
@@ -14,6 +15,7 @@ export const DataSources: React.FC = () => {
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [introspectingIds, setIntrospectingIds] = useState<Set<string>>(new Set());
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [ragNotesSource, setRagNotesSource] = useState<DataSource | null>(null);
 
     const fetchDataSources = async () => {
         setIsLoading(true);
@@ -225,6 +227,19 @@ export const DataSources: React.FC = () => {
                                     >
                                         <Sparkles size={16} />
                                     </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setRagNotesSource(ds);
+                                        }}
+                                        className="text-xs px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                                        title="Manage RAG Notes"
+                                    >
+                                        <span className="inline-flex items-center gap-1">
+                                            <FileText size={12} />
+                                            RAG Notes
+                                        </span>
+                                    </button>
                                     {deleteConfirmId === ds.id ? (
                                         <span className="flex items-center gap-1">
                                             <button
@@ -269,6 +284,12 @@ export const DataSources: React.FC = () => {
                 isOpen={isAddDialogOpen}
                 onClose={() => setIsAddDialogOpen(false)}
                 onSuccess={fetchDataSources}
+            />
+            <RagNotesDialog
+                isOpen={Boolean(ragNotesSource)}
+                dataSourceId={ragNotesSource?.id || null}
+                dataSourceName={ragNotesSource?.name || null}
+                onClose={() => setRagNotesSource(null)}
             />
         </div>
     );
