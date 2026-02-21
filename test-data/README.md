@@ -63,7 +63,15 @@ sqlcmd -S "$WIN_IP,1433" -U report_pilot -P 'UseAStrongPasswordHere!' -d Adventu
 5. Connection string for this app:
 
 ```text
-Server=<WIN_IP>,1433;Database=AdventureWorks2022;User Id=report_pilot;Password=UseAStrongPasswordHere!;Encrypt=True;TrustServerCertificate=True;
+Server=172.28.64.1,1433;Database=AdventureWorks2022;User Id=report_pilot;Password=UseAStrongPasswordHere!;Encrypt=True;TrustServerCertificate=True;
 ```
+
+Replace `172.28.64.1` with your actual Windows host IP from:
+
+```bash
+ip route | awk '/default/ {print $3}'
+```
+
+Do not paste `<WIN_IP>` literally into the connection string.
 
 Note: `Trusted_Connection=True` is not supported in this Linux runtime flow.
