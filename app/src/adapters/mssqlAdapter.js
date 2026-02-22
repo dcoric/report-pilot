@@ -166,7 +166,24 @@ class MssqlAdapter {
   }
 
   async validateSql(sqlText) {
-    return validateAstReadOnly(sqlText, [], this.dialect());
+    const readOnlyCheck = validateAstReadOnly(sqlText, [], this.dialect());
+    if (!readOnlyCheck.ok) {
+      return readOnlyCheck;
+    }
+
+    try {
+      await this.describeFirstResultSet(sqlText);
+      return readOnlyCheck;
+    } catch (err) {
+      if (isDescribeFirstResultUnavailable(err)) {
+        return readOnlyCheck;
+      }
+      return {
+        ok: false,
+        errors: [normalizeMssqlValidationError(err)],
+        refs: readOnlyCheck.refs || []
+      };
+    }
   }
 
   async explain(sqlText) {
@@ -203,6 +220,18 @@ class MssqlAdapter {
 
   quoteIdentifier(identifier) {
     return `[${String(identifier).replace(/]/g, "]]")}]`;
+  }
+
+  async describeFirstResultSet(sqlText) {
+    await this.poolConnect;
+    const request = this.pool.request();
+    request.input("tsql", sql.NVarChar(sql.MAX), String(sqlText || "").trim());
+    return request.query(`
+      EXEC sys.sp_describe_first_result_set
+        @tsql = @tsql,
+        @params = NULL,
+        @browse_information_mode = 0;
+    `);
   }
 
   async query(sqlText, timeoutMs) {
@@ -370,6 +399,31 @@ function parseIndexColumns(rawColumns) {
     .split(",")
     .map((part) => part.trim().replace(/[\[\]]/g, ""))
     .filter(Boolean);
+}
+
+function normalizeMssqlValidationError(err) {
+  const candidates = [
+    err?.originalError?.info?.message,
+    Array.isArray(err?.precedingErrors) ? err.precedingErrors[0]?.message : null,
+    err?.message
+  ];
+
+  const message = candidates
+    .map((item) => String(item || "").trim())
+    .find(Boolean) || "SQL validation failed";
+
+  return message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) || message;
+}
+
+function isDescribeFirstResultUnavailable(err) {
+  const message = String(err?.message || "").toLowerCase();
+  return (
+    message.includes("sp_describe_first_result_set") &&
+    (message.includes("permission") || message.includes("could not find stored procedure"))
+  );
 }
 
 module.exports = {

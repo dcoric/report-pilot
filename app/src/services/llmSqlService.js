@@ -1,4 +1,5 @@
 const appDb = require("../lib/appDb");
+const { logEvent } = require("../lib/observability");
 const { generateSqlFromQuestion } = require("./sqlGenerator");
 const { OpenAiAdapter } = require("../adapters/llm/openAiAdapter");
 const { GeminiAdapter } = require("../adapters/llm/geminiAdapter");
@@ -6,6 +7,8 @@ const { DeepSeekAdapter } = require("../adapters/llm/deepSeekAdapter");
 const { resolveApiKey } = require("../adapters/llm/httpClient");
 
 const DEFAULT_PROVIDER_ORDER = ["openai", "gemini", "deepseek"];
+const LLM_DEBUG_LOG_ENABLED = String(process.env.LLM_DEBUG_LOG || "false") === "true";
+const LLM_DEBUG_MAX_CHARS = clampPositiveInt(process.env.LLM_DEBUG_MAX_CHARS, 16000);
 
 async function generateSqlWithRouting(input) {
   const {
@@ -26,6 +29,7 @@ async function generateSqlWithRouting(input) {
   const providerConfigs = await loadProviderConfigs();
   const routingRule = await loadRoutingRule(dataSourceId);
   const providerOrder = buildProviderOrder(requestedProvider, routingRule, providerConfigs);
+  const systemPrompt = buildSqlSystemPrompt(dialect);
   const prompt = buildSqlPrompt({
     dialect,
     question,
@@ -37,23 +41,57 @@ async function generateSqlWithRouting(input) {
     joinPolicies,
     ragDocuments
   });
+  logLlmDebug({
+    stage: "request_compiled",
+    request_id: input.requestId || null,
+    data_source_id: dataSourceId,
+    question,
+    requested_provider: requestedProvider || null,
+    requested_model: requestedModel || null,
+    provider_order: providerOrder,
+    prompt,
+    system_prompt: systemPrompt
+  });
 
   const attempts = [];
   for (const provider of providerOrder) {
     const providerConfig = providerConfigs.get(provider) || null;
 
     const startedAt = Date.now();
+    const model = requestedModel || providerConfig?.default_model || null;
     try {
       const adapter = buildAdapter(provider, providerConfig, requestedModel);
+      logLlmDebug({
+        stage: "provider_request",
+        request_id: input.requestId || null,
+        provider,
+        model,
+        temperature: 0,
+        max_tokens: 900,
+        prompt,
+        system_prompt: systemPrompt
+      });
+
       const output = await adapter.generate({
         prompt,
-        systemPrompt: buildSqlSystemPrompt(dialect),
-        model: requestedModel || providerConfig?.default_model || undefined,
+        systemPrompt: systemPrompt,
+        model: model || undefined,
         temperature: 0,
         maxTokens: 900
       });
 
       const sql = String(output.text || "").trim();
+      const latencyMs = Date.now() - startedAt;
+      logLlmDebug({
+        stage: "provider_response",
+        request_id: input.requestId || null,
+        provider,
+        model: output.model || model,
+        status_code: 200,
+        latency_ms: latencyMs,
+        usage: normalizeTokenUsage(output.usage),
+        sql
+      });
       if (!sql) {
         throw new Error("Model returned empty SQL");
       }
@@ -61,26 +99,39 @@ async function generateSqlWithRouting(input) {
       const usage = normalizeTokenUsage(output.usage);
       attempts.push({
         provider,
-        model: output.model || requestedModel || providerConfig?.default_model || null,
+        model: output.model || model,
         status: "success",
-        latency_ms: Date.now() - startedAt,
+        status_code: 200,
+        latency_ms: latencyMs,
         usage
       });
 
       return {
         sql,
         provider,
-        model: output.model || requestedModel || providerConfig?.default_model || null,
+        model: output.model || model,
         attempts,
         tokenUsage: usage,
         promptVersion: "v2-llm-router"
       };
     } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      const statusCode = normalizeStatusCode(err?.statusCode);
+      logLlmDebug({
+        stage: "provider_error",
+        request_id: input.requestId || null,
+        provider,
+        model,
+        status_code: statusCode,
+        latency_ms: latencyMs,
+        error: err.message || String(err)
+      });
       attempts.push({
         provider,
-        model: requestedModel || providerConfig?.default_model || null,
+        model,
         status: "failed",
-        latency_ms: Date.now() - startedAt,
+        status_code: statusCode,
+        latency_ms: latencyMs,
         error: err.message
       });
     }
@@ -97,8 +148,16 @@ async function generateSqlWithRouting(input) {
     provider: "local-fallback",
     model: "rule-based-v0",
     status: "success",
+    status_code: null,
     latency_ms: 0,
     usage: null
+  });
+  logLlmDebug({
+    stage: "fallback_rule_based",
+    request_id: input.requestId || null,
+    provider: "local-fallback",
+    model: "rule-based-v0",
+    sql: fallbackSql
   });
 
   return {
@@ -257,6 +316,7 @@ function buildSqlPrompt(context) {
     "",
     "Rules:",
     "- Use only the schema objects listed below.",
+    "- For each referenced object, use only columns listed for that exact object.",
     "- Prefer semantic mappings and metric definitions when relevant.",
     "- Never use INSERT, UPDATE, DELETE, ALTER, DROP, CREATE, TRUNCATE, GRANT, REVOKE.",
     "- Return SQL only. No markdown, no explanation.",
@@ -316,6 +376,44 @@ function normalizeTokenUsage(raw) {
 }
 
 function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function logLlmDebug(payload) {
+  if (!LLM_DEBUG_LOG_ENABLED) {
+    return;
+  }
+  const safePayload = Object.assign({}, payload);
+  if (typeof safePayload.prompt === "string") {
+    safePayload.prompt = truncateText(safePayload.prompt);
+  }
+  if (typeof safePayload.system_prompt === "string") {
+    safePayload.system_prompt = truncateText(safePayload.system_prompt);
+  }
+  if (typeof safePayload.sql === "string") {
+    safePayload.sql = truncateText(safePayload.sql);
+  }
+  logEvent("llm_debug", safePayload);
+}
+
+function truncateText(value) {
+  const text = String(value || "");
+  if (text.length <= LLM_DEBUG_MAX_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, LLM_DEBUG_MAX_CHARS)}... [truncated ${text.length - LLM_DEBUG_MAX_CHARS} chars]`;
+}
+
+function clampPositiveInt(raw, fallback) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallback;
+  }
+  return Math.floor(n);
+}
+
+function normalizeStatusCode(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }

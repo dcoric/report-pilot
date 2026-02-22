@@ -5,6 +5,12 @@
   "license": "MIT",
   "description": "Report Pilot NL to SQL backend (bootstrap runtime)",
   "scripts": {
+    "dev:fe": "npm --prefix frontend run dev",
+    "dev:be": "nodemon --watch app/src --ext js --exec \"node app/src/start.js\"",
+    "build:fe": "npm --prefix frontend run build",
+    "build:be": "npm run build",
+    "dev": "concurrently \"npm run dev:fe\" \"npm run dev:be\"",
+    "build": "npm run build:fe && npm run build:be",
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",
     "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
@@ -21,5 +27,8 @@
     "parquetjs-lite": "^0.8.7",
     "pg": "^8.13.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

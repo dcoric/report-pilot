@@ -26,6 +26,13 @@ import type { components } from '../lib/api/types';
 // Types
 type RunResponse = components['schemas']['RunSessionResponse'];
 type PromptHistoryItem = components['schemas']['PromptHistoryItem'];
+type RunProvider = NonNullable<components['schemas']['RunSessionRequest']['llm_provider']>;
+type RunErrorPayload = {
+    error?: string;
+    message?: string;
+    details?: string[];
+    sql?: string;
+};
 
 interface LlmProvider {
     id: string;
@@ -89,6 +96,28 @@ const getInitialLayout = (): LayoutState => {
         return fallback;
     }
 };
+
+const parseRunErrorPayload = (error: unknown): RunErrorPayload | null => {
+    if (!error || typeof error !== 'object') {
+        return null;
+    }
+
+    const payload = error as Record<string, unknown>;
+    const details = Array.isArray(payload.details)
+        ? payload.details.map((item) => String(item)).filter(Boolean)
+        : undefined;
+
+    return {
+        error: typeof payload.error === 'string' ? payload.error : undefined,
+        message: typeof payload.message === 'string' ? payload.message : undefined,
+        details,
+        sql: typeof payload.sql === 'string' ? payload.sql : undefined,
+    };
+};
+
+const isRunProvider = (value: string): value is RunProvider => (
+    value === 'openai' || value === 'gemini' || value === 'deepseek'
+);
 
 export const QueryWorkspace: React.FC = () => {
     // --- State ---
@@ -276,6 +305,17 @@ export const QueryWorkspace: React.FC = () => {
     const sqlFormatterDialect: 'postgresql' | 'transactsql' =
         selectedDataSource?.db_type === 'mssql' ? 'transactsql' : 'postgresql';
 
+    const applyRunError = (error: unknown, opts?: { updateOriginalSql?: boolean }) => {
+        const payload = parseRunErrorPayload(error);
+        if (payload?.sql) {
+            setGeneratedSql(payload.sql);
+            setIsSqlExpanded(true);
+            if (opts?.updateOriginalSql) {
+                setOriginalSql(payload.sql);
+            }
+        }
+    };
+
     // --- Actions ---
     const fetchPromptHistory = async (showLoading = true) => {
         if (showLoading) {
@@ -339,32 +379,62 @@ export const QueryWorkspace: React.FC = () => {
     };
 
     const generateSql = async (sessId: string, sqlOverride?: string) => {
-        const { data } = await client.POST('/v1/query/sessions/{sessionId}/run', {
+        const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/run', {
             params: { path: { sessionId: sessId } },
-            body: sqlOverride ? { sql_override: sqlOverride } : {}
+            body: {
+                llm_provider: isRunProvider(provider) ? provider : undefined,
+                model: model || undefined,
+                max_rows: maxRows,
+                timeout_ms: Math.max(1000, Math.round(timeout * 1000)),
+                ...(sqlOverride ? { sql_override: sqlOverride } : {}),
+            }
         });
 
         if (data) {
             setGeneratedSql(data.sql);
             setOriginalSql(data.sql);
             setQueryResult(data);
+            return;
+        }
+
+        if (error) {
+            setQueryResult(null);
+            applyRunError(error, { updateOriginalSql: true });
         }
     };
 
     const handleRun = async () => {
-        if (!sessionId) return;
+        if (!sessionId) {
+            toast.error('Create a query session first by clicking Ask.');
+            return;
+        }
+        const sqlOverride = generatedSql.trim();
+        if (!sqlOverride) return;
 
         setIsRunning(true);
         try {
-            const { data } = await client.POST('/v1/query/sessions/{sessionId}/run', {
+            const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/run', {
                 params: { path: { sessionId } },
-                body: {}
+                body: {
+                    llm_provider: isRunProvider(provider) ? provider : undefined,
+                    model: model || undefined,
+                    sql_override: sqlOverride,
+                    max_rows: maxRows,
+                    timeout_ms: Math.max(1000, Math.round(timeout * 1000)),
+                }
             });
 
             if (data) {
                 setGeneratedSql(data.sql);
+                setOriginalSql(data.sql);
                 setQueryResult(data);
                 toast.success('Query executed successfully');
+                return;
+            }
+
+            if (error) {
+                setQueryResult(null);
+                applyRunError(error);
             }
         } catch (e) {
             console.error(e);
@@ -714,7 +784,7 @@ export const QueryWorkspace: React.FC = () => {
                             </button>
                             <button
                                 onClick={handleRun}
-                                disabled={isRunning || !generatedSql}
+                                disabled={isRunning || !generatedSql || !sessionId}
                                 className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
