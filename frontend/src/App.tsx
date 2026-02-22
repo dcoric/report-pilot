@@ -12,7 +12,7 @@ import { LLMProviders } from './pages/LLMProviders';
 function App() {
   return (
     <Router>
-      <Toaster position="top-right" richColors />
+      <Toaster position="top-right" richColors duration={10000} />
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<Dashboard />} />

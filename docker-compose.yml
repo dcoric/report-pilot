@@ -42,6 +42,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      LLM_DEBUG_LOG: ${LLM_DEBUG_LOG:-false}
+      LLM_DEBUG_MAX_CHARS: ${LLM_DEBUG_MAX_CHARS:-16000}
     ports:
       - "${APP_PORT:-8080}:8080"
     healthcheck:

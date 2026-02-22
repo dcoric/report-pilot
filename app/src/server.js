@@ -6,6 +6,10 @@ const { createDatabaseAdapter, isSupportedDbType } = require("./adapters/dbAdapt
 const { runIntrospection } = require("./services/introspectionService");
 const { generateSqlWithRouting } = require("./services/llmSqlService");
 const { validateAndNormalizeSql } = require("./services/sqlSafety");
+const {
+  extractForbiddenColumnsFromRagNotes,
+  validateSqlAgainstForbiddenColumns
+} = require("./services/columnPolicyService");
 const { evaluateExplainBudget } = require("./services/queryBudget");
 const { buildCitations, computeConfidence } = require("./services/queryResponse");
 const { reindexRagDocuments } = require("./services/ragService");
@@ -93,6 +97,34 @@ function clamp(n, min, max) {
 
 function isUuid(value) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isLikelyInvalidSqlExecutionError(err, dialect = "postgres") {
+  const message = String(err?.message || "");
+  if (!message) {
+    return false;
+  }
+
+  const commonPatterns = [
+    /syntax error/i,
+    /incorrect syntax/i
+  ];
+  const mssqlPatterns = [
+    /invalid column name/i,
+    /invalid object name/i,
+    /ambiguous column name/i,
+    /multi-part identifier .* could not be bound/i
+  ];
+  const postgresPatterns = [
+    /column .* does not exist/i,
+    /relation .* does not exist/i,
+    /missing from-clause entry/i
+  ];
+
+  const patterns = dialect === "mssql"
+    ? [...commonPatterns, ...mssqlPatterns]
+    : [...commonPatterns, ...postgresPatterns];
+  return patterns.some((pattern) => pattern.test(message));
 }
 
 function triggerRagReindexAsync(dataSourceId) {
@@ -737,7 +769,18 @@ async function handleRunSession(req, res, sessionId) {
     [session.data_source_id]
   );
 
+  const ragNotesResult = await appDb.query(
+    `
+      SELECT id, title, content
+      FROM rag_notes
+      WHERE data_source_id = $1 AND active = TRUE
+      ORDER BY created_at DESC
+    `,
+    [session.data_source_id]
+  );
+
   const ragDocuments = await retrieveRagContext(session.data_source_id, session.question, { limit: 12 });
+  const forbiddenColumns = extractForbiddenColumnsFromRagNotes(ragNotesResult.rows, columnsResult.rows);
 
   let generatedSql;
   let usedProvider = "unknown";
@@ -753,6 +796,7 @@ async function handleRunSession(req, res, sessionId) {
   } else {
     try {
       const generation = await generateSqlWithRouting({
+        requestId: req.requestId || null,
         dataSourceId: session.data_source_id,
         dialect: sqlDialect,
         question: session.question,
@@ -801,8 +845,18 @@ async function handleRunSession(req, res, sessionId) {
       validationErrors = safety.errors;
     } else {
       safeSql = safety.sql;
+      const blockedColumnCheck = validateSqlAgainstForbiddenColumns(
+        safeSql,
+        forbiddenColumns,
+        safety.refs || [],
+        sqlDialect
+      );
+      if (!blockedColumnCheck.ok) {
+        validationErrors = blockedColumnCheck.errors;
+      }
+
       const adapterValidation = await adapter.validateSql(safeSql);
-      if (!adapterValidation.ok) {
+      if (validationErrors.length === 0 && !adapterValidation.ok) {
         validationErrors = adapterValidation.errors;
       }
     }
@@ -976,6 +1030,13 @@ async function handleRunSession(req, res, sessionId) {
     });
   } catch (err) {
     await appDb.query("UPDATE query_sessions SET status = 'failed' WHERE id = $1", [sessionId]);
+    if (isLikelyInvalidSqlExecutionError(err, sqlDialect)) {
+      return json(res, 400, {
+        error: "invalid_sql",
+        details: [err.message],
+        sql: generatedSql
+      });
+    }
     return json(res, 500, {
       error: "query_execution_failed",
       message: err.message,

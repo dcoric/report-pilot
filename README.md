@@ -58,6 +58,9 @@ docker compose down -v
 - Migration state is tracked in the `schema_migrations` table.
 - LLM provider keys can be supplied via `.env` (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`).
 - `ALLOW_RULE_BASED_FALLBACK=true` keeps `/run` functional even when no provider key is configured.
+- Enable LLM debug traces when needed:
+  - `LLM_DEBUG_LOG=true` logs prompt input + provider response SQL to stdout as `llm_debug` events.
+  - `LLM_DEBUG_MAX_CHARS=16000` caps logged prompt/SQL size per field.
 - Pre-execution plan budget checks are enabled by default:
   - `EXPLAIN_BUDGET_ENABLED=true`
   - `EXPLAIN_MAX_TOTAL_COST=500000`

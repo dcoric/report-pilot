@@ -4,7 +4,7 @@ class OpenAiAdapter {
   constructor(opts = {}) {
     this.provider = "openai";
     this.apiKey = opts.apiKey || "";
-    this.defaultModel = opts.defaultModel || "gpt-4.1-mini";
+    this.defaultModel = opts.defaultModel || "gpt-5.2-mini";
     this.timeoutMs = Number(opts.timeoutMs || 15000);
   }
 
@@ -18,10 +18,10 @@ class OpenAiAdapter {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
+    const maxTokens = input.maxTokens ?? 800;
     const payload = {
       model,
       temperature: input.temperature ?? 0,
-      max_tokens: input.maxTokens ?? 800,
       messages: [
         {
           role: "system",
@@ -33,6 +33,11 @@ class OpenAiAdapter {
         }
       ]
     };
+    if (usesCompletionTokenParam(model)) {
+      payload.max_completion_tokens = maxTokens;
+    } else {
+      payload.max_tokens = maxTokens;
+    }
 
     const response = await postJson("https://api.openai.com/v1/chat/completions", payload, {
       timeoutMs: this.timeoutMs,
@@ -81,8 +86,8 @@ class OpenAiAdapter {
 
     const vectors = Array.isArray(response?.data)
       ? response.data
-          .sort((a, b) => a.index - b.index)
-          .map((item) => item.embedding)
+        .sort((a, b) => a.index - b.index)
+        .map((item) => item.embedding)
       : [];
 
     if (vectors.length !== texts.length) {
@@ -94,6 +99,10 @@ class OpenAiAdapter {
       model: response?.model || model
     };
   }
+}
+
+function usesCompletionTokenParam(model) {
+  return /^gpt-5(?:[.-]|$)/i.test(String(model || ""));
 }
 
 module.exports = {
