@@ -46,6 +46,8 @@ services:
       LLM_DEBUG_MAX_CHARS: ${LLM_DEBUG_MAX_CHARS:-16000}
     ports:
       - "${APP_PORT:-8080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
