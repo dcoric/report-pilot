@@ -620,7 +620,7 @@ export const QueryWorkspace: React.FC = () => {
                                             value={model}
                                             onChange={(e) => setModel(e.target.value)}
                                             className="w-36 px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            placeholder="e.g. gpt-4o"
+                                            placeholder="e.g. gpt-5.2"
                                         />
                                     </div>
 

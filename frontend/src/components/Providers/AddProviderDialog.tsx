@@ -10,7 +10,7 @@ interface AddProviderDialogProps {
 }
 
 const PROVIDER_OPTIONS = [
-    { id: 'openai', name: 'OpenAI', defaultModel: 'gpt-4o' },
+    { id: 'openai', name: 'OpenAI', defaultModel: 'gpt-5.2' },
     { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-pro' },
     { id: 'deepseek', name: 'DeepSeek', defaultModel: 'deepseek-chat' },
 ] as const;
@@ -107,7 +107,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             value={defaultModel}
                             onChange={(e) => setDefaultModel(e.target.value)}
-                            placeholder="e.g. gpt-4o"
+                            placeholder="e.g. gpt-5.2"
                         />
                     </div>
 

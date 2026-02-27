@@ -14,7 +14,8 @@
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",
     "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
-    "test": "node --test app/test/**/*.test.js"
+    "test": "node --test app/test/**/*.test.js",
+    "postinstall": "npm --prefix frontend install"
   },
   "engines": {
     "node": ">=20.0.0"
