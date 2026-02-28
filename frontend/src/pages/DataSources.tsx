@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Database, RefreshCw, Sparkles, Trash2, FileText } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Plus, Database, RefreshCw, Sparkles, Trash2, FileText, Upload } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
+import { readSqlFile } from '../lib/readSqlFile';
 import { AddDataSourceDialog } from '../components/DataSources/AddDataSourceDialog';
 import { RagNotesDialog } from '../components/DataSources/RagNotesDialog';
 import type { components } from '../lib/api/types';
@@ -16,6 +17,9 @@ export const DataSources: React.FC = () => {
     const [introspectingIds, setIntrospectingIds] = useState<Set<string>>(new Set());
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [ragNotesSource, setRagNotesSource] = useState<DataSource | null>(null);
+    const [importingIds, setImportingIds] = useState<Set<string>>(new Set());
+    const importFileRef = useRef<HTMLInputElement>(null);
+    const importTargetRef = useRef<string | null>(null);
 
     const fetchDataSources = async () => {
         setIsLoading(true);
@@ -134,6 +138,47 @@ export const DataSources: React.FC = () => {
         }
     };
 
+    const handleImportSchema = (dsId: string) => {
+        importTargetRef.current = dsId;
+        importFileRef.current?.click();
+    };
+
+    const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        const dsId = importTargetRef.current;
+        if (!file || !dsId) return;
+
+        // Reset the input so the same file can be re-selected
+        e.target.value = '';
+
+        setImportingIds(prev => new Set(prev).add(dsId));
+        const dsName = dataSources.find(d => d.id === dsId)?.name || 'data source';
+
+        try {
+            const ddlText = await readSqlFile(file);
+            const { error } = await client.POST('/v1/data-sources/{dataSourceId}/import-schema', {
+                params: { path: { dataSourceId: dsId } },
+                body: { ddl: ddlText },
+            });
+
+            if (error) {
+                toast.error(`Schema import failed for ${dsName}`);
+            } else {
+                toast.success(`Schema imported for ${dsName}!`);
+                fetchDataSources();
+            }
+        } catch (err) {
+            console.error(err);
+            toast.error(`Failed to import schema for ${dsName}`);
+        } finally {
+            setImportingIds(prev => {
+                const next = new Set(prev);
+                next.delete(dsId);
+                return next;
+            });
+        }
+    };
+
     useEffect(() => {
         fetchDataSources();
     }, []);
@@ -220,6 +265,17 @@ export const DataSources: React.FC = () => {
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
+                                            handleImportSchema(ds.id);
+                                        }}
+                                        disabled={importingIds.has(ds.id)}
+                                        className="text-gray-500 hover:text-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="Import Schema (DDL file)"
+                                    >
+                                        <Upload size={16} className={importingIds.has(ds.id) ? 'animate-pulse text-green-500' : ''} />
+                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
                                             handleReindex(ds.id, ds.name);
                                         }}
                                         className="text-gray-500 hover:text-purple-600"
@@ -279,6 +335,14 @@ export const DataSources: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            <input
+                ref={importFileRef}
+                type="file"
+                accept=".sql,.txt"
+                className="hidden"
+                onChange={handleImportFileChange}
+            />
 
             <AddDataSourceDialog
                 isOpen={isAddDialogOpen}

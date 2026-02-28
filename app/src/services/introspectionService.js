@@ -15,11 +15,26 @@ async function runIntrospection(dataSource) {
 
 async function persistSnapshot(dataSourceId, snapshot) {
   await appDb.withTransaction(async (client) => {
+    const existingObjectsResult = await client.query(
+      `
+        SELECT schema_name, object_name, is_ignored
+        FROM schema_objects
+        WHERE data_source_id = $1
+      `,
+      [dataSourceId]
+    );
+
+    const ignoredByObjectKey = new Map(
+      existingObjectsResult.rows.map((row) => [objectKey(row.schema_name, row.object_name), row.is_ignored === true])
+    );
+
     await client.query("DELETE FROM schema_objects WHERE data_source_id = $1", [dataSourceId]);
 
     const objectIdByKey = new Map();
 
     for (const object of snapshot.objects) {
+      const key = objectKey(object.schemaName, object.objectName);
+      const isIgnored = ignoredByObjectKey.get(key) === true;
       const hash = computeObjectHash(object, snapshot.columns, snapshot.relationships);
       const objectInsert = await client.query(
         `
@@ -28,16 +43,17 @@ async function persistSnapshot(dataSourceId, snapshot) {
             object_type,
             schema_name,
             object_name,
+            is_ignored,
             hash,
             last_seen_at
-          ) VALUES ($1, $2, $3, $4, $5, NOW())
+          ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
           RETURNING id
         `,
-        [dataSourceId, object.objectType, object.schemaName, object.objectName, hash]
+        [dataSourceId, object.objectType, object.schemaName, object.objectName, isIgnored, hash]
       );
 
       const objectId = objectInsert.rows[0].id;
-      objectIdByKey.set(objectKey(object.schemaName, object.objectName), objectId);
+      objectIdByKey.set(key, objectId);
     }
 
     for (const column of snapshot.columns) {
@@ -136,5 +152,6 @@ function computeObjectHash(object, allColumns, allRelationships) {
 }
 
 module.exports = {
-  runIntrospection
+  runIntrospection,
+  persistSnapshot
 };

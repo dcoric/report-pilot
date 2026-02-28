@@ -266,6 +266,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JobAcceptedResponse"
+  /v1/data-sources/{dataSourceId}/import-schema:
+    post:
+      tags: [Admin]
+      summary: Import schema from a DDL script (e.g. SSMS Generate Scripts output)
+      parameters:
+        - $ref: "#/components/parameters/DataSourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportSchemaRequest"
+      responses:
+        "200":
+          description: Schema imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportSchemaResponse"
+        "400":
+          description: Invalid or empty DDL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+        "404":
+          description: Data source not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/schema-objects:
     get:
       tags: [Admin]
@@ -289,6 +332,49 @@ paths:
                     items:
                       $ref: "#/components/schemas/SchemaObject"
                 required: [items]
+  /v1/schema-objects/{schemaObjectId}:
+    patch:
+      tags: [Admin]
+      summary: Update schema object visibility for query context
+      parameters:
+        - $ref: "#/components/parameters/SchemaObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaObjectVisibilityRequest"
+      responses:
+        "200":
+          description: Schema object updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaObject"
+        "400":
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+        "404":
+          description: Schema object not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/semantic-entities:
     post:
       tags: [Admin]
@@ -589,6 +675,12 @@ components:
       required: true
       schema:
         type: string
+    SchemaObjectId:
+      in: path
+      name: schemaObjectId
+      required: true
+      schema:
+        type: string
   schemas:
     PromptHistoryItem:
       type: object
@@ -760,7 +852,15 @@ components:
           type: string
         description:
           type: string
-      required: [id, object_type, schema_name, object_name]
+        is_ignored:
+          type: boolean
+      required: [id, object_type, schema_name, object_name, is_ignored]
+    SchemaObjectVisibilityRequest:
+      type: object
+      properties:
+        is_ignored:
+          type: boolean
+      required: [is_ignored]
     SemanticEntityRequest:
       type: object
       properties:
@@ -1005,6 +1105,21 @@ components:
           type: string
           enum: [email]
       required: [export_id, status, delivery_mode]
+    ImportSchemaRequest:
+      type: object
+      properties:
+        ddl:
+          type: string
+          description: DDL script text (e.g. CREATE TABLE statements from SSMS Generate Scripts)
+      required: [ddl]
+    ImportSchemaResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        object_count:
+          type: integer
+      required: [ok, object_count]
     ExportDeliveryStatus:
       type: object
       properties:

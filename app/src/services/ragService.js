@@ -68,6 +68,7 @@ async function buildRagDocuments(dataSourceId) {
         SELECT id, object_type, schema_name, object_name, description
         FROM schema_objects
         WHERE data_source_id = $1
+          AND is_ignored = FALSE
         ORDER BY schema_name, object_name
       `,
       [dataSourceId]
@@ -84,6 +85,7 @@ async function buildRagDocuments(dataSourceId) {
         FROM columns c
         JOIN schema_objects so ON so.id = c.schema_object_id
         WHERE so.data_source_id = $1
+          AND so.is_ignored = FALSE
         ORDER BY c.schema_object_id, c.ordinal_position
       `,
       [dataSourceId]
@@ -99,7 +101,10 @@ async function buildRagDocuments(dataSourceId) {
           r.relationship_type
         FROM relationships r
         JOIN schema_objects so ON so.id = r.from_object_id
+        JOIN schema_objects sto ON sto.id = r.to_object_id
         WHERE so.data_source_id = $1
+          AND so.is_ignored = FALSE
+          AND sto.is_ignored = FALSE
       `,
       [dataSourceId]
     ),
