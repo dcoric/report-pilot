@@ -75,3 +75,28 @@ ip route | awk '/default/ {print $3}'
 Do not paste `<WIN_IP>` literally into the connection string.
 
 Note: `Trusted_Connection=True` is not supported in this Linux runtime flow.
+
+## Exporting MSSQL Schema via SSMS (for Import)
+
+Large databases can be slow to introspect over the network. Use SSMS
+**Generate Scripts** to export the schema as a `.sql` file, then import it
+into Report Pilot.
+
+1. In SSMS Object Explorer, right-click your database (e.g.
+   `AdventureWorks2022`) → **Tasks** → **Generate Scripts…**
+2. On the **Choose Objects** page select **Script entire database and all
+   database objects**, or pick specific tables/views.
+3. On the **Set Scripting Options** page:
+   - Set output type to **Save to file** (single file).
+   - Click **Advanced** and configure:
+     - **Types of data to script** → `Schema only`
+     - **Script Indexes** → `True`
+     - **Script Primary Keys** → `True`
+     - **Script Foreign Keys** → `True`
+     - **Script Unique Keys** → `True`
+   - Leave other advanced options at their defaults.
+4. Finish the wizard. The output `.sql` file will contain `CREATE TABLE`,
+   `ALTER TABLE … ADD FOREIGN KEY`, `CREATE INDEX`, etc.
+5. In Report Pilot, add a new MSSQL data source and select **Import schema
+   (upload DDL file)**, then choose the exported `.sql` file. Alternatively,
+   use the Upload button on an existing data source row.
