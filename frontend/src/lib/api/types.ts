@@ -485,6 +485,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/data-sources/{dataSourceId}/import-schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import schema from a DDL script (e.g. SSMS Generate Scripts output) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    dataSourceId: components["parameters"]["DataSourceId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ImportSchemaRequest"];
+                };
+            };
+            responses: {
+                /** @description Schema imported successfully */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImportSchemaResponse"];
+                    };
+                };
+                /** @description Invalid or empty DDL */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+                /** @description Data source not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/schema-objects": {
         parameters: {
             query?: never;
@@ -523,6 +589,72 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/schema-objects/{schemaObjectId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update schema object visibility for query context */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    schemaObjectId: components["parameters"]["SchemaObjectId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SchemaObjectVisibilityRequest"];
+                };
+            };
+            responses: {
+                /** @description Schema object updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SchemaObject"];
+                    };
+                };
+                /** @description Invalid payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+                /** @description Schema object not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/semantic-entities": {
@@ -773,8 +905,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": {
-                            ok: boolean;
+                        "application/json": components["schemas"]["OkResponse"] & {
                             id: string;
                         };
                     };
@@ -1195,6 +1326,10 @@ export interface components {
             schema_name: string;
             object_name: string;
             description?: string;
+            is_ignored: boolean;
+        };
+        SchemaObjectVisibilityRequest: {
+            is_ignored: boolean;
         };
         SemanticEntityRequest: {
             data_source_id: string;
@@ -1230,13 +1365,7 @@ export interface components {
         RagNoteRequest: {
             id?: string;
             data_source_id: string;
-            /**
-             * @maxLength 200
-             */
             title: string;
-            /**
-             * @maxLength 20000
-             */
             content: string;
             active?: boolean;
         };
@@ -1337,6 +1466,14 @@ export interface components {
             /** @enum {string} */
             delivery_mode: "email";
         };
+        ImportSchemaRequest: {
+            /** @description DDL script text (e.g. CREATE TABLE statements from SSMS Generate Scripts) */
+            ddl: string;
+        };
+        ImportSchemaResponse: {
+            ok: boolean;
+            object_count: number;
+        };
         ExportDeliveryStatus: {
             id: string;
             session_id: string;
@@ -1362,6 +1499,7 @@ export interface components {
         SessionId: string;
         DataSourceId: string;
         NoteId: string;
+        SchemaObjectId: string;
     };
     requestBodies: never;
     headers: never;

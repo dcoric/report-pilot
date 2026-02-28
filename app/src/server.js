@@ -3,7 +3,8 @@ const path = require("path");
 const http = require("http");
 const appDb = require("./lib/appDb");
 const { createDatabaseAdapter, isSupportedDbType } = require("./adapters/dbAdapterFactory");
-const { runIntrospection } = require("./services/introspectionService");
+const { runIntrospection, persistSnapshot } = require("./services/introspectionService");
+const { parseSchemaFromDdl } = require("./services/ddlImportService");
 const { generateSqlWithRouting } = require("./services/llmSqlService");
 const { validateAndNormalizeSql } = require("./services/sqlSafety");
 const {
@@ -256,6 +257,35 @@ async function handleIntrospect(req, res, dataSourceId) {
   return json(res, 202, { job_id: jobId, status: "queued" });
 }
 
+async function handleImportSchema(req, res, dataSourceId) {
+  const result = await appDb.query(
+    "SELECT id, db_type FROM data_sources WHERE id = $1",
+    [dataSourceId]
+  );
+  const dataSource = result.rows[0];
+  if (!dataSource) {
+    return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  const body = await readJsonBody(req);
+  const ddl = String(body.ddl || "").trim();
+  if (!ddl) {
+    return badRequest(res, "ddl field is required and must be a non-empty string");
+  }
+
+  const snapshot = parseSchemaFromDdl(ddl);
+  if (snapshot.objects.length === 0) {
+    return badRequest(res, "No tables or views found in the provided DDL");
+  }
+
+  await persistSnapshot(dataSourceId, snapshot);
+  reindexRagDocuments(dataSourceId).catch((err) => {
+    console.error(`[import-schema] RAG reindex failed for ${dataSourceId}: ${err.message}`);
+  });
+
+  return json(res, 200, { ok: true, object_count: snapshot.objects.length });
+}
+
 async function handleListSchemaObjects(req, res, requestUrl) {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (!dataSourceId) {
@@ -264,7 +294,7 @@ async function handleListSchemaObjects(req, res, requestUrl) {
 
   const result = await appDb.query(
     `
-      SELECT id, object_type, schema_name, object_name, description
+      SELECT id, object_type, schema_name, object_name, description, is_ignored
       FROM schema_objects
       WHERE data_source_id = $1
       ORDER BY schema_name, object_name
@@ -273,6 +303,45 @@ async function handleListSchemaObjects(req, res, requestUrl) {
   );
 
   return json(res, 200, { items: result.rows });
+}
+
+async function handlePatchSchemaObject(req, res, schemaObjectId) {
+  if (!isUuid(schemaObjectId)) {
+    return badRequest(res, "schemaObjectId must be a valid UUID");
+  }
+
+  const body = await readJsonBody(req);
+  if (!Object.prototype.hasOwnProperty.call(body, "is_ignored")) {
+    return badRequest(res, "is_ignored is required");
+  }
+  if (typeof body.is_ignored !== "boolean") {
+    return badRequest(res, "is_ignored must be a boolean");
+  }
+
+  const result = await appDb.query(
+    `
+      UPDATE schema_objects
+      SET is_ignored = $2
+      WHERE id = $1
+      RETURNING
+        id,
+        data_source_id,
+        object_type,
+        schema_name,
+        object_name,
+        description,
+        is_ignored
+    `,
+    [schemaObjectId, body.is_ignored]
+  );
+
+  if (result.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Schema object not found" });
+  }
+
+  triggerRagReindexAsync(result.rows[0].data_source_id);
+
+  return json(res, 200, result.rows[0]);
 }
 
 async function handleListRagNotes(_req, res, requestUrl) {
@@ -712,7 +781,9 @@ async function handleRunSession(req, res, sessionId) {
     `
       SELECT id, schema_name, object_name, object_type
       FROM schema_objects
-      WHERE data_source_id = $1 AND object_type IN ('table', 'view', 'materialized_view')
+      WHERE data_source_id = $1
+        AND is_ignored = FALSE
+        AND object_type IN ('table', 'view', 'materialized_view')
       ORDER BY schema_name, object_name
     `,
     [session.data_source_id]
@@ -728,6 +799,7 @@ async function handleRunSession(req, res, sessionId) {
       FROM columns c
       JOIN schema_objects so ON so.id = c.schema_object_id
       WHERE so.data_source_id = $1
+        AND so.is_ignored = FALSE
       ORDER BY so.schema_name, so.object_name, c.ordinal_position
     `,
     [session.data_source_id]
@@ -1090,6 +1162,7 @@ async function handleFeedback(req, res, sessionId) {
         SELECT schema_name, object_name
         FROM schema_objects
         WHERE data_source_id = $1
+          AND is_ignored = FALSE
       `,
       [session.data_source_id]
     );
@@ -1489,8 +1562,18 @@ async function routeRequest(req, res) {
     return handleIntrospect(req, res, introspectMatch[1]);
   }
 
+  const importSchemaMatch = pathname.match(/^\/v1\/data-sources\/([^/]+)\/import-schema$/);
+  if (req.method === "POST" && importSchemaMatch) {
+    return handleImportSchema(req, res, importSchemaMatch[1]);
+  }
+
   if (req.method === "GET" && pathname === "/v1/schema-objects") {
     return handleListSchemaObjects(req, res, requestUrl);
+  }
+
+  const schemaObjectMatch = pathname.match(/^\/v1\/schema-objects\/([^/]+)$/);
+  if (req.method === "PATCH" && schemaObjectMatch) {
+    return handlePatchSchemaObject(req, res, schemaObjectMatch[1]);
   }
 
   if (req.method === "POST" && pathname === "/v1/semantic-entities") {
@@ -1601,7 +1684,7 @@ function startServer() {
     const origin = req.headers.origin || "*";
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-user-id");
     res.setHeader("Vary", "Origin");
 

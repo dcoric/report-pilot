@@ -3,7 +3,7 @@ function generateSqlFromQuestion(question, schemaObjects, maxRows, dialect = "po
   const limit = Number.isFinite(Number(maxRows)) ? Number(maxRows) : 1000;
 
   if (!Array.isArray(schemaObjects) || schemaObjects.length === 0) {
-    throw new Error("No schema objects available for selected data source. Run introspection first.");
+    throw new Error("No schema objects available for selected data source. Run introspection first or enable ignored objects.");
   }
 
   const selectedObject = pickObjectFromQuestion(normalizedQuestion, schemaObjects) || schemaObjects[0];

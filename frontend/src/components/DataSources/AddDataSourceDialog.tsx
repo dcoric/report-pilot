@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, Upload } from 'lucide-react';
 import { client } from '../../lib/api/client';
+import { readSqlFile } from '../../lib/readSqlFile';
 import { toast } from 'sonner';
 
 interface AddDataSourceDialogProps {
@@ -9,11 +10,16 @@ interface AddDataSourceDialogProps {
     onSuccess: () => void;
 }
 
+type SchemaMethod = 'introspect' | 'import';
+
 export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen, onClose, onSuccess }) => {
     const [name, setName] = useState('');
     const [dbType, setDbType] = useState<'postgres' | 'mssql'>('postgres');
     const [connectionRef, setConnectionRef] = useState('');
+    const [schemaMethod, setSchemaMethod] = useState<SchemaMethod>('introspect');
+    const [schemaFile, setSchemaFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     if (!isOpen) return null;
 
@@ -22,7 +28,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
         setIsSubmitting(true);
 
         try {
-            const { response, error } = await client.POST('/v1/data-sources', {
+            const { data, error } = await client.POST('/v1/data-sources', {
                 body: {
                     name,
                     db_type: dbType,
@@ -31,21 +37,47 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
             });
 
             if (error) {
-                // Error is handled by global interceptor, but we can stop loading here
                 console.error("Form submission error", error);
-            } else if (response.ok) {
-                toast.success('Data source added successfully');
-                onSuccess();
-                onClose();
-                // Reset form
-                setName('');
-                setConnectionRef('');
+                return;
             }
+
+            const dataSourceId = data?.id;
+
+            if (schemaMethod === 'import' && schemaFile && dataSourceId) {
+                const ddlText = await readSqlFile(schemaFile);
+                const { error: importError } = await client.POST(
+                    '/v1/data-sources/{dataSourceId}/import-schema',
+                    {
+                        params: { path: { dataSourceId } },
+                        body: { ddl: ddlText },
+                    }
+                );
+
+                if (importError) {
+                    toast.warning('Data source created, but schema import failed. You can retry from the data sources page.');
+                } else {
+                    toast.success('Data source added and schema imported successfully');
+                }
+            } else {
+                toast.success('Data source added successfully');
+            }
+
+            onSuccess();
+            onClose();
+            setName('');
+            setConnectionRef('');
+            setSchemaMethod('introspect');
+            setSchemaFile(null);
         } catch (err) {
             console.error("Unexpected error", err);
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        setSchemaFile(file);
     };
 
     return (
@@ -77,7 +109,13 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                             <select
                                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 value={dbType}
-                                onChange={(e) => setDbType(e.target.value as 'postgres' | 'mssql')}
+                                onChange={(e) => {
+                                    setDbType(e.target.value as 'postgres' | 'mssql');
+                                    if (e.target.value !== 'mssql') {
+                                        setSchemaMethod('introspect');
+                                        setSchemaFile(null);
+                                    }
+                                }}
                             >
                                 <option value="postgres">PostgreSQL</option>
                                 <option value="mssql">MS SQL Server</option>
@@ -100,6 +138,62 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                             />
                             <p className="text-xs text-gray-500 mt-1">Paste a full database connection string for the selected engine.</p>
                         </div>
+
+                        {dbType === 'mssql' && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Schema Method</label>
+                                <div className="flex flex-col gap-2">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="schemaMethod"
+                                            value="introspect"
+                                            checked={schemaMethod === 'introspect'}
+                                            onChange={() => {
+                                                setSchemaMethod('introspect');
+                                                setSchemaFile(null);
+                                            }}
+                                            className="text-blue-600"
+                                        />
+                                        <span className="text-sm text-gray-700">Auto-introspect (extract from database)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="schemaMethod"
+                                            value="import"
+                                            checked={schemaMethod === 'import'}
+                                            onChange={() => setSchemaMethod('import')}
+                                            className="text-blue-600"
+                                        />
+                                        <span className="text-sm text-gray-700">Import schema (upload DDL file)</span>
+                                    </label>
+                                </div>
+
+                                {schemaMethod === 'import' && (
+                                    <div className="mt-3">
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept=".sql,.txt"
+                                            onChange={handleFileChange}
+                                            className="hidden"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="flex items-center gap-2 w-full rounded-md border border-dashed border-gray-300 px-3 py-3 text-sm text-gray-600 hover:border-blue-400 hover:text-blue-600 transition"
+                                        >
+                                            <Upload size={16} />
+                                            {schemaFile ? schemaFile.name : 'Choose .sql file from SSMS Generate Scripts...'}
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Export schema from SSMS: right-click database &rarr; Tasks &rarr; Generate Scripts &rarr; Schema Only.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </form>
                 </div>
 
@@ -116,7 +210,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                         form="add-data-source-form"
                         type="submit"
                         className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || (schemaMethod === 'import' && dbType === 'mssql' && !schemaFile)}
                     >
                         {isSubmitting ? 'Adding...' : 'Add Data Source'}
                     </button>
