@@ -16,14 +16,8 @@ client.use({
             let errorMessage = `API Error: ${response.status} ${response.statusText}`;
             try {
                 const data = await response.clone().json();
-                if (data && typeof data === 'object') {
-                    if ('message' in data && typeof data.message === 'string') {
-                        errorMessage = data.message;
-                    } else if ('details' in data && Array.isArray(data.details) && typeof data.details[0] === 'string') {
-                        errorMessage = data.details[0];
-                    } else if ('error' in data && typeof data.error === 'string') {
-                        errorMessage = data.error;
-                    }
+                if (data && typeof data === 'object' && 'message' in data && typeof data.message === 'string') {
+                    errorMessage = data.message;
                 }
             } catch {
                 // ignore JSON parse errors
