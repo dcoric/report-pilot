@@ -4,9 +4,10 @@ const { generateSqlFromQuestion } = require("./sqlGenerator");
 const { OpenAiAdapter } = require("../adapters/llm/openAiAdapter");
 const { GeminiAdapter } = require("../adapters/llm/geminiAdapter");
 const { DeepSeekAdapter } = require("../adapters/llm/deepSeekAdapter");
+const { OpenRouterAdapter } = require("../adapters/llm/openRouterAdapter");
 const { resolveApiKey } = require("../adapters/llm/httpClient");
 
-const DEFAULT_PROVIDER_ORDER = ["openai", "gemini", "deepseek"];
+const DEFAULT_PROVIDER_ORDER = ["openai", "gemini", "deepseek", "openrouter"];
 const LLM_DEBUG_LOG_ENABLED = String(process.env.LLM_DEBUG_LOG || "false") === "true";
 const LLM_DEBUG_MAX_CHARS = clampPositiveInt(process.env.LLM_DEBUG_MAX_CHARS, 16000);
 
@@ -231,6 +232,9 @@ function buildAdapter(provider, providerConfig, requestedModel) {
   if (provider === "deepseek") {
     return new DeepSeekAdapter(opts);
   }
+  if (provider === "openrouter") {
+    return new OpenRouterAdapter(opts);
+  }
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
@@ -243,6 +247,9 @@ function resolveProviderApiKey(provider, ref) {
   }
   if (provider === "deepseek") {
     return resolveApiKey(ref, "DEEPSEEK_API_KEY");
+  }
+  if (provider === "openrouter") {
+    return resolveApiKey(ref, "OPENROUTER_API_KEY");
   }
   return "";
 }
