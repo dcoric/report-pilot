@@ -22,14 +22,15 @@ Workflow:
 
 Commit message rules:
 
-- Use Conventional Commits format: `<type>[optional scope]: <description>`
-- Keep the subject imperative, lowercase after the prefix, and without a trailing period
+- If a Jira-style ticket identifier such as `ABC-123` is provided, use `ABC-123 <description>`
+- If no Jira-style ticket identifier is provided, use Conventional Commits format: `<type>[optional scope]: <description>`
+- Keep the description imperative and without a trailing period
 - Prefer a concise single-line message unless the user explicitly asks for a body
-- Use the optional ticket context to inform the message
 - Do not invent ticket IDs or details that were not provided
 
 Examples:
 
+- `ABC-123 add saved query rename action`
 - `feat(query): add saved query rename action`
 - `fix(rag): reindex notes after schema import`
 - `docs: update local runtime instructions`
