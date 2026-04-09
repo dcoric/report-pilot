@@ -31,7 +31,7 @@ const { json, notFound, badRequest, internalError, readJsonBody } = require("./l
 
 const PORT = Number(process.env.PORT || 8080);
 
-const LLM_PROVIDERS = new Set(["openai", "gemini", "deepseek"]);
+const LLM_PROVIDERS = new Set(["openai", "gemini", "deepseek", "openrouter"]);
 const ENTITY_TYPES = new Set(["table", "column", "metric", "dimension", "rule"]);
 const ROUTING_STRATEGIES = new Set(["ordered_fallback", "cost_optimized", "latency_optimized"]);
 const SCHEMA_OBJECT_TYPES = new Set(["table", "view", "materialized_view"]);
