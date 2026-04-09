@@ -44,6 +44,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/saved-queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved queries */
+        get: {
+            parameters: {
+                query?: {
+                    data_source_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Saved query entries */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a saved query */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateSavedQueryRequest"];
+                };
+            };
+            responses: {
+                /** @description Saved query created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQuery"];
+                    };
+                };
+                /** @description Duplicate saved query name for the same owner and data source */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a saved query */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Saved query */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQuery"];
+                    };
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        /** Update a saved query */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateSavedQueryRequest"];
+                };
+            };
+            responses: {
+                /** @description Saved query updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQuery"];
+                    };
+                };
+                /** @description Saved query or data source not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+                /** @description Duplicate saved query name for the same owner and data source */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Delete a saved query */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Saved query deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryDeleteResponse"];
+                    };
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            message: string;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/query/sessions": {
         parameters: {
             query?: never;
@@ -1375,6 +1583,58 @@ export interface components {
         PromptHistoryResponse: {
             items: components["schemas"]["PromptHistoryItem"][];
         };
+        SavedQuery: {
+            id: string;
+            owner_id: string;
+            name: string;
+            description?: string | null;
+            data_source_id: string;
+            sql: string;
+            default_run_params: {
+                llm_provider?: string;
+                model?: string;
+                max_rows?: number;
+                timeout_ms?: number;
+                no_execute?: boolean;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedQueryListResponse: {
+            items: components["schemas"]["SavedQuery"][];
+        };
+        SavedQueryDeleteResponse: {
+            ok: boolean;
+            id: string;
+        };
+        CreateSavedQueryRequest: {
+            name: string;
+            description?: string;
+            data_source_id: string;
+            sql: string;
+            default_run_params?: {
+                llm_provider?: string;
+                model?: string;
+                max_rows?: number;
+                timeout_ms?: number;
+                no_execute?: boolean;
+            };
+        };
+        UpdateSavedQueryRequest: {
+            name: string;
+            description?: string;
+            data_source_id: string;
+            sql: string;
+            default_run_params?: {
+                llm_provider?: string;
+                model?: string;
+                max_rows?: number;
+                timeout_ms?: number;
+                no_execute?: boolean;
+            };
+        };
         CreateSessionRequest: {
             data_source_id: string;
             question: string;
@@ -1717,6 +1977,7 @@ export interface components {
         DataSourceId: string;
         NoteId: string;
         SchemaObjectId: string;
+        SavedQueryId: string;
     };
     requestBodies: never;
     headers: never;

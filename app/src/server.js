@@ -45,6 +45,9 @@ const EXPLAIN_MAX_TOTAL_COST = Number(process.env.EXPLAIN_MAX_TOTAL_COST || 5000
 const EXPLAIN_MAX_PLAN_ROWS = Number(process.env.EXPLAIN_MAX_PLAN_ROWS || 1000000);
 const RAG_NOTE_TITLE_MAX_LENGTH = 200;
 const RAG_NOTE_CONTENT_MAX_LENGTH = 20000;
+const SAVED_QUERY_NAME_MAX_LENGTH = 200;
+const SAVED_QUERY_DESCRIPTION_MAX_LENGTH = 1000;
+const SAVED_QUERY_DEFAULT_RUN_PARAM_KEYS = new Set(["llm_provider", "model", "max_rows", "timeout_ms", "no_execute"]);
 const OPENAPI_SPEC_PATH = path.resolve(__dirname, "../../docs/api/openapi.yaml");
 const FRONTEND_DIST_PATH = path.resolve(__dirname, "../../frontend/dist");
 const FRONTEND_INDEX_PATH = path.join(FRONTEND_DIST_PATH, "index.html");
@@ -214,6 +217,76 @@ function isNullableString(value) {
 
 function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isInteger(value) {
+  return Number.isInteger(value);
+}
+
+function isPgUniqueViolation(err) {
+  return err && typeof err === "object" && err.code === "23505";
+}
+
+function normalizeOptionalTrimmedString(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function validateSavedQueryDefaultRunParams(value) {
+  if (value === undefined) {
+    return { ok: true, value: {} };
+  }
+
+  if (!isPlainObject(value)) {
+    return { ok: false, message: "default_run_params must be an object" };
+  }
+
+  const normalized = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!SAVED_QUERY_DEFAULT_RUN_PARAM_KEYS.has(key)) {
+      return { ok: false, message: "default_run_params contains unsupported keys" };
+    }
+
+    if (key === "llm_provider" || key === "model") {
+      if (!isNonEmptyString(raw)) {
+        return { ok: false, message: `default_run_params.${key} must be a non-empty string` };
+      }
+      normalized[key] = String(raw).trim();
+      continue;
+    }
+
+    if (key === "max_rows") {
+      if (!isInteger(raw) || raw < 1 || raw > 100000) {
+        return { ok: false, message: "default_run_params.max_rows must be an integer between 1 and 100000" };
+      }
+      normalized[key] = raw;
+      continue;
+    }
+
+    if (key === "timeout_ms") {
+      if (!isInteger(raw) || raw < 1000 || raw > 120000) {
+        return { ok: false, message: "default_run_params.timeout_ms must be an integer between 1000 and 120000" };
+      }
+      normalized[key] = raw;
+      continue;
+    }
+
+    if (key === "no_execute") {
+      if (typeof raw !== "boolean") {
+        return { ok: false, message: "default_run_params.no_execute must be a boolean" };
+      }
+      normalized[key] = raw;
+    }
+  }
+
+  return { ok: true, value: normalized };
 }
 
 function groupByKey(rows, key) {
@@ -1402,6 +1475,230 @@ async function handlePromptHistory(req, res, requestUrl) {
   return json(res, 200, { items: result.rows });
 }
 
+async function ensureDataSourceExists(dataSourceId) {
+  const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
+  return sourceResult.rowCount > 0;
+}
+
+async function handleCreateSavedQuery(req, res) {
+  const body = await readJsonBody(req);
+  const ownerId = String(req.headers["x-user-id"] || "anonymous").trim() || "anonymous";
+  const dataSourceId = String(body.data_source_id || "").trim();
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const sql = typeof body.sql === "string" ? body.sql.trim() : "";
+  const description = normalizeOptionalTrimmedString(body.description);
+  const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(body.default_run_params);
+
+  if (!name || !dataSourceId || !sql) {
+    return badRequest(res, "name, data_source_id and sql are required");
+  }
+  if (!isUuid(dataSourceId)) {
+    return badRequest(res, "data_source_id must be a valid UUID");
+  }
+  if (name.length > SAVED_QUERY_NAME_MAX_LENGTH) {
+    return badRequest(res, `name cannot exceed ${SAVED_QUERY_NAME_MAX_LENGTH} characters`);
+  }
+  if (description && description.length > SAVED_QUERY_DESCRIPTION_MAX_LENGTH) {
+    return badRequest(res, `description cannot exceed ${SAVED_QUERY_DESCRIPTION_MAX_LENGTH} characters`);
+  }
+  if (!defaultRunParamsValidation.ok) {
+    return badRequest(res, defaultRunParamsValidation.message);
+  }
+
+  if (!(await ensureDataSourceExists(dataSourceId))) {
+    return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  try {
+    const insertResult = await appDb.query(
+      `
+        INSERT INTO saved_queries (
+          owner_id,
+          name,
+          description,
+          data_source_id,
+          sql,
+          default_run_params
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        RETURNING
+          id,
+          owner_id,
+          name,
+          description,
+          data_source_id,
+          sql,
+          default_run_params,
+          created_at,
+          updated_at
+      `,
+      [ownerId, name, description, dataSourceId, sql, JSON.stringify(defaultRunParamsValidation.value)]
+    );
+
+    return json(res, 201, insertResult.rows[0]);
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      return json(res, 409, {
+        error: "conflict",
+        message: "Saved query name already exists for this owner and data source"
+      });
+    }
+    throw err;
+  }
+}
+
+async function handleListSavedQueries(_req, res, requestUrl) {
+  const dataSourceId = String(requestUrl.searchParams.get("data_source_id") || "").trim();
+  if (dataSourceId && !isUuid(dataSourceId)) {
+    return badRequest(res, "data_source_id must be a valid UUID");
+  }
+
+  const result = await appDb.query(
+    `
+      SELECT
+        id,
+        owner_id,
+        name,
+        description,
+        data_source_id,
+        sql,
+        default_run_params,
+        created_at,
+        updated_at
+      FROM saved_queries
+      WHERE ($1::uuid IS NULL OR data_source_id = $1::uuid)
+      ORDER BY updated_at DESC, created_at DESC
+    `,
+    [dataSourceId || null]
+  );
+
+  return json(res, 200, { items: result.rows });
+}
+
+async function handleGetSavedQuery(_req, res, savedQueryId) {
+  if (!isUuid(savedQueryId)) {
+    return badRequest(res, "savedQueryId must be a valid UUID");
+  }
+
+  const result = await appDb.query(
+    `
+      SELECT
+        id,
+        owner_id,
+        name,
+        description,
+        data_source_id,
+        sql,
+        default_run_params,
+        created_at,
+        updated_at
+      FROM saved_queries
+      WHERE id = $1
+    `,
+    [savedQueryId]
+  );
+
+  if (result.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Saved query not found" });
+  }
+
+  return json(res, 200, result.rows[0]);
+}
+
+async function handleUpdateSavedQuery(req, res, savedQueryId) {
+  if (!isUuid(savedQueryId)) {
+    return badRequest(res, "savedQueryId must be a valid UUID");
+  }
+
+  const body = await readJsonBody(req);
+  const dataSourceId = String(body.data_source_id || "").trim();
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const sql = typeof body.sql === "string" ? body.sql.trim() : "";
+  const description = normalizeOptionalTrimmedString(body.description);
+  const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(body.default_run_params);
+
+  if (!name || !dataSourceId || !sql) {
+    return badRequest(res, "name, data_source_id and sql are required");
+  }
+  if (!isUuid(dataSourceId)) {
+    return badRequest(res, "data_source_id must be a valid UUID");
+  }
+  if (name.length > SAVED_QUERY_NAME_MAX_LENGTH) {
+    return badRequest(res, `name cannot exceed ${SAVED_QUERY_NAME_MAX_LENGTH} characters`);
+  }
+  if (description && description.length > SAVED_QUERY_DESCRIPTION_MAX_LENGTH) {
+    return badRequest(res, `description cannot exceed ${SAVED_QUERY_DESCRIPTION_MAX_LENGTH} characters`);
+  }
+  if (!defaultRunParamsValidation.ok) {
+    return badRequest(res, defaultRunParamsValidation.message);
+  }
+
+  if (!(await ensureDataSourceExists(dataSourceId))) {
+    return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  try {
+    const updateResult = await appDb.query(
+      `
+        UPDATE saved_queries
+        SET
+          name = $2,
+          description = $3,
+          data_source_id = $4,
+          sql = $5,
+          default_run_params = $6::jsonb,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING
+          id,
+          owner_id,
+          name,
+          description,
+          data_source_id,
+          sql,
+          default_run_params,
+          created_at,
+          updated_at
+      `,
+      [savedQueryId, name, description, dataSourceId, sql, JSON.stringify(defaultRunParamsValidation.value)]
+    );
+
+    if (updateResult.rowCount === 0) {
+      return json(res, 404, { error: "not_found", message: "Saved query not found" });
+    }
+
+    return json(res, 200, updateResult.rows[0]);
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      return json(res, 409, {
+        error: "conflict",
+        message: "Saved query name already exists for this owner and data source"
+      });
+    }
+    throw err;
+  }
+}
+
+async function handleDeleteSavedQuery(_req, res, savedQueryId) {
+  if (!isUuid(savedQueryId)) {
+    return badRequest(res, "savedQueryId must be a valid UUID");
+  }
+
+  const deleteResult = await appDb.query(
+    `
+      DELETE FROM saved_queries
+      WHERE id = $1
+      RETURNING id
+    `,
+    [savedQueryId]
+  );
+
+  if (deleteResult.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Saved query not found" });
+  }
+
+  return json(res, 200, { ok: true, id: deleteResult.rows[0].id });
+}
+
 async function handleRunSession(req, res, sessionId) {
   const body = await readJsonBody(req);
   const requestedProvider = body.llm_provider || null;
@@ -2346,6 +2643,27 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/v1/query/prompts/history") {
     return handlePromptHistory(req, res, requestUrl);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/saved-queries") {
+    return handleCreateSavedQuery(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/saved-queries") {
+    return handleListSavedQueries(req, res, requestUrl);
+  }
+
+  const savedQueryMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)$/);
+  if (req.method === "GET" && savedQueryMatch) {
+    return handleGetSavedQuery(req, res, savedQueryMatch[1]);
+  }
+
+  if (req.method === "PUT" && savedQueryMatch) {
+    return handleUpdateSavedQuery(req, res, savedQueryMatch[1]);
+  }
+
+  if (req.method === "DELETE" && savedQueryMatch) {
+    return handleDeleteSavedQuery(req, res, savedQueryMatch[1]);
   }
 
   const runMatch = pathname.match(/^\/v1\/query\/sessions\/([^/]+)\/run$/);

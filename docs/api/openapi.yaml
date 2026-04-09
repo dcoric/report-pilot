@@ -42,6 +42,142 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PromptHistoryResponse"
+  /v1/saved-queries:
+    get:
+      tags: [Query]
+      summary: List saved queries
+      parameters:
+        - in: query
+          name: data_source_id
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Saved query entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryListResponse"
+    post:
+      tags: [Query]
+      summary: Create a saved query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSavedQueryRequest"
+      responses:
+        "201":
+          description: Saved query created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQuery"
+        "409":
+          description: Duplicate saved query name for the same owner and data source
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+  /v1/saved-queries/{savedQueryId}:
+    get:
+      tags: [Query]
+      summary: Get a saved query
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      responses:
+        "200":
+          description: Saved query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQuery"
+        "404":
+          description: Saved query not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+    put:
+      tags: [Query]
+      summary: Update a saved query
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSavedQueryRequest"
+      responses:
+        "200":
+          description: Saved query updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQuery"
+        "404":
+          description: Saved query or data source not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+        "409":
+          description: Duplicate saved query name for the same owner and data source
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
+    delete:
+      tags: [Query]
+      summary: Delete a saved query
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      responses:
+        "200":
+          description: Saved query deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryDeleteResponse"
+        "404":
+          description: Saved query not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -751,6 +887,12 @@ components:
       required: true
       schema:
         type: string
+    SavedQueryId:
+      in: path
+      name: savedQueryId
+      required: true
+      schema:
+        type: string
   schemas:
     PromptHistoryItem:
       type: object
@@ -776,6 +918,127 @@ components:
           items:
             $ref: "#/components/schemas/PromptHistoryItem"
       required: [items]
+    SavedQuery:
+      type: object
+      properties:
+        id:
+          type: string
+        owner_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        data_source_id:
+          type: string
+        sql:
+          type: string
+        default_run_params:
+          type: object
+          additionalProperties: false
+          properties:
+            llm_provider:
+              type: string
+            model:
+              type: string
+            max_rows:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            timeout_ms:
+              type: integer
+              minimum: 1000
+              maximum: 120000
+            no_execute:
+              type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, owner_id, name, data_source_id, sql, default_run_params, created_at, updated_at]
+    SavedQueryListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQuery"
+      required: [items]
+    SavedQueryDeleteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        id:
+          type: string
+      required: [ok, id]
+    CreateSavedQueryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        data_source_id:
+          type: string
+        sql:
+          type: string
+        default_run_params:
+          type: object
+          additionalProperties: false
+          properties:
+            llm_provider:
+              type: string
+            model:
+              type: string
+            max_rows:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            timeout_ms:
+              type: integer
+              minimum: 1000
+              maximum: 120000
+            no_execute:
+              type: boolean
+      required: [name, data_source_id, sql]
+    UpdateSavedQueryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        data_source_id:
+          type: string
+        sql:
+          type: string
+        default_run_params:
+          type: object
+          additionalProperties: false
+          properties:
+            llm_provider:
+              type: string
+            model:
+              type: string
+            max_rows:
+              type: integer
+              minimum: 1
+              maximum: 100000
+            timeout_ms:
+              type: integer
+              minimum: 1000
+              maximum: 120000
+            no_execute:
+              type: boolean
+      required: [name, data_source_id, sql]
     CreateSessionRequest:
       type: object
       properties:
