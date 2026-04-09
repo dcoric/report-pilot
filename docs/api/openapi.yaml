@@ -309,6 +309,70 @@ paths:
                   message:
                     type: string
                 required: [error, message]
+  /v1/data-sources/{dataSourceId}/export:
+    get:
+      tags: [Admin]
+      summary: Export a data source configuration snapshot as a JSON file
+      description: >
+        Returns a downloadable JSON file containing the full configuration for the
+        specified data source — schema objects (with columns, relationships, indexes),
+        semantic entities (with metric definitions), join policies, RAG notes,
+        NL/SQL examples, and synonyms. The file can be re-imported via
+        `POST /v1/data-sources/import`.
+      parameters:
+        - $ref: "#/components/parameters/DataSourceId"
+      responses:
+        "200":
+          description: Export file download
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSourceExport"
+        "400":
+          description: Invalid data source ID
+        "404":
+          description: Data source not found
+  /v1/data-sources/import:
+    post:
+      tags: [Admin]
+      summary: Import a data source from a previously exported JSON snapshot
+      description: >
+        Creates a new data source and all associated metadata (schema objects,
+        semantic entities, join policies, RAG notes, NL/SQL examples, synonyms)
+        from a JSON export file in a single atomic transaction. Triggers a RAG
+        reindex on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataSourceExport"
+      responses:
+        "201":
+          description: Data source imported successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  data_source_id:
+                    type: string
+                    format: uuid
+                required: [ok, data_source_id]
+        "400":
+          description: Validation error in export payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+                required: [error, message]
   /v1/schema-objects:
     get:
       tags: [Admin]
@@ -1126,6 +1190,191 @@ components:
         object_count:
           type: integer
       required: [ok, object_count]
+    DataSourceExport:
+      type: object
+      description: >
+        Portable snapshot of a data source and all its associated configuration.
+        Produced by GET /v1/data-sources/{id}/export and consumed by
+        POST /v1/data-sources/import.
+      properties:
+        version:
+          type: integer
+          example: 1
+        exported_at:
+          type: string
+          format: date-time
+        data_source:
+          type: object
+          properties:
+            name:
+              type: string
+            db_type:
+              type: string
+              enum: [postgres, mssql]
+            connection_ref:
+              type: string
+          required: [name, db_type, connection_ref]
+        schema_objects:
+          type: array
+          items:
+            type: object
+            properties:
+              object_type:
+                type: string
+                enum: [table, view, materialized_view]
+              schema_name:
+                type: string
+              object_name:
+                type: string
+              description:
+                type: string
+                nullable: true
+              is_ignored:
+                type: boolean
+              columns:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    column_name:
+                      type: string
+                    data_type:
+                      type: string
+                    nullable:
+                      type: boolean
+                    is_pk:
+                      type: boolean
+                    ordinal_position:
+                      type: integer
+                  required: [column_name, data_type, nullable, is_pk, ordinal_position]
+              relationships:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    from_column:
+                      type: string
+                    to_schema:
+                      type: string
+                    to_object:
+                      type: string
+                    to_column:
+                      type: string
+                    relationship_type:
+                      type: string
+                      enum: [fk, inferred]
+                  required: [from_column, to_schema, to_object, to_column, relationship_type]
+              indexes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    index_name:
+                      type: string
+                    columns:
+                      type: array
+                      items:
+                        type: string
+                    is_unique:
+                      type: boolean
+                  required: [index_name, columns, is_unique]
+            required: [object_type, schema_name, object_name]
+        rag_notes:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              content:
+                type: string
+              active:
+                type: boolean
+            required: [title, content]
+        semantic_entities:
+          type: array
+          items:
+            type: object
+            properties:
+              entity_type:
+                type: string
+                enum: [table, column, metric, dimension, rule]
+              target_ref:
+                type: string
+              business_name:
+                type: string
+              description:
+                type: string
+                nullable: true
+              owner:
+                type: string
+                nullable: true
+              active:
+                type: boolean
+              metric_definitions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sql_expression:
+                      type: string
+                    grain:
+                      type: string
+                      nullable: true
+                    filters_json:
+                      type: string
+                      nullable: true
+                  required: [sql_expression]
+            required: [entity_type, target_ref, business_name]
+        join_policies:
+          type: array
+          items:
+            type: object
+            properties:
+              left_ref:
+                type: string
+              right_ref:
+                type: string
+              join_type:
+                type: string
+              on_clause:
+                type: string
+              approved:
+                type: boolean
+              notes:
+                type: string
+                nullable: true
+            required: [left_ref, right_ref, join_type, on_clause]
+        nl_sql_examples:
+          type: array
+          items:
+            type: object
+            properties:
+              question:
+                type: string
+              sql:
+                type: string
+              quality_score:
+                type: number
+                nullable: true
+              source:
+                type: string
+                enum: [manual, feedback]
+            required: [question, sql]
+        synonyms:
+          type: array
+          items:
+            type: object
+            properties:
+              term:
+                type: string
+              maps_to_ref:
+                type: string
+              weight:
+                type: number
+                nullable: true
+            required: [term, maps_to_ref]
+      required: [version, data_source]
     ExportDeliveryStatus:
       type: object
       properties:
