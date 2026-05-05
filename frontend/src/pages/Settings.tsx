@@ -135,7 +135,7 @@ export const Settings: React.FC = () => {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Primary Provider</label>
                                     <select
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2"
+                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm border px-3 py-2"
                                         value={rule.primary_provider}
                                         onChange={(e) => handleRoutingChange(ds.id, 'primary_provider', e.target.value as ProviderType)}
                                     >
@@ -147,7 +147,7 @@ export const Settings: React.FC = () => {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Fallback Strategy</label>
                                     <select
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2"
+                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm border px-3 py-2"
                                         value={rule.strategy}
                                         onChange={(e) => handleRoutingChange(ds.id, 'strategy', e.target.value as RoutingStrategy)}
                                     >
@@ -159,7 +159,7 @@ export const Settings: React.FC = () => {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Fallback Provider(s)</label>
                                     <select
-                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2"
+                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm border px-3 py-2"
                                         value={rule.fallback_providers[0] || ''}
                                         onChange={(e) => {
                                             const val = e.target.value as ProviderType;

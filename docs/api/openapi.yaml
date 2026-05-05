@@ -52,6 +52,12 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: tag
+          required: false
+          schema:
+            type: string
+          description: Filter to saved queries that include this tag.
       responses:
         "200":
           description: Saved query entries
@@ -1061,13 +1067,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryParameter"
+        tags:
+          type: array
+          items:
+            type: string
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-      required: [id, owner_id, name, data_source_id, sql, default_run_params, parameter_schema, created_at, updated_at]
+      required: [id, owner_id, name, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at]
     SavedQueryListResponse:
       type: object
       properties:
@@ -1119,6 +1129,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryParameter"
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 40
+          maxItems: 20
       required: [name, data_source_id, sql]
     UpdateSavedQueryRequest:
       type: object
@@ -1155,6 +1171,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueryParameter"
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 40
+          maxItems: 20
       required: [name, data_source_id, sql]
     ValidateParamsRequest:
       type: object

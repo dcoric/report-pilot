@@ -56,6 +56,8 @@ export interface paths {
             parameters: {
                 query?: {
                     data_source_id?: string;
+                    /** @description Filter to saved queries that include this tag. */
+                    tag?: string;
                 };
                 header?: never;
                 path?: never;
@@ -1730,6 +1732,7 @@ export interface components {
                 no_execute?: boolean;
             };
             parameter_schema: components["schemas"]["QueryParameter"][];
+            tags: string[];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1755,6 +1758,7 @@ export interface components {
                 no_execute?: boolean;
             };
             parameter_schema?: components["schemas"]["QueryParameter"][];
+            tags?: string[];
         };
         UpdateSavedQueryRequest: {
             name: string;
@@ -1769,6 +1773,7 @@ export interface components {
                 no_execute?: boolean;
             };
             parameter_schema?: components["schemas"]["QueryParameter"][];
+            tags?: string[];
         };
         ValidateParamsRequest: {
             params: {

@@ -85,7 +85,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                                 <input
                                     type="text"
                                     required
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={leftRef}
                                     onChange={(e) => setLeftRef(e.target.value)}
                                     placeholder="schema.table_a"
@@ -96,7 +96,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                                 <input
                                     type="text"
                                     required
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={rightRef}
                                     onChange={(e) => setRightRef(e.target.value)}
                                     placeholder="schema.table_b"
@@ -108,7 +108,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Join Type</label>
                                 <select
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={joinType}
                                     onChange={(e) => setJoinType(e.target.value as JoinType)}
                                 >
@@ -124,7 +124,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                                         type="checkbox"
                                         checked={approved}
                                         onChange={(e) => setApproved(e.target.checked)}
-                                        className="rounded text-blue-600 focus:ring-blue-500"
+                                        className="rounded text-oxblood focus:ring-oxblood"
                                     />
                                     <span className="text-sm font-medium text-gray-700">Approved</span>
                                 </label>
@@ -136,7 +136,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                             <textarea
                                 required
                                 rows={3}
-                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 value={onClause}
                                 onChange={(e) => setOnClause(e.target.value)}
                                 placeholder="table_a.id = table_b.a_id"
@@ -158,7 +158,7 @@ export const JoinPolicyDialog: React.FC<JoinPolicyDialogProps> = ({
                     <button
                         type="submit"
                         form="join-form"
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center gap-2"
+                        className="px-4 py-2 text-sm font-medium text-white bg-oxblood rounded-md hover:bg-oxblood-deep flex items-center gap-2"
                         disabled={isSubmitting}
                     >
                         <Save size={16} />
