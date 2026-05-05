@@ -1,5 +1,10 @@
 const appDb = require("../lib/appDb");
-const { SAVED_QUERY_NAME_MAX_LENGTH, SAVED_QUERY_DESCRIPTION_MAX_LENGTH } = require("../lib/constants");
+const {
+  SAVED_QUERY_NAME_MAX_LENGTH,
+  SAVED_QUERY_DESCRIPTION_MAX_LENGTH,
+  SAVED_QUERY_TAG_MAX_LENGTH,
+  SAVED_QUERY_MAX_TAGS
+} = require("../lib/constants");
 const {
   clamp,
   isUuid,
@@ -36,9 +41,48 @@ const SAVED_QUERY_COLUMNS = `
   sql,
   default_run_params,
   parameter_schema,
+  tags,
   created_at,
   updated_at
 `;
+
+function normalizeTags(value) {
+  if (value === undefined || value === null) {
+    return { ok: true, value: [] };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, message: "tags must be an array of strings" };
+  }
+
+  const seen = new Set();
+  const tags = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      return { ok: false, message: "tags must be an array of strings" };
+    }
+    const trimmed = entry.trim().toLowerCase();
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed.length > SAVED_QUERY_TAG_MAX_LENGTH) {
+      return {
+        ok: false,
+        message: `tag '${trimmed}' exceeds ${SAVED_QUERY_TAG_MAX_LENGTH} characters`
+      };
+    }
+    if (seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    tags.push(trimmed);
+  }
+
+  if (tags.length > SAVED_QUERY_MAX_TAGS) {
+    return { ok: false, message: `cannot exceed ${SAVED_QUERY_MAX_TAGS} tags per query` };
+  }
+
+  return { ok: true, value: tags };
+}
 
 async function ensureDataSourceExists(dataSourceId) {
   const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
@@ -65,6 +109,7 @@ async function loadSavedQueryForExecution(savedQueryId) {
         sq.sql,
         sq.default_run_params,
         sq.parameter_schema,
+        sq.tags,
         sq.created_at,
         sq.updated_at,
         ds.connection_ref,
@@ -147,10 +192,18 @@ async function getSavedQuery(savedQueryId) {
   return success(savedQuery);
 }
 
-async function listSavedQueries(dataSourceId) {
+async function listSavedQueries(dataSourceId, tag) {
   const filter = typeof dataSourceId === "string" ? dataSourceId.trim() : "";
   if (filter && !isUuid(filter)) {
     return failure(400, { error: "bad_request", message: "data_source_id must be a valid UUID" });
+  }
+
+  const tagFilter = typeof tag === "string" ? tag.trim().toLowerCase() : "";
+  if (tagFilter && tagFilter.length > SAVED_QUERY_TAG_MAX_LENGTH) {
+    return failure(400, {
+      error: "bad_request",
+      message: `tag exceeds ${SAVED_QUERY_TAG_MAX_LENGTH} characters`
+    });
   }
 
   const result = await appDb.query(
@@ -158,9 +211,10 @@ async function listSavedQueries(dataSourceId) {
       SELECT ${SAVED_QUERY_COLUMNS}
       FROM saved_queries
       WHERE ($1::uuid IS NULL OR data_source_id = $1::uuid)
+        AND ($2::text IS NULL OR $2::text = ANY(tags))
       ORDER BY updated_at DESC, created_at DESC
     `,
-    [filter || null]
+    [filter || null, tagFilter || null]
   );
 
   return success({ items: result.rows });
@@ -173,7 +227,8 @@ async function createSavedQuery({
   dataSourceId,
   sql,
   defaultRunParams,
-  parameterSchema
+  parameterSchema,
+  tags
 }) {
   const trimmedOwnerId = String(ownerId || "anonymous").trim() || "anonymous";
   const trimmedDataSourceId = String(dataSourceId || "").trim();
@@ -182,6 +237,7 @@ async function createSavedQuery({
   const normalizedDescription = normalizeOptionalTrimmedString(description);
   const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(defaultRunParams);
   const parameterSchemaValidation = resolveParameterSchema(trimmedSql, parameterSchema, []);
+  const tagsValidation = normalizeTags(tags);
 
   if (!trimmedName || !trimmedDataSourceId || !trimmedSql) {
     return failure(400, { error: "bad_request", message: "name, data_source_id and sql are required" });
@@ -207,6 +263,9 @@ async function createSavedQuery({
   if (!parameterSchemaValidation.ok) {
     return failure(400, { error: "bad_request", message: parameterSchemaValidation.message });
   }
+  if (!tagsValidation.ok) {
+    return failure(400, { error: "bad_request", message: tagsValidation.message });
+  }
 
   if (!(await ensureDataSourceExists(trimmedDataSourceId))) {
     return failure(404, { error: "not_found", message: "Data source not found" });
@@ -222,8 +281,9 @@ async function createSavedQuery({
           data_source_id,
           sql,
           default_run_params,
-          parameter_schema
-        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+          parameter_schema,
+          tags
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::text[])
         RETURNING ${SAVED_QUERY_COLUMNS}
       `,
       [
@@ -233,7 +293,8 @@ async function createSavedQuery({
         trimmedDataSourceId,
         trimmedSql,
         JSON.stringify(defaultRunParamsValidation.value),
-        JSON.stringify(parameterSchemaValidation.value)
+        JSON.stringify(parameterSchemaValidation.value),
+        tagsValidation.value
       ]
     );
 
@@ -255,7 +316,8 @@ async function updateSavedQuery(savedQueryId, {
   dataSourceId,
   sql,
   defaultRunParams,
-  parameterSchema
+  parameterSchema,
+  tags
 }) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
@@ -272,6 +334,9 @@ async function updateSavedQuery(savedQueryId, {
   const normalizedDescription = normalizeOptionalTrimmedString(description);
   const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(defaultRunParams);
   const parameterSchemaValidation = resolveParameterSchema(trimmedSql, parameterSchema, existing.parameter_schema);
+  const tagsValidation = tags === undefined
+    ? { ok: true, value: existing.tags || [] }
+    : normalizeTags(tags);
 
   if (!trimmedName || !trimmedDataSourceId || !trimmedSql) {
     return failure(400, { error: "bad_request", message: "name, data_source_id and sql are required" });
@@ -297,6 +362,9 @@ async function updateSavedQuery(savedQueryId, {
   if (!parameterSchemaValidation.ok) {
     return failure(400, { error: "bad_request", message: parameterSchemaValidation.message });
   }
+  if (!tagsValidation.ok) {
+    return failure(400, { error: "bad_request", message: tagsValidation.message });
+  }
 
   if (!(await ensureDataSourceExists(trimmedDataSourceId))) {
     return failure(404, { error: "not_found", message: "Data source not found" });
@@ -313,6 +381,7 @@ async function updateSavedQuery(savedQueryId, {
           sql = $5,
           default_run_params = $6::jsonb,
           parameter_schema = $7::jsonb,
+          tags = $8::text[],
           updated_at = NOW()
         WHERE id = $1
         RETURNING ${SAVED_QUERY_COLUMNS}
@@ -324,7 +393,8 @@ async function updateSavedQuery(savedQueryId, {
         trimmedDataSourceId,
         trimmedSql,
         JSON.stringify(defaultRunParamsValidation.value),
-        JSON.stringify(parameterSchemaValidation.value)
+        JSON.stringify(parameterSchemaValidation.value),
+        tagsValidation.value
       ]
     );
 

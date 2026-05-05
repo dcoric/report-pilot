@@ -104,7 +104,7 @@ export const SchemaObjectList: React.FC<SchemaObjectListProps> = ({ objects, fil
                                         {obj.object_type === 'view' || obj.object_type === 'materialized_view' ? (
                                             <Eye size={16} className="text-purple-500" />
                                         ) : (
-                                            <TableIcon size={16} className="text-blue-500" />
+                                            <TableIcon size={16} className="text-oxblood" />
                                         )}
                                         <span className="ml-2 capitalize text-xs bg-gray-100 rounded px-1.5 py-0.5">{obj.object_type.replace('_', ' ')}</span>
                                     </div>
@@ -119,7 +119,7 @@ export const SchemaObjectList: React.FC<SchemaObjectListProps> = ({ objects, fil
                                         <button
                                             onClick={() => handleToggleIgnored(obj)}
                                             disabled={pendingIds.has(obj.id)}
-                                            className={`disabled:opacity-50 ${obj.is_ignored ? 'text-red-600 hover:text-red-700' : 'text-gray-500 hover:text-blue-600'}`}
+                                            className={`disabled:opacity-50 ${obj.is_ignored ? 'text-red-600 hover:text-red-700' : 'text-gray-500 hover:text-oxblood'}`}
                                             title={obj.is_ignored ? 'Hidden from queries (click to enable)' : 'Visible to queries (click to hide)'}
                                             aria-label={obj.is_ignored ? `Enable ${obj.schema_name}.${obj.object_name}` : `Hide ${obj.schema_name}.${obj.object_name}`}
                                         >
@@ -127,7 +127,7 @@ export const SchemaObjectList: React.FC<SchemaObjectListProps> = ({ objects, fil
                                         </button>
                                         <button
                                             onClick={() => handleEnrich(obj)}
-                                            className="text-blue-600 hover:text-blue-900 flex items-center gap-1"
+                                            className="text-oxblood hover:text-oxblood-deep flex items-center gap-1"
                                         >
                                             <Sparkles size={14} />
                                             Enrich

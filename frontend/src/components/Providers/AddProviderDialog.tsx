@@ -96,7 +96,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
                         <select
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                             value={provider}
                             onChange={(e) => handleProviderChange(e.target.value)}
                         >
@@ -111,7 +111,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                         <input
                             type="password"
                             required
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                             value={apiKeyRef}
                             onChange={(e) => setApiKeyRef(e.target.value)}
                             placeholder="sk-... or env:OPENAI_API_KEY"
@@ -126,7 +126,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                                 <input
                                     type="text"
                                     required
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={customProviderId}
                                     onChange={(e) => setCustomProviderId(e.target.value)}
                                     placeholder="e.g. ollama-local"
@@ -138,7 +138,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
                                 <input
                                     type="text"
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={displayName}
                                     onChange={(e) => setDisplayName(e.target.value)}
                                     placeholder="e.g. Ollama Local"
@@ -150,7 +150,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                                 <input
                                     type="url"
                                     required
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={baseUrl}
                                     onChange={(e) => setBaseUrl(e.target.value)}
                                     placeholder="http://localhost:11434/v1"
@@ -164,7 +164,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                         <input
                             type="text"
                             required
-                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                             value={defaultModel}
                             onChange={(e) => setDefaultModel(e.target.value)}
                             placeholder="e.g. gpt-5.2"
@@ -193,7 +193,7 @@ export const AddProviderDialog: React.FC<AddProviderDialogProps> = ({ isOpen, on
                         </button>
                         <button
                             type="submit"
-                            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                            className="px-4 py-2 text-sm font-medium text-white bg-oxblood rounded-md hover:bg-oxblood-deep disabled:opacity-50"
                             disabled={isSubmitting}
                         >
                             {isSubmitting ? 'Adding...' : 'Add Provider'}

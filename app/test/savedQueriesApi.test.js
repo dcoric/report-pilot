@@ -108,7 +108,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("insert into saved_queries")) {
-      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson] = params;
+      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags] = params;
       const duplicate = [...savedQueries.values()].find((entry) => (
         entry.owner_id === ownerId
         && entry.data_source_id === dataSourceId
@@ -128,6 +128,7 @@ before(async () => {
         sql: querySql,
         default_run_params: JSON.parse(defaultRunParamsJson),
         parameter_schema: JSON.parse(parameterSchemaJson),
+        tags: Array.isArray(tags) ? tags : [],
         created_at: now,
         updated_at: now
       };
@@ -135,21 +136,29 @@ before(async () => {
       return { rowCount: 1, rows: [row] };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
-      const [dataSourceId] = params;
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
+      const [dataSourceId, tagFilter] = params;
       const rows = sortSavedQueries(
-        [...savedQueries.values()].filter((entry) => !dataSourceId || entry.data_source_id === dataSourceId)
+        [...savedQueries.values()].filter((entry) => {
+          if (dataSourceId && entry.data_source_id !== dataSourceId) {
+            return false;
+          }
+          if (tagFilter && !(entry.tags || []).includes(tagFilter)) {
+            return false;
+          }
+          return true;
+        })
       );
       return { rowCount: rows.length, rows };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, created_at, updated_at from saved_queries where id = $1")) {
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at from saved_queries where id = $1")) {
       const [id] = params;
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
-    if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
+    if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.tags, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
       const [id] = params;
       const row = savedQueries.get(id);
       if (!row) {
@@ -170,7 +179,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_queries set")) {
-      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson] = params;
+      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags] = params;
       const existing = savedQueries.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -194,6 +203,7 @@ before(async () => {
         sql: querySql,
         default_run_params: JSON.parse(defaultRunParamsJson),
         parameter_schema: JSON.parse(parameterSchemaJson),
+        tags: Array.isArray(tags) ? tags : (existing.tags || []),
         updated_at: new Date().toISOString()
       };
       savedQueries.set(id, updated);
@@ -569,4 +579,61 @@ test("saved query not found paths return 404", async () => {
 
   const missingDelete = await api("DELETE", "/v1/saved-queries/00000000-0000-4000-8000-000000009999");
   assert.equal(missingDelete.status, 404);
+});
+
+test("saved query tags are normalized, deduplicated, and filterable", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Tagged Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1",
+    tags: [" Finance ", "finance", "REVENUE", "", "ops"]
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.payload.tags, ["finance", "revenue", "ops"]);
+
+  const untagged = await api("POST", "/v1/saved-queries", {
+    name: "Untagged Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 2"
+  });
+  assert.equal(untagged.status, 201);
+  assert.deepEqual(untagged.payload.tags, []);
+
+  const filtered = await api("GET", "/v1/saved-queries?tag=finance");
+  assert.equal(filtered.status, 200);
+  assert.equal(filtered.payload.items.length, 1);
+  assert.equal(filtered.payload.items[0].id, created.payload.id);
+
+  const updated = await api("PUT", `/v1/saved-queries/${created.payload.id}`, {
+    name: "Tagged Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1",
+    tags: ["ops"]
+  });
+  assert.equal(updated.status, 200);
+  assert.deepEqual(updated.payload.tags, ["ops"]);
+
+  const updatePreservesTags = await api("PUT", `/v1/saved-queries/${created.payload.id}`, {
+    name: "Tagged Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  });
+  assert.equal(updatePreservesTags.status, 200);
+  assert.deepEqual(updatePreservesTags.payload.tags, ["ops"]);
+
+  const tagTooLong = await api("POST", "/v1/saved-queries", {
+    name: "Bad Tags",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1",
+    tags: ["x".repeat(60)]
+  });
+  assert.equal(tagTooLong.status, 400);
+
+  const wrongShape = await api("POST", "/v1/saved-queries", {
+    name: "Bad Shape",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1",
+    tags: "finance"
+  });
+  assert.equal(wrongShape.status, 400);
 });

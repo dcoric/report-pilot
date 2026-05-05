@@ -70,10 +70,10 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ isOpen, onClose, metadat
                     {metadata?.rag_documents ? (
                         <ul className="space-y-2">
                             {metadata.rag_documents.map((doc: RagDocument, idx: number) => (
-                                <li key={idx} className="bg-blue-50 p-2 rounded border border-blue-100 text-xs">
-                                    <div className="font-medium text-blue-800 mb-1 truncate">{doc.source || 'Unknown Source'}</div>
+                                <li key={idx} className="bg-oxblood/5 p-2 rounded border border-oxblood/15 text-xs">
+                                    <div className="font-medium text-oxblood-deep mb-1 truncate">{doc.source || 'Unknown Source'}</div>
                                     <p className="text-gray-600 line-clamp-3">{doc.content}</p>
-                                    <div className="mt-1 text-blue-400 text-[10px] text-right">
+                                    <div className="mt-1 text-oxblood/70 text-[10px] text-right">
                                         Score: {typeof doc.score === 'number' ? doc.score.toFixed(3) : '-'}
                                     </div>
                                 </li>

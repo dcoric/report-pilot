@@ -323,7 +323,7 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
                     <button
                         onClick={handleRefresh}
                         disabled={refreshing}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-oxblood text-white rounded-md hover:bg-oxblood-deep transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
                         {refreshing ? 'Refreshing...' : 'Refresh Status'}
@@ -358,7 +358,7 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
                     <button
                         onClick={handleRefresh}
                         disabled={refreshing}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-4 py-2 bg-oxblood text-white rounded-md hover:bg-oxblood-deep transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
                         {refreshing ? 'Refreshing...' : 'Refresh Status'}
@@ -402,7 +402,7 @@ export const ReleaseGates: React.FC<ReleaseGatesProps> = ({ embedded = false }) 
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm text-center">
                     <div className="text-sm text-gray-500 uppercase tracking-wide">Accuracy</div>
-                    <div className="text-2xl font-bold text-blue-600">{data.summary.accuracy_score}%</div>
+                    <div className="text-2xl font-bold text-oxblood">{data.summary.accuracy_score}%</div>
                 </div>
             </div>
 
