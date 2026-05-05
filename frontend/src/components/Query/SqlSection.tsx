@@ -9,7 +9,7 @@ interface SqlSectionProps {
     isGenerating: boolean;
     isRunning: boolean;
     isDryRun: boolean;
-    sessionId: string | null;
+    canRun: boolean;
     onToggle: () => void;
     onCopy: () => void;
     onReset: () => void;
@@ -27,7 +27,7 @@ export function SqlSection({
     isGenerating,
     isRunning,
     isDryRun,
-    sessionId,
+    canRun,
     onToggle,
     onCopy,
     onReset,
@@ -85,7 +85,7 @@ export function SqlSection({
                         </button>
                         <button
                             onClick={onRun}
-                            disabled={isRunning || !generatedSql || !sessionId}
+                            disabled={isRunning || !generatedSql || !canRun}
                             className="flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}

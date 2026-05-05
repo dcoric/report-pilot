@@ -54,6 +54,7 @@ export type RunResponse = components['schemas']['RunSessionResponse'] & {
 };
 
 export type PromptHistoryItem = components['schemas']['PromptHistoryItem'];
+export type SavedQuery = components['schemas']['SavedQuery'];
 export type TabType = 'results' | 'metadata' | 'citations' | 'query-plan';
 export type ExportFormat = 'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet';
 

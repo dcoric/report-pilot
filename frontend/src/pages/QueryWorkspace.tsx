@@ -8,7 +8,7 @@ import { Sidebar } from '../components/Layout/Sidebar';
 import { PromptSection } from '../components/Query/PromptSection';
 import { ResultSection } from '../components/Query/ResultSection';
 import { SqlSection } from '../components/Query/SqlSection';
-import type { ExportFormat, LlmProvider, PromptHistoryItem, RunResponse, RunProvider, TabType } from '../components/Query/types';
+import type { ExportFormat, LlmProvider, PromptHistoryItem, RunResponse, RunProvider, SavedQuery, TabType } from '../components/Query/types';
 import { useDataSource } from '../hooks/useDataSource';
 import { usePromptHistory } from '../hooks/usePromptHistory';
 import { useQueryWorkspaceLayout } from '../hooks/useQueryWorkspaceLayout';
@@ -40,7 +40,7 @@ function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {
 }
 
 export const QueryWorkspace = () => {
-    const { dataSources, selectedDataSourceId } = useDataSource();
+    const { dataSources, selectedDataSourceId, setSelectedDataSourceId } = useDataSource();
     const {
         isPromptExpanded,
         setIsPromptExpanded,
@@ -81,6 +81,7 @@ export const QueryWorkspace = () => {
     const [isDryRun, setIsDryRun] = useState(false);
     const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
     const [isExporting, setIsExporting] = useState(false);
+    const [loadedSavedQueryId, setLoadedSavedQueryId] = useState<string | null>(null);
 
     const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
     const selectedDataSource = dataSources.find((dataSource) => dataSource.id === selectedDataSourceId);
@@ -100,14 +101,25 @@ export const QueryWorkspace = () => {
 
             const enabledProviders = data.items.filter((entry) => entry.enabled) as LlmProvider[];
             setLlmProviders(enabledProviders);
-            if (enabledProviders.length > 0) {
-                setProvider(enabledProviders[0].provider);
-                setModel(enabledProviders[0].default_model);
-            }
+            setProvider((currentProvider) => (
+                enabledProviders.some((entry) => entry.provider === currentProvider)
+                    ? currentProvider
+                    : enabledProviders[0]?.provider || ''
+            ));
+            setModel((currentModel) => currentModel || enabledProviders[0]?.default_model || '');
         };
 
         void fetchProviders();
     }, []);
+
+    useEffect(() => {
+        const matchedProvider = llmProviders.find((entry) => entry.provider === provider);
+        if (!matchedProvider) {
+            return;
+        }
+
+        setModel((currentModel) => currentModel || matchedProvider.default_model);
+    }, [llmProviders, provider]);
 
     const applyRunError = (error: unknown, options?: { updateOriginalSql?: boolean }) => {
         const payload = parseRunErrorPayload(error);
@@ -160,6 +172,7 @@ export const QueryWorkspace = () => {
         setIsGenerating(true);
         setGeneratedSql('');
         setQueryResult(null);
+        setLoadedSavedQueryId(null);
 
         try {
             const { data, error } = await client.POST('/v1/query/sessions', {
@@ -194,20 +207,38 @@ export const QueryWorkspace = () => {
     };
 
     const handleRun = async () => {
-        if (!sessionId) {
-            toast.error('Create a query session first by clicking Ask.');
-            return;
-        }
-
         const sqlOverride = generatedSql.trim();
         if (!sqlOverride) {
             return;
         }
 
+        if (!selectedDataSourceId) {
+            toast.error('Select a data source before running SQL.');
+            return;
+        }
+
         setIsRunning(true);
         try {
+            let nextSessionId = sessionId;
+            if (!nextSessionId) {
+                const { data: sessionData, error: sessionError } = await client.POST('/v1/query/sessions', {
+                    body: {
+                        data_source_id: selectedDataSourceId,
+                        question: question.trim() || 'Loaded saved query',
+                    },
+                });
+
+                if (sessionError || !sessionData) {
+                    toast.error('Failed to create query session.');
+                    return;
+                }
+
+                nextSessionId = sessionData.session_id;
+                setSessionId(sessionData.session_id);
+            }
+
             const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/run', {
-                params: { path: { sessionId } },
+                params: { path: { sessionId: nextSessionId } },
                 body: {
                     llm_provider: isValidProvider(provider) ? provider : undefined,
                     model: model || undefined,
@@ -237,6 +268,43 @@ export const QueryWorkspace = () => {
         } finally {
             setIsRunning(false);
         }
+    };
+
+    const handleLoadSavedQuery = (savedQuery: SavedQuery) => {
+        const defaultRunParams = savedQuery.default_run_params;
+        const providerConfig = defaultRunParams.llm_provider
+            ? llmProviders.find((entry) => entry.provider === defaultRunParams.llm_provider)
+            : undefined;
+
+        setSelectedDataSourceId(savedQuery.data_source_id);
+        setQuestion('');
+        setSessionId(null);
+        setGeneratedSql(savedQuery.sql);
+        setOriginalSql(savedQuery.sql);
+        setQueryResult(null);
+        setActiveTab('results');
+        setLoadedSavedQueryId(savedQuery.id);
+        setIsSqlExpanded(true);
+
+        if (typeof defaultRunParams.max_rows === 'number') {
+            setMaxRows(defaultRunParams.max_rows);
+        }
+        if (typeof defaultRunParams.timeout_ms === 'number') {
+            setTimeout(Math.max(1, Math.round(defaultRunParams.timeout_ms / 1000)));
+        }
+        if (typeof defaultRunParams.no_execute === 'boolean') {
+            setIsDryRun(defaultRunParams.no_execute);
+        }
+        if (defaultRunParams.llm_provider) {
+            setProvider(defaultRunParams.llm_provider);
+        }
+        if (providerConfig) {
+            setModel(defaultRunParams.model || providerConfig.default_model);
+        } else if (defaultRunParams.model) {
+            setModel(defaultRunParams.model);
+        }
+
+        toast.success(`Loaded "${savedQuery.name}"`);
     };
 
     const handleCopy = async () => {
@@ -379,7 +447,7 @@ export const QueryWorkspace = () => {
                     isGenerating={isGenerating}
                     isRunning={isRunning}
                     isDryRun={isDryRun}
-                    sessionId={sessionId}
+                    canRun={Boolean(generatedSql.trim() && selectedDataSourceId)}
                     onToggle={() => setIsSqlExpanded((previous) => !previous)}
                     onCopy={handleCopy}
                     onReset={handleReset}
@@ -443,7 +511,17 @@ export const QueryWorkspace = () => {
                 )}
             </div>
 
-            <Sidebar />
+            <Sidebar
+                dataSources={dataSources}
+                selectedDataSourceId={selectedDataSourceId}
+                loadedSavedQueryId={loadedSavedQueryId}
+                onLoadSavedQuery={handleLoadSavedQuery}
+                onLoadedSavedQueryDeleted={(savedQueryId) => {
+                    if (loadedSavedQueryId === savedQueryId) {
+                        setLoadedSavedQueryId(null);
+                    }
+                }}
+            />
         </div>
     );
 };
