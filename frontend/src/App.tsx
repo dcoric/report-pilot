@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Navigate, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppShell } from './components/Layout/AppShell';
+import { DataSourceProvider } from './contexts/DataSourceContext';
 import { Dashboard } from './pages/Dashboard';
 import { DataSources } from './pages/DataSources';
 import { SchemaExplorer } from './pages/SchemaExplorer';
@@ -15,7 +16,8 @@ function App() {
   return (
     <Router>
       <Toaster position="top-right" richColors duration={10000} />
-      <Routes>
+      <DataSourceProvider>
+        <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -33,9 +35,10 @@ function App() {
           <Route path="/docs" element={<ComingSoon />} />
         </Route>
 
-        {/* 404 Route */}
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+          {/* 404 Route */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </DataSourceProvider>
     </Router>
   );
 }
