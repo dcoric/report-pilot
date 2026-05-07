@@ -14,13 +14,17 @@ async function handleCreateSavedQuery(req, res) {
     dataSourceId: body.data_source_id,
     sql: body.sql,
     defaultRunParams: body.default_run_params,
-    parameterSchema: body.parameter_schema
+    parameterSchema: body.parameter_schema,
+    tags: body.tags
   });
   return writeResult(res, result);
 }
 
 async function handleListSavedQueries(_req, res, requestUrl) {
-  const result = await savedQueryService.listSavedQueries(requestUrl.searchParams.get("data_source_id"));
+  const result = await savedQueryService.listSavedQueries(
+    requestUrl.searchParams.get("data_source_id"),
+    requestUrl.searchParams.get("tag")
+  );
   return writeResult(res, result);
 }
 
@@ -37,7 +41,8 @@ async function handleUpdateSavedQuery(req, res, savedQueryId) {
     dataSourceId: body.data_source_id,
     sql: body.sql,
     defaultRunParams: body.default_run_params,
-    parameterSchema: body.parameter_schema
+    parameterSchema: body.parameter_schema,
+    tags: body.tags
   });
   return writeResult(res, result);
 }

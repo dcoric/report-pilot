@@ -22,7 +22,7 @@ export const Dashboard: React.FC = () => {
                     onClick={() => setTab('observability')}
                     className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
                         tab === 'observability'
-                            ? 'bg-blue-600 text-white shadow-sm'
+                            ? 'bg-oxblood text-white shadow-sm'
                             : 'text-gray-600 hover:bg-gray-100'
                     }`}
                 >
@@ -33,7 +33,7 @@ export const Dashboard: React.FC = () => {
                     onClick={() => setTab('release-gates')}
                     className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
                         tab === 'release-gates'
-                            ? 'bg-blue-600 text-white shadow-sm'
+                            ? 'bg-oxblood text-white shadow-sm'
                             : 'text-gray-600 hover:bg-gray-100'
                     }`}
                 >

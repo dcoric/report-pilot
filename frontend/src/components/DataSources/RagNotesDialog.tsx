@@ -175,7 +175,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                             <h3 className="font-medium text-gray-900">Notes</h3>
                             <button
                                 onClick={resetForm}
-                                className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100"
+                                className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded bg-oxblood/5 text-oxblood-deep hover:bg-oxblood/10"
                             >
                                 <Plus size={14} />
                                 New
@@ -190,7 +190,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                         ) : loadError ? (
                             <div className="h-44 flex flex-col items-center justify-center text-center text-red-600 gap-2">
                                 <p>{loadError}</p>
-                                <button className="text-sm text-blue-600 hover:underline" onClick={() => void loadNotes()}>
+                                <button className="text-sm text-oxblood hover:underline" onClick={() => void loadNotes()}>
                                     Retry
                                 </button>
                             </div>
@@ -214,7 +214,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                                             <div className="flex items-center gap-1 shrink-0">
                                                 <button
                                                     onClick={() => handleEdit(note)}
-                                                    className="text-gray-500 hover:text-blue-600"
+                                                    className="text-gray-500 hover:text-oxblood"
                                                     title="Edit note"
                                                 >
                                                     <Pencil size={14} />
@@ -248,7 +248,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                                     value={title}
                                     onChange={(e) => setTitle(e.target.value)}
                                     placeholder="e.g. Revenue policy assumptions"
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 />
                             </div>
 
@@ -259,7 +259,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                                     onChange={(e) => setContent(e.target.value)}
                                     maxLength={20000}
                                     placeholder="Plain text instructions and constraints for the assistant."
-                                    className="w-full min-h-[240px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full min-h-[240px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 />
                                 <p className="text-xs text-gray-500 mt-2">
                                     Reindexing runs automatically after create, update, or delete.
@@ -294,7 +294,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                             form="rag-notes-form"
                             type="submit"
                             disabled={isSaving}
-                            className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-60"
+                            className="px-3 py-2 text-sm bg-oxblood text-white rounded hover:bg-oxblood-deep disabled:opacity-60"
                         >
                             {isSaving ? 'Saving...' : editingId ? 'Update note' : 'Create note'}
                         </button>

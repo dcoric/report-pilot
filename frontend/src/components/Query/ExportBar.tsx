@@ -75,7 +75,7 @@ export const ExportBar: React.FC<ExportBarProps> = ({ sessionId, hasResults }) =
             <span className="text-xs font-semibold text-gray-500 uppercase">Export Results</span>
             <div className="flex items-center gap-2">
                 <select
-                    className="block w-24 pl-3 pr-8 py-1.5 text-xs text-gray-700 bg-white border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm"
+                    className="block w-24 pl-3 pr-8 py-1.5 text-xs text-gray-700 bg-white border border-gray-300 focus:outline-none focus:ring-oxblood focus:border-oxblood rounded-md shadow-sm"
                     value={format}
                     onChange={(e) => setFormat(e.target.value as ExportFormat)}
                     disabled={isExporting}
@@ -87,7 +87,7 @@ export const ExportBar: React.FC<ExportBarProps> = ({ sessionId, hasResults }) =
                 <button
                     onClick={handleExport}
                     disabled={isExporting}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs font-medium rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs font-medium rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-oxblood disabled:opacity-50"
                 >
                     {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                     Download

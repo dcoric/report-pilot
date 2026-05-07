@@ -16,6 +16,8 @@ const RAG_NOTE_CONTENT_MAX_LENGTH = 20000;
 const SAVED_QUERY_NAME_MAX_LENGTH = 200;
 const SAVED_QUERY_DESCRIPTION_MAX_LENGTH = 1000;
 const SAVED_QUERY_DEFAULT_RUN_PARAM_KEYS = new Set(["llm_provider", "model", "max_rows", "timeout_ms", "no_execute"]);
+const SAVED_QUERY_TAG_MAX_LENGTH = 40;
+const SAVED_QUERY_MAX_TAGS = 20;
 const PARAMETER_TYPES = new Set(["text", "integer", "decimal", "date", "boolean", "timestamp"]);
 const PARAMETER_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
 const MAX_PARAMETER_COUNT = 50;
@@ -53,6 +55,8 @@ module.exports = {
   SAVED_QUERY_NAME_MAX_LENGTH,
   SAVED_QUERY_DESCRIPTION_MAX_LENGTH,
   SAVED_QUERY_DEFAULT_RUN_PARAM_KEYS,
+  SAVED_QUERY_TAG_MAX_LENGTH,
+  SAVED_QUERY_MAX_TAGS,
   PARAMETER_TYPES,
   PARAMETER_NAME_PATTERN,
   MAX_PARAMETER_COUNT,

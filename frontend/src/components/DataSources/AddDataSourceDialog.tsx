@@ -97,7 +97,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                             <input
                                 type="text"
                                 required
-                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 placeholder="e.g. Production DB"
@@ -107,7 +107,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Database Type</label>
                             <select
-                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 value={dbType}
                                 onChange={(e) => {
                                     setDbType(e.target.value as 'postgres' | 'mssql');
@@ -127,7 +127,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                             <input
                                 type="text"
                                 required
-                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                 value={connectionRef}
                                 onChange={(e) => setConnectionRef(e.target.value)}
                                 placeholder={
@@ -153,7 +153,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                                                 setSchemaMethod('introspect');
                                                 setSchemaFile(null);
                                             }}
-                                            className="text-blue-600"
+                                            className="text-oxblood"
                                         />
                                         <span className="text-sm text-gray-700">Auto-introspect (extract from database)</span>
                                     </label>
@@ -164,7 +164,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                                             value="import"
                                             checked={schemaMethod === 'import'}
                                             onChange={() => setSchemaMethod('import')}
-                                            className="text-blue-600"
+                                            className="text-oxblood"
                                         />
                                         <span className="text-sm text-gray-700">Import schema (upload DDL file)</span>
                                     </label>
@@ -182,7 +182,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                                         <button
                                             type="button"
                                             onClick={() => fileInputRef.current?.click()}
-                                            className="flex items-center gap-2 w-full rounded-md border border-dashed border-gray-300 px-3 py-3 text-sm text-gray-600 hover:border-blue-400 hover:text-blue-600 transition"
+                                            className="flex items-center gap-2 w-full rounded-md border border-dashed border-gray-300 px-3 py-3 text-sm text-gray-600 hover:border-oxblood/60 hover:text-oxblood transition"
                                         >
                                             <Upload size={16} />
                                             {schemaFile ? schemaFile.name : 'Choose .sql file from SSMS Generate Scripts...'}
@@ -209,7 +209,7 @@ export const AddDataSourceDialog: React.FC<AddDataSourceDialogProps> = ({ isOpen
                     <button
                         form="add-data-source-form"
                         type="submit"
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                        className="px-4 py-2 text-sm font-medium text-white bg-oxblood rounded-md hover:bg-oxblood-deep disabled:opacity-50"
                         disabled={isSubmitting || (schemaMethod === 'import' && dbType === 'mssql' && !schemaFile)}
                     >
                         {isSubmitting ? 'Adding...' : 'Add Data Source'}

@@ -76,7 +76,7 @@ export const SchemaExplorer: React.FC = () => {
                 </div>
                 <button
                     onClick={() => setIsJoinDialogOpen(true)}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-oxblood"
                     disabled={!selectedDataSourceId}
                 >
                     <LinkIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
@@ -94,7 +94,7 @@ export const SchemaExplorer: React.FC = () => {
                         <select
                             value={selectedDataSourceId}
                             onChange={(e) => setSelectedDataSourceId(e.target.value)}
-                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm p-2 border"
                             disabled={isLoadingSources || dataSources.length === 0}
                         >
                             {isLoadingSources ? (
@@ -115,7 +115,7 @@ export const SchemaExplorer: React.FC = () => {
                         <input
                             type="text"
                             placeholder="Search tables and views..."
-                            className="block w-full rounded-md border-gray-300 pl-10 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                            className="block w-full rounded-md border-gray-300 pl-10 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm p-2 border"
                             value={filter}
                             onChange={(e) => setFilter(e.target.value)}
                         />

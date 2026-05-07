@@ -70,14 +70,14 @@ export const FeedbackForm: React.FC<FeedbackFormProps> = ({ sessionId }) => {
                     <input
                         type="text"
                         placeholder="Optional comments..."
-                        className="flex-1 text-sm rounded-md border-gray-300 px-3 py-1.5 focus:border-blue-500 focus:ring-blue-500 border"
+                        className="flex-1 text-sm rounded-md border-gray-300 px-3 py-1.5 focus:border-oxblood focus:ring-oxblood border"
                         value={feedback}
                         onChange={(e) => setFeedback(e.target.value)}
                     />
                     <button
                         onClick={handleSubmit}
                         disabled={isSubmitting}
-                        className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+                        className="px-3 py-1.5 bg-oxblood text-white text-sm rounded-md hover:bg-oxblood-deep disabled:opacity-50 flex items-center gap-1"
                     >
                         {isSubmitting ? '...' : <Send size={14} />}
                         Submit

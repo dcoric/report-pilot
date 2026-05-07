@@ -215,7 +215,7 @@ export const Observability: React.FC<ObservabilityProps> = ({ embedded = false }
         <div className={embedded ? 'space-y-8 h-full overflow-y-auto' : 'p-8 max-w-7xl mx-auto space-y-8 h-full overflow-y-auto'}>
             {!embedded && (
                 <div className="flex items-center gap-3 mb-2">
-                    <Activity className="w-8 h-8 text-blue-600" />
+                    <Activity className="w-8 h-8 text-oxblood" />
                     <h1 className="text-2xl font-bold text-gray-900">Observability</h1>
                 </div>
             )}
@@ -227,7 +227,7 @@ export const Observability: React.FC<ObservabilityProps> = ({ embedded = false }
                             <p className="text-sm font-medium text-gray-500">Total Queries (24h)</p>
                             <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total_queries}</p>
                         </div>
-                        <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                        <div className="p-2 bg-oxblood/5 text-oxblood rounded-lg">
                             <BarChart2 size={20} />
                         </div>
                     </div>

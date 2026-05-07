@@ -124,7 +124,7 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                 <div className="flex border-b bg-gray-50">
                     <button
                         className={`flex-1 py-3 px-4 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors
-              ${activeTab === 'entity' ? 'border-blue-500 text-blue-600 bg-white' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              ${activeTab === 'entity' ? 'border-oxblood text-oxblood bg-white' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                         onClick={() => setActiveTab('entity')}
                     >
                         <Database size={16} />
@@ -151,7 +151,7 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Entity Type</label>
                                     <select
-                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                         value={entityType}
                                         onChange={(e) => setEntityType(e.target.value as SemanticEntityType)}
                                     >
@@ -177,7 +177,7 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                                 <input
                                     type="text"
                                     required
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={businessName}
                                     onChange={(e) => setBusinessName(e.target.value)}
                                     placeholder="e.g. Daily Active Users"
@@ -188,7 +188,7 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                                 <textarea
                                     rows={4}
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     placeholder="Describe what this entity represents..."
@@ -197,8 +197,8 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                         </form>
                     ) : (
                         <form id="metric-form" onSubmit={handleMetricSubmit} className="flex flex-col gap-4">
-                            <div className="bg-blue-50 border border-blue-100 p-3 rounded-md mb-2">
-                                <p className="text-sm text-blue-800">
+                            <div className="bg-oxblood/5 border border-oxblood/15 p-3 rounded-md mb-2">
+                                <p className="text-sm text-oxblood-deep">
                                     <strong>Entity ID:</strong> {semanticEntityId}
                                 </p>
                             </div>
@@ -244,7 +244,7 @@ export const SemanticEditorDialog: React.FC<SemanticEditorDialogProps> = ({
                         form={activeTab === 'entity' ? 'entity-form' : 'metric-form'}
                         className={`px-4 py-2 text-sm font-medium text-white rounded-md flex items-center gap-2
                     ${activeTab === 'entity'
-                                ? 'bg-blue-600 hover:bg-blue-700'
+                                ? 'bg-oxblood hover:bg-oxblood-deep'
                                 : 'bg-purple-600 hover:bg-purple-700'}`}
                         disabled={isSubmitting}
                     >

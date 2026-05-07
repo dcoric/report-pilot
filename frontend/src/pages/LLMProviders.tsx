@@ -133,7 +133,7 @@ export const LLMProviders: React.FC = () => {
                 </div>
                 <button
                     onClick={() => setIsAddDialogOpen(true)}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
+                    className="flex items-center gap-2 bg-oxblood text-white px-4 py-2 rounded-md hover:bg-oxblood-deep transition"
                 >
                     <Plus size={18} />
                     Add Provider
@@ -165,7 +165,7 @@ export const LLMProviders: React.FC = () => {
                             <p className="text-sm">Add your first LLM provider to get started.</p>
                             <button
                                 onClick={() => setIsAddDialogOpen(true)}
-                                className="mt-4 text-blue-600 hover:underline"
+                                className="mt-4 text-oxblood hover:underline"
                             >
                                 Add Provider
                             </button>
@@ -174,7 +174,7 @@ export const LLMProviders: React.FC = () => {
                         providers.map((p) => (
                             <div key={p.id} className="grid grid-cols-12 gap-4 p-4 border-b border-gray-100 hover:bg-gray-50 transition items-center">
                                 <div className="col-span-3 flex items-center gap-3 min-w-0">
-                                    <div className={`w-8 h-8 rounded flex items-center justify-center ${p.enabled ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400'}`}>
+                                    <div className={`w-8 h-8 rounded flex items-center justify-center ${p.enabled ? 'bg-oxblood/10 text-oxblood' : 'bg-gray-100 text-gray-400'}`}>
                                         <Server size={16} />
                                     </div>
                                     <div className="min-w-0">
@@ -206,7 +206,7 @@ export const LLMProviders: React.FC = () => {
                                             e.stopPropagation();
                                             setApiKeyDialogProvider(p);
                                         }}
-                                        className="text-gray-500 hover:text-blue-600"
+                                        className="text-gray-500 hover:text-oxblood"
                                         title="Edit API key"
                                     >
                                         <Key size={16} />
