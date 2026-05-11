@@ -75,6 +75,11 @@ const {
   handleLogout,
   handleMe
 } = require("./routes/auth");
+const {
+  handleListUsers,
+  handleCreateUser,
+  handleUpdateUserRoles
+} = require("./routes/admin");
 
 async function routeRequest(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
@@ -126,6 +131,19 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/v1/auth/me") {
     return handleMe(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/admin/users") {
+    return handleListUsers(req, res);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/users") {
+    return handleCreateUser(req, res);
+  }
+
+  const adminUserRolesMatch = pathname.match(/^\/v1\/admin\/users\/([^/]+)\/roles$/);
+  if (req.method === "POST" && adminUserRolesMatch) {
+    return handleUpdateUserRoles(req, res, adminUserRolesMatch[1]);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {

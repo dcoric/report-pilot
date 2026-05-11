@@ -145,6 +145,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List users and their roles
+         * @description Requires the `admin` role. Returns 401 when unauthenticated, 403 when authenticated without `admin`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description User list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdminUserListResponse"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a user
+         * @description Requires the `admin` role. If `roles` is omitted, the new user is
+         *     assigned the default role (`viewer`). The action is recorded in the
+         *     auth audit log.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateAdminUserRequest"];
+                };
+            };
+            responses: {
+                /** @description User created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdminUser"];
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Email already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/users/{userId}/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign and/or revoke roles for a user
+         * @description Requires the `admin` role. `assign` and `revoke` are independent — pass
+         *     either or both. Each effective change is written to the auth audit log.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateUserRolesRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated user with applied changes */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UpdateUserRolesResponse"];
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description User not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/query/prompts/history": {
         parameters: {
             query?: never;
@@ -1858,6 +2042,44 @@ export interface components {
             user?: components["schemas"]["AuthUser"];
             /** Format: date-time */
             expires_at?: string | null;
+        };
+        AdminUser: {
+            id?: string;
+            email?: string;
+            display_name?: string | null;
+            is_active?: boolean;
+            /** Format: date-time */
+            last_login_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            roles?: string[];
+        };
+        AdminUserListResponse: {
+            items?: components["schemas"]["AdminUser"][];
+        };
+        CreateAdminUserRequest: {
+            /** Format: email */
+            email: string;
+            password: string;
+            display_name?: string | null;
+            /** @description Role names to assign. Defaults to `viewer` when omitted or empty. */
+            roles?: string[];
+        };
+        /** @description At least one of `assign` or `revoke` must be a non-empty array. */
+        UpdateUserRolesRequest: {
+            assign?: string[];
+            revoke?: string[];
+        };
+        UpdateUserRolesResponse: {
+            user?: components["schemas"]["AdminUser"];
+            assigned?: string[];
+            revoked?: string[];
+            /** @description Roles already held by the user — assignment was a no-op. */
+            skipped_assign?: string[];
+            /** @description Roles not currently held — revocation was a no-op. */
+            skipped_revoke?: string[];
         };
         PromptHistoryItem: {
             id: string;
