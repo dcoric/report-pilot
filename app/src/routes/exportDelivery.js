@@ -2,6 +2,15 @@ const appDb = require("../lib/appDb");
 const { json, badRequest, internalError, readJsonBody } = require("../lib/http");
 const { exportQueryResult, SUPPORTED_FORMATS } = require("../services/exportService");
 const { createDelivery, getDeliveryStatus } = require("../services/deliveryService");
+const { enforceDataSourceAccess } = require("../lib/authGate");
+
+async function loadSessionDataSourceId(sessionId) {
+  const result = await appDb.query(
+    "SELECT data_source_id FROM query_sessions WHERE id = $1",
+    [sessionId]
+  );
+  return result.rowCount > 0 ? result.rows[0].data_source_id : null;
+}
 
 async function handleExportSession(req, res, sessionId) {
   const body = await readJsonBody(req).catch(() => ({})); // Body optional
@@ -10,6 +19,14 @@ async function handleExportSession(req, res, sessionId) {
 
   if (!SUPPORTED_FORMATS.has(format)) {
     return badRequest(res, `Unsupported format: ${format}`);
+  }
+
+  const sessionDsId = await loadSessionDataSourceId(sessionId);
+  if (!sessionDsId) {
+    return json(res, 404, { error: "not_found", message: "Session not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, sessionDsId))) {
+    return undefined;
   }
 
   try {
@@ -37,9 +54,12 @@ async function handleExportDeliver(req, res, sessionId) {
     return badRequest(res, "delivery_mode must be 'download' or 'email'");
   }
 
-  const sessionResult = await appDb.query("SELECT id FROM query_sessions WHERE id = $1", [sessionId]);
-  if (sessionResult.rowCount === 0) {
+  const sessionDsId = await loadSessionDataSourceId(sessionId);
+  if (!sessionDsId) {
     return json(res, 404, { error: "not_found", message: "Session not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, sessionDsId))) {
+    return undefined;
   }
 
   const requestedBy = req.user && req.user.id ? req.user.id : "anonymous";
@@ -75,10 +95,14 @@ async function handleExportDeliver(req, res, sessionId) {
   }
 }
 
-async function handleExportStatus(_req, res, exportId) {
+async function handleExportStatus(req, res, exportId) {
   const delivery = await getDeliveryStatus(exportId);
   if (!delivery) {
     return json(res, 404, { error: "not_found", message: "Export delivery not found" });
+  }
+  const sessionDsId = await loadSessionDataSourceId(delivery.session_id);
+  if (sessionDsId && !(await enforceDataSourceAccess(req, res, sessionDsId))) {
+    return undefined;
   }
   return json(res, 200, delivery);
 }

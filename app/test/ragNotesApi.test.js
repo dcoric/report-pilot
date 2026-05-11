@@ -64,8 +64,16 @@ before(async () => {
   reindexCalls = [];
   noteCounter = 0;
   authStub = createAuthTestStub();
-  const analyst = authStub.seedUser({ email: "analyst@example.com", roles: ["analyst"] });
-  const viewer = authStub.seedUser({ email: "viewer@example.com", roles: ["viewer"] });
+  const analyst = authStub.seedUser({
+    email: "analyst@example.com",
+    roles: ["analyst"],
+    dataSourceAccess: [DATA_SOURCE_ID, OTHER_SOURCE_ID]
+  });
+  const viewer = authStub.seedUser({
+    email: "viewer@example.com",
+    roles: ["viewer"],
+    dataSourceAccess: [DATA_SOURCE_ID, OTHER_SOURCE_ID]
+  });
   analystCookie = authStub.cookieFor(authStub.seedSession(analyst.id).token);
   viewerCookie = authStub.cookieFor(authStub.seedSession(viewer.id).token);
 
@@ -124,6 +132,14 @@ before(async () => {
       };
       notes.set(id, updated);
       return { rowCount: 1, rows: [updated] };
+    }
+
+    if (normalized.startsWith("select id, data_source_id from rag_notes where id = $1")) {
+      const [id] = params;
+      const existing = notes.get(id);
+      return existing
+        ? { rowCount: 1, rows: [{ id: existing.id, data_source_id: existing.data_source_id }] }
+        : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("delete from rag_notes")) {

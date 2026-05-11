@@ -5,6 +5,7 @@ const { runIntrospection } = require("../services/introspectionService");
 const { parseSchemaFromDdl } = require("../services/ddlImportService");
 const { persistSnapshot } = require("../services/introspectionService");
 const { reindexRagDocuments } = require("../services/ragService");
+const { enforceDataSourceAccess, listAccessibleDataSourceIds } = require("../lib/authGate");
 
 async function runIntrospectionJob(jobId, dataSource) {
   try {
@@ -66,15 +67,30 @@ async function handleCreateDataSource(req, res) {
   return json(res, 201, result.rows[0]);
 }
 
-async function handleListDataSources(_req, res) {
-  const result = await appDb.query(
-    `
-      SELECT id, name, db_type, connection_ref, status, created_at
-      FROM data_sources
-      ORDER BY created_at DESC
-    `
-  );
-
+async function handleListDataSources(req, res) {
+  const accessible = await listAccessibleDataSourceIds(req);
+  let result;
+  if (accessible === null) {
+    result = await appDb.query(
+      `
+        SELECT id, name, db_type, connection_ref, status, created_at
+        FROM data_sources
+        ORDER BY created_at DESC
+      `
+    );
+  } else if (accessible.length === 0) {
+    return json(res, 200, { items: [] });
+  } else {
+    result = await appDb.query(
+      `
+        SELECT id, name, db_type, connection_ref, status, created_at
+        FROM data_sources
+        WHERE id = ANY($1::uuid[])
+        ORDER BY created_at DESC
+      `,
+      [accessible]
+    );
+  }
   return json(res, 200, { items: result.rows });
 }
 
@@ -99,6 +115,10 @@ async function handleIntrospect(req, res, dataSourceId) {
   const dataSource = result.rows[0];
   if (!dataSource) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   if (!isSupportedDbType(dataSource.db_type)) {
@@ -132,6 +152,10 @@ async function handleImportSchema(req, res, dataSourceId) {
   const dataSource = result.rows[0];
   if (!dataSource) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const body = await readJsonBody(req);

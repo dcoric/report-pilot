@@ -255,6 +255,197 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/data-sources/{dataSourceId}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List users granted access to a data source
+         * @description Requires the `admin` role. Admins implicitly access every data source; this endpoint returns only the explicit grants in `user_data_source_access`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    dataSourceId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description List of granted users */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DataSourceAccessListResponse"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Data source not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Grant a user access to a data source
+         * @description Requires the `admin` role. Idempotent; re-granting an existing access returns 200 with `granted=false`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    dataSourceId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GrantDataSourceAccessRequest"];
+                };
+            };
+            responses: {
+                /** @description Access already granted (no-op) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DataSourceAccessChange"];
+                    };
+                };
+                /** @description Access newly granted */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DataSourceAccessChange"];
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Data source or user not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/data-sources/{dataSourceId}/access/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a user's access to a data source
+         * @description Requires the `admin` role.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    dataSourceId: string;
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Access revoked */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DataSourceAccessChange"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No access grant to revoke */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/users/{userId}/roles": {
         parameters: {
             query?: never;
@@ -2075,6 +2266,28 @@ export interface components {
         UpdateUserRolesRequest: {
             assign?: string[];
             revoke?: string[];
+        };
+        DataSourceAccessGrant: {
+            id?: string;
+            email?: string;
+            display_name?: string | null;
+            is_active?: boolean;
+            /** Format: date-time */
+            granted_at?: string;
+            granted_by_user_id?: string | null;
+            roles?: string[];
+        };
+        DataSourceAccessListResponse: {
+            items?: components["schemas"]["DataSourceAccessGrant"][];
+        };
+        GrantDataSourceAccessRequest: {
+            user_id: string;
+        };
+        DataSourceAccessChange: {
+            granted?: boolean;
+            revoked?: boolean;
+            user_id?: string;
+            data_source_id?: string;
         };
         UpdateUserRolesResponse: {
             user?: components["schemas"]["AdminUser"];

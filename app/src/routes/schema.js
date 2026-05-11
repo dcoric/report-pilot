@@ -2,11 +2,16 @@ const appDb = require("../lib/appDb");
 const { json, badRequest, readJsonBody } = require("../lib/http");
 const { isUuid } = require("../lib/validation");
 const { triggerRagReindexAsync } = require("../services/ragService");
+const { enforceDataSourceAccess } = require("../lib/authGate");
 
 async function handleListSchemaObjects(req, res, requestUrl) {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const result = await appDb.query(
@@ -25,6 +30,17 @@ async function handleListSchemaObjects(req, res, requestUrl) {
 async function handlePatchSchemaObject(req, res, schemaObjectId) {
   if (!isUuid(schemaObjectId)) {
     return badRequest(res, "schemaObjectId must be a valid UUID");
+  }
+
+  const objLookup = await appDb.query(
+    "SELECT data_source_id FROM schema_objects WHERE id = $1",
+    [schemaObjectId]
+  );
+  if (objLookup.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Schema object not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, objLookup.rows[0].data_source_id))) {
+    return undefined;
   }
 
   const body = await readJsonBody(req);

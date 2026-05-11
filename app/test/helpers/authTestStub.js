@@ -65,6 +65,7 @@ function createAuthTestStub() {
   const users = new Map();
   const sessions = new Map();
   const userRoles = new Map(); // user_id -> Set of role names
+  const dataSourceAccess = new Map(); // user_id -> Set of data_source_id
   let userCounter = 0;
   let sessionCounter = 0;
 
@@ -72,11 +73,12 @@ function createAuthTestStub() {
     users.clear();
     sessions.clear();
     userRoles.clear();
+    dataSourceAccess.clear();
     userCounter = 0;
     sessionCounter = 0;
   }
 
-  function seedUser({ id, email, password = "hunter22ok", displayName = null, isActive = true, roles = [] }) {
+  function seedUser({ id, email, password = "hunter22ok", displayName = null, isActive = true, roles = [], dataSourceAccess: ds = [] }) {
     if (!id) {
       userCounter += 1;
       id = uuid("aaaa", userCounter);
@@ -100,7 +102,21 @@ function createAuthTestStub() {
       roleSet.add(role);
     }
     userRoles.set(id, roleSet);
+    const accessSet = new Set(Array.isArray(ds) ? ds : []);
+    dataSourceAccess.set(id, accessSet);
     return row;
+  }
+
+  function grantDataSourceAccess(userId, dataSourceId) {
+    if (!dataSourceAccess.has(userId)) {
+      dataSourceAccess.set(userId, new Set());
+    }
+    dataSourceAccess.get(userId).add(dataSourceId);
+  }
+
+  function revokeDataSourceAccess(userId, dataSourceId) {
+    const set = dataSourceAccess.get(userId);
+    if (set) set.delete(dataSourceId);
   }
 
   function seedSession(userId, { expiresInMs = 60 * 60 * 1000 } = {}) {
@@ -206,6 +222,22 @@ function createAuthTestStub() {
       return { rowCount: 1, rows: [] };
     }
 
+    // dataSourceAccessService.hasAccess
+    if (normalized.startsWith("select 1 from user_data_source_access where user_id = $1 and data_source_id = $2")) {
+      const [userId, dataSourceId] = params;
+      const set = dataSourceAccess.get(userId);
+      const hit = set ? set.has(dataSourceId) : false;
+      return { rowCount: hit ? 1 : 0, rows: hit ? [{ "?column?": 1 }] : [] };
+    }
+
+    // dataSourceAccessService.listAccessibleDataSourceIds
+    if (normalized.startsWith("select data_source_id from user_data_source_access where user_id = $1")) {
+      const [userId] = params;
+      const set = dataSourceAccess.get(userId);
+      const ids = set ? [...set] : [];
+      return { rowCount: ids.length, rows: ids.map((id) => ({ data_source_id: id })) };
+    }
+
     return null;
   }
 
@@ -214,6 +246,8 @@ function createAuthTestStub() {
     seedUser,
     seedSession,
     revokeSession,
+    grantDataSourceAccess,
+    revokeDataSourceAccess,
     cookieFor,
     handleSql,
     ROLE_PERMISSIONS
