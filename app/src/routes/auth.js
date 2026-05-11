@@ -5,6 +5,7 @@ const {
   readSessionToken
 } = require("../lib/sessionCookie");
 const authService = require("../services/authService");
+const roleService = require("../services/roleService");
 
 function clientAddress(req) {
   const forwarded = req.headers["x-forwarded-for"];
@@ -17,7 +18,7 @@ function clientAddress(req) {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null;
 }
 
-function publicUser(user) {
+function publicUser(user, { roles = [], permissions = [] } = {}) {
   if (!user) {
     return null;
   }
@@ -27,8 +28,18 @@ function publicUser(user) {
     display_name: user.display_name,
     is_active: user.is_active,
     last_login_at: user.last_login_at,
-    created_at: user.created_at
+    created_at: user.created_at,
+    roles,
+    permissions
   };
+}
+
+async function loadAuthorization(userId) {
+  const [roles, permissions] = await Promise.all([
+    roleService.listRoleNamesForUser(userId),
+    roleService.listPermissionNamesForUser(userId)
+  ]);
+  return { roles, permissions };
 }
 
 async function handleLogin(req, res) {
@@ -51,9 +62,10 @@ async function handleLogin(req, res) {
     return json(res, 401, { error: "invalid_credentials" });
   }
 
+  const authz = await loadAuthorization(result.user.id);
   res.setHeader("Set-Cookie", buildSessionCookie(result.token, result.expiresAt));
   return json(res, 200, {
-    user: publicUser(result.user),
+    user: publicUser(result.user, authz),
     expires_at: result.expiresAt
   });
 }
@@ -78,8 +90,9 @@ async function handleMe(req, res) {
     return json(res, 401, { error: "unauthenticated" });
   }
   authService.touchSession(session.sessionId).catch(() => {});
+  const authz = await loadAuthorization(session.user.id);
   return json(res, 200, {
-    user: publicUser(session.user),
+    user: publicUser(session.user, authz),
     expires_at: session.expiresAt
   });
 }

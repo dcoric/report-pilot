@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { FileText, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { client } from '../../lib/api/client';
+import { useAuth } from '../../hooks/useAuth';
 import type { components } from '../../lib/api/types';
 
 type RagNote = components['schemas']['RagNoteResponse'];
@@ -19,6 +20,8 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
     dataSourceName,
     onClose
 }) => {
+    const { hasPermission } = useAuth();
+    const canEdit = hasPermission('rag.write');
     const [items, setItems] = useState<RagNote[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
@@ -173,13 +176,15 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                     <div className="border-r border-gray-200 p-4 min-h-0 overflow-y-auto">
                         <div className="flex items-center justify-between mb-3">
                             <h3 className="font-medium text-gray-900">Notes</h3>
-                            <button
-                                onClick={resetForm}
-                                className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded bg-oxblood/5 text-oxblood-deep hover:bg-oxblood/10"
-                            >
-                                <Plus size={14} />
-                                New
-                            </button>
+                            {canEdit && (
+                                <button
+                                    onClick={resetForm}
+                                    className="inline-flex items-center gap-1 text-sm px-2 py-1 rounded bg-oxblood/5 text-oxblood-deep hover:bg-oxblood/10"
+                                >
+                                    <Plus size={14} />
+                                    New
+                                </button>
+                            )}
                         </div>
 
                         {isLoading ? (
@@ -211,22 +216,24 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                                                     {note.content}
                                                 </p>
                                             </div>
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <button
-                                                    onClick={() => handleEdit(note)}
-                                                    className="text-gray-500 hover:text-oxblood"
-                                                    title="Edit note"
-                                                >
-                                                    <Pencil size={14} />
-                                                </button>
-                                                <button
-                                                    onClick={() => void handleDelete(note)}
-                                                    className="text-gray-500 hover:text-red-600"
-                                                    title="Delete note"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
+                                            {canEdit && (
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <button
+                                                        onClick={() => handleEdit(note)}
+                                                        className="text-gray-500 hover:text-oxblood"
+                                                        title="Edit note"
+                                                    >
+                                                        <Pencil size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => void handleDelete(note)}
+                                                        className="text-gray-500 hover:text-red-600"
+                                                        title="Delete note"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -235,42 +242,54 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                     </div>
 
                     <div className="p-4 min-h-0 overflow-y-auto">
-                        <h3 className="font-medium text-gray-900 mb-3">
-                            {editingId ? 'Edit note' : 'Create note'}
-                        </h3>
+                        {canEdit ? (
+                            <>
+                                <h3 className="font-medium text-gray-900 mb-3">
+                                    {editingId ? 'Edit note' : 'Create note'}
+                                </h3>
 
-                        <form id="rag-notes-form" onSubmit={handleSave} className="flex flex-col gap-3 h-full">
-                            <div className="flex-1">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                                <input
-                                    type="text"
-                                    maxLength={200}
-                                    value={title}
-                                    onChange={(e) => setTitle(e.target.value)}
-                                    placeholder="e.g. Revenue policy assumptions"
-                                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
-                                />
-                            </div>
+                                <form id="rag-notes-form" onSubmit={handleSave} className="flex flex-col gap-3 h-full">
+                                    <div className="flex-1">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                                        <input
+                                            type="text"
+                                            maxLength={200}
+                                            value={title}
+                                            onChange={(e) => setTitle(e.target.value)}
+                                            placeholder="e.g. Revenue policy assumptions"
+                                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
+                                        />
+                                    </div>
 
-                            <div className="flex-1 flex flex-col">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
-                                <textarea
-                                    value={content}
-                                    onChange={(e) => setContent(e.target.value)}
-                                    maxLength={20000}
-                                    placeholder="Plain text instructions and constraints for the assistant."
-                                    className="w-full min-h-[240px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
-                                />
-                                <p className="text-xs text-gray-500 mt-2">
-                                    Reindexing runs automatically after create, update, or delete.
-                                </p>
+                                    <div className="flex-1 flex flex-col">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+                                        <textarea
+                                            value={content}
+                                            onChange={(e) => setContent(e.target.value)}
+                                            maxLength={20000}
+                                            placeholder="Plain text instructions and constraints for the assistant."
+                                            className="w-full min-h-[240px] rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            Reindexing runs automatically after create, update, or delete.
+                                        </p>
+                                    </div>
+                                </form>
+                            </>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-center text-sm text-gray-500 gap-2">
+                                <FileText className="opacity-30" size={28} />
+                                <p>You don't have permission to edit RAG notes.</p>
+                                <p className="text-xs">Ask an administrator to grant the <code>rag.write</code> permission.</p>
                             </div>
-                        </form>
+                        )}
                     </div>
                 </div>
 
                 <div className="border-t p-4 flex items-center justify-between bg-gray-50">
-                    <p className="text-xs text-gray-500">Buttons stay anchored while content scrolls.</p>
+                    <p className="text-xs text-gray-500">
+                        {canEdit ? 'Buttons stay anchored while content scrolls.' : 'Read-only view.'}
+                    </p>
                     <div className="flex items-center gap-2">
                         <button
                             type="button"
@@ -280,7 +299,7 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                         >
                             Close
                         </button>
-                        {editingId ? (
+                        {canEdit && editingId ? (
                             <button
                                 type="button"
                                 onClick={resetForm}
@@ -290,14 +309,16 @@ export const RagNotesDialog: React.FC<RagNotesDialogProps> = ({
                                 Cancel edit
                             </button>
                         ) : null}
-                        <button
-                            form="rag-notes-form"
-                            type="submit"
-                            disabled={isSaving}
-                            className="px-3 py-2 text-sm bg-oxblood text-white rounded hover:bg-oxblood-deep disabled:opacity-60"
-                        >
-                            {isSaving ? 'Saving...' : editingId ? 'Update note' : 'Create note'}
-                        </button>
+                        {canEdit && (
+                            <button
+                                form="rag-notes-form"
+                                type="submit"
+                                disabled={isSaving}
+                                className="px-3 py-2 text-sm bg-oxblood text-white rounded hover:bg-oxblood-deep disabled:opacity-60"
+                            >
+                                {isSaving ? 'Saving...' : editingId ? 'Update note' : 'Create note'}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

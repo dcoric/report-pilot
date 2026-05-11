@@ -2037,6 +2037,10 @@ export interface components {
             last_login_at?: string | null;
             /** Format: date-time */
             created_at?: string;
+            /** @description System role names the user holds (e.g. `admin`, `analyst`, `viewer`). */
+            roles?: string[];
+            /** @description Effective permission names granted by the user's roles. The frontend uses this list to gate UI affordances. */
+            permissions?: string[];
         };
         AuthMeResponse: {
             user?: components["schemas"]["AuthUser"];

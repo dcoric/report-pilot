@@ -34,13 +34,48 @@ function App() {
           >
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/queries" element={<SavedQueries />} />
-            <Route path="/query" element={<QueryWorkspace />} />
-            <Route path="/data-sources" element={<DataSources />} />
-            <Route path="/schema" element={<SchemaExplorer />} />
+            <Route
+              path="/queries"
+              element={(
+                <RequireAuth permission="saved_queries.read">
+                  <SavedQueries />
+                </RequireAuth>
+              )}
+            />
+            <Route
+              path="/query"
+              element={(
+                <RequireAuth permission="query.run">
+                  <QueryWorkspace />
+                </RequireAuth>
+              )}
+            />
+            <Route
+              path="/data-sources"
+              element={(
+                <RequireAuth permission="data_sources.read">
+                  <DataSources />
+                </RequireAuth>
+              )}
+            />
+            <Route
+              path="/schema"
+              element={(
+                <RequireAuth permission="data_sources.read">
+                  <SchemaExplorer />
+                </RequireAuth>
+              )}
+            />
             <Route path="/observability" element={<Navigate to="/dashboard?tab=observability" replace />} />
             <Route path="/release-gates" element={<Navigate to="/dashboard?tab=release-gates" replace />} />
-            <Route path="/llm-providers" element={<LLMProviders />} />
+            <Route
+              path="/llm-providers"
+              element={(
+                <RequireAuth permission="providers.read">
+                  <LLMProviders />
+                </RequireAuth>
+              )}
+            />
             <Route path="/settings" element={<Settings />} />
             <Route path="/folders" element={<ComingSoon />} />
             <Route path="/favorites" element={<ComingSoon />} />

@@ -16,20 +16,29 @@ import {
     FolderClosed,
 } from 'lucide-react';
 import { useDataSource } from '../../hooks/useDataSource';
+import { useAuth } from '../../hooks/useAuth';
 import { WorkspaceActionsProvider } from '../../contexts/WorkspaceActionsContext';
 import { useWorkspaceActions } from '../../contexts/useWorkspaceActions';
 import appLogo from '../../assets/report-pilot.png';
 
-const PRIMARY_NAV = [
+type NavEntry = {
+    path: string;
+    label: string;
+    icon: typeof Home;
+    stub?: boolean;
+    permission?: string;
+};
+
+const PRIMARY_NAV: NavEntry[] = [
     { path: '/dashboard', label: 'Home', icon: Home },
-    { path: '/queries', label: 'Queries', icon: Terminal },
-    { path: '/data-sources', label: 'Datasets', icon: Database },
+    { path: '/queries', label: 'Queries', icon: Terminal, permission: 'saved_queries.read' },
+    { path: '/data-sources', label: 'Datasets', icon: Database, permission: 'data_sources.read' },
     { path: '/folders', label: 'Folders', icon: FolderClosed, stub: true },
     { path: '/favorites', label: 'Favorites', icon: Star, stub: true },
     { path: '/recent', label: 'Recent', icon: History, stub: true },
 ];
 
-const FOOTER_NAV = [
+const FOOTER_NAV: NavEntry[] = [
     { path: '/docs', label: 'Documentation', icon: BookOpen, stub: true },
     { path: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
@@ -159,16 +168,24 @@ function HeaderInner() {
 
 function AppShellInner() {
     const navigate = useNavigate();
+    const { hasPermission } = useAuth();
+    const canRunQueries = hasPermission('query.run');
+
     const NewQueryButton = useMemo(() => (
         <button
             type="button"
             onClick={() => navigate('/query')}
-            className="flex w-full items-center justify-center gap-2 rounded bg-oxblood py-2 text-sm font-medium text-white transition-colors hover:bg-oxblood-soft"
+            disabled={!canRunQueries}
+            title={canRunQueries ? undefined : 'Requires the query.run permission'}
+            className="flex w-full items-center justify-center gap-2 rounded bg-oxblood py-2 text-sm font-medium text-white transition-colors hover:bg-oxblood-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-oxblood"
         >
             <Plus size={16} />
             New Query
         </button>
-    ), [navigate]);
+    ), [canRunQueries, navigate]);
+
+    const primaryNav = PRIMARY_NAV.filter((item) => !item.permission || hasPermission(item.permission));
+    const footerNav = FOOTER_NAV.filter((item) => !item.permission || hasPermission(item.permission));
 
     return (
         <div className="flex h-screen w-screen overflow-hidden">
@@ -186,13 +203,13 @@ function AppShellInner() {
                 <div className="mb-6 px-4">{NewQueryButton}</div>
 
                 <nav className="flex-1 space-y-1 overflow-y-auto px-2">
-                    {PRIMARY_NAV.map((item) => (
+                    {primaryNav.map((item) => (
                         <NavItem key={item.path} to={item.path} label={item.label} Icon={item.icon} stub={item.stub} />
                     ))}
                 </nav>
 
                 <div className="mt-auto space-y-1 border-t border-white/5 px-2 pt-3">
-                    {FOOTER_NAV.map((item) => (
+                    {footerNav.map((item) => (
                         <NavItem key={item.path} to={item.path} label={item.label} Icon={item.icon} stub={item.stub} />
                     ))}
                 </div>

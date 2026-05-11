@@ -16,6 +16,7 @@ import {
     Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../hooks/useDataSource';
 import { useSavedQueries } from '../hooks/useSavedQueries';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
@@ -33,6 +34,8 @@ function formatDate(value: string) {
 
 export const SavedQueries = () => {
     const navigate = useNavigate();
+    const { hasPermission } = useAuth();
+    const canWriteSavedQueries = hasPermission('saved_queries.write');
     const { dataSources, selectedDataSourceId } = useDataSource();
     const {
         savedQueries,
@@ -362,33 +365,35 @@ export const SavedQueries = () => {
                                 <div className="flex h-10 w-10 items-center justify-center rounded border border-outline-variant bg-amber-accent/20">
                                     <span className="font-mono text-sm font-bold text-on-primary-fixed">SQL</span>
                                 </div>
-                                <div className="flex gap-1">
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleDuplicate(selectedQuery)}
-                                        disabled={pendingId === selectedQuery.id}
-                                        className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
-                                        title="Duplicate"
-                                    >
-                                        {pendingId === selectedQuery.id ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setEditing(selectedQuery)}
-                                        className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface"
-                                        title="Edit metadata"
-                                    >
-                                        <Pencil size={16} />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setConfirmDeleteId(selectedQuery.id)}
-                                        className="rounded border border-transparent p-1.5 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                                        title="Delete"
-                                    >
-                                        <Trash2 size={16} />
-                                    </button>
-                                </div>
+                                {canWriteSavedQueries && (
+                                    <div className="flex gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleDuplicate(selectedQuery)}
+                                            disabled={pendingId === selectedQuery.id}
+                                            className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
+                                            title="Duplicate"
+                                        >
+                                            {pendingId === selectedQuery.id ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditing(selectedQuery)}
+                                            className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface"
+                                            title="Edit metadata"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setConfirmDeleteId(selectedQuery.id)}
+                                            className="rounded border border-transparent p-1.5 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                                            title="Delete"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             <h2 className="mb-2 text-lg font-semibold leading-tight text-on-surface">{selectedQuery.name}</h2>
                             {selectedQuery.description && (
