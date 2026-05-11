@@ -70,6 +70,11 @@ const {
   handleBenchmarkCommand,
   handleCreateBenchmarkReport
 } = require("./routes/observability");
+const {
+  handleLogin,
+  handleLogout,
+  handleMe
+} = require("./routes/auth");
 
 async function routeRequest(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
@@ -109,6 +114,18 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && serveFrontendAsset(res, pathname)) {
     return;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/auth/login") {
+    return handleLogin(req, res);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/auth/logout") {
+    return handleLogout(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/auth/me") {
+    return handleMe(req, res);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {

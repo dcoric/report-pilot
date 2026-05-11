@@ -12,7 +12,58 @@ tags:
   - name: Admin
   - name: Providers
   - name: Observability
+  - name: Auth
 paths:
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with email and password
+      description: Returns the authenticated user and sets an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated. Session cookie set in `Set-Cookie`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMeResponse"
+        "400":
+          description: Missing email or password
+        "401":
+          description: Invalid credentials
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: End the current session
+      description: Revokes the current session token (if any) and clears the cookie.
+      responses:
+        "200":
+          description: Session revoked. Cookie cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+  /v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      responses:
+        "200":
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMeResponse"
+        "401":
+          description: No active session
   /v1/query/prompts/history:
     get:
       tags: [Query]
@@ -987,6 +1038,43 @@ components:
       schema:
         type: string
   schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    AuthMeResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
     PromptHistoryItem:
       type: object
       properties:

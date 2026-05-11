@@ -1,6 +1,8 @@
 import { BrowserRouter as Router, Navigate, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppShell } from './components/Layout/AppShell';
+import { RequireAuth } from './components/Auth/RequireAuth';
+import { AuthProvider } from './contexts/AuthContext';
 import { DataSourceProvider } from './contexts/DataSourceContext';
 import { Dashboard } from './pages/Dashboard';
 import { DataSources } from './pages/DataSources';
@@ -8,6 +10,7 @@ import { SchemaExplorer } from './pages/SchemaExplorer';
 import { QueryWorkspace } from './pages/QueryWorkspace';
 import { SavedQueries } from './pages/SavedQueries';
 import { ComingSoon } from './pages/ComingSoon';
+import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
 import { Settings } from './pages/Settings';
 import { LLMProviders } from './pages/LLMProviders';
@@ -16,29 +19,39 @@ function App() {
   return (
     <Router>
       <Toaster position="top-right" richColors duration={10000} />
-      <DataSourceProvider>
+      <AuthProvider>
         <Routes>
-        <Route element={<AppShell />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/queries" element={<SavedQueries />} />
-          <Route path="/query" element={<QueryWorkspace />} />
-          <Route path="/data-sources" element={<DataSources />} />
-          <Route path="/schema" element={<SchemaExplorer />} />
-          <Route path="/observability" element={<Navigate to="/dashboard?tab=observability" replace />} />
-          <Route path="/release-gates" element={<Navigate to="/dashboard?tab=release-gates" replace />} />
-          <Route path="/llm-providers" element={<LLMProviders />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/folders" element={<ComingSoon />} />
-          <Route path="/favorites" element={<ComingSoon />} />
-          <Route path="/recent" element={<ComingSoon />} />
-          <Route path="/docs" element={<ComingSoon />} />
-        </Route>
+          <Route path="/login" element={<Login />} />
+
+          <Route
+            element={(
+              <RequireAuth>
+                <DataSourceProvider>
+                  <AppShell />
+                </DataSourceProvider>
+              </RequireAuth>
+            )}
+          >
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/queries" element={<SavedQueries />} />
+            <Route path="/query" element={<QueryWorkspace />} />
+            <Route path="/data-sources" element={<DataSources />} />
+            <Route path="/schema" element={<SchemaExplorer />} />
+            <Route path="/observability" element={<Navigate to="/dashboard?tab=observability" replace />} />
+            <Route path="/release-gates" element={<Navigate to="/dashboard?tab=release-gates" replace />} />
+            <Route path="/llm-providers" element={<LLMProviders />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/folders" element={<ComingSoon />} />
+            <Route path="/favorites" element={<ComingSoon />} />
+            <Route path="/recent" element={<ComingSoon />} />
+            <Route path="/docs" element={<ComingSoon />} />
+          </Route>
 
           {/* 404 Route */}
           <Route path="*" element={<NotFound />} />
         </Routes>
-      </DataSourceProvider>
+      </AuthProvider>
     </Router>
   );
 }

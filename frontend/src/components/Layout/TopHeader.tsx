@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Database, Search, User, ChevronDown } from 'lucide-react';
 import appLogo from '../../assets/report-pilot.png';
+import { useAuth } from '../../hooks/useAuth';
 
 interface TopHeaderProps {
     currentConnection?: string;
@@ -15,8 +16,10 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 }) => {
     const [showConnectionMenu, setShowConnectionMenu] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const { user, logout } = useAuth();
 
     const selectedDataSource = dataSources.find(ds => ds.id === currentConnection);
+    const userLabel = user?.display_name || user?.email || 'User';
 
     return (
         <header className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-4 flex-shrink-0">
@@ -105,13 +108,21 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
                         />
                         <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
                             <div className="px-3 py-2 border-b border-gray-100">
-                                <div className="text-sm font-medium text-gray-800">User</div>
-                                <div className="text-xs text-gray-500">user@example.com</div>
+                                <div className="text-sm font-medium text-gray-800 truncate">{userLabel}</div>
+                                {user?.email && user.display_name && (
+                                    <div className="text-xs text-gray-500 truncate">{user.email}</div>
+                                )}
                             </div>
                             <button className="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50">
                                 Settings
                             </button>
-                            <button className="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50">
+                            <button
+                                onClick={() => {
+                                    setShowUserMenu(false);
+                                    void logout();
+                                }}
+                                className="w-full px-3 py-2 text-sm text-left text-gray-700 hover:bg-gray-50"
+                            >
                                 Logout
                             </button>
                         </div>

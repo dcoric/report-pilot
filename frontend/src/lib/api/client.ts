@@ -6,6 +6,7 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
 
 export const client = createClient<paths>({
     baseUrl,
+    credentials: 'include',
 });
 
 // Add a response interceptor to handle global errors
@@ -26,8 +27,9 @@ client.use({
             // Log error to console
             console.error(`API Request Failed: ${response.url}`, errorMessage);
 
-            // Show toast for errors (unless it's a 404 which might be handled by UI)
-            if (response.status !== 404) {
+            // 401 is surfaced via the auth flow (redirect to /login). 404 is usually
+            // handled inline by the UI. Skip global toasts for both.
+            if (response.status !== 404 && response.status !== 401) {
                 toast.error(errorMessage);
             }
         }
