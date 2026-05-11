@@ -2,6 +2,7 @@ const appDb = require("../lib/appDb");
 const { json, badRequest, readJsonBody } = require("../lib/http");
 const { ENTITY_TYPES } = require("../lib/constants");
 const { triggerRagReindexAsync } = require("../services/ragService");
+const { enforceDataSourceAccess } = require("../lib/authGate");
 
 async function handleUpsertSemanticEntity(req, res) {
   const body = await readJsonBody(req);
@@ -22,6 +23,10 @@ async function handleUpsertSemanticEntity(req, res) {
 
   if (!ENTITY_TYPES.has(entityType)) {
     return badRequest(res, "Invalid entity_type");
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   if (id) {
@@ -75,6 +80,17 @@ async function handleUpsertMetricDefinition(req, res) {
 
   if (!semanticEntityId || !sqlExpression) {
     return badRequest(res, "semantic_entity_id and sql_expression are required");
+  }
+
+  const entityDsLookup = await appDb.query(
+    "SELECT data_source_id FROM semantic_entities WHERE id = $1",
+    [semanticEntityId]
+  );
+  if (entityDsLookup.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Semantic entity not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, entityDsLookup.rows[0].data_source_id))) {
+    return undefined;
   }
 
   if (id) {
@@ -144,6 +160,10 @@ async function handleUpsertJoinPolicy(req, res) {
 
   if (!dataSourceId || !leftRef || !rightRef || !joinType || !onClause || typeof approved !== "boolean") {
     return badRequest(res, "data_source_id, left_ref, right_ref, join_type, on_clause, approved are required");
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   if (id) {

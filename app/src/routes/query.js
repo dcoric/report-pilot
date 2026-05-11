@@ -4,6 +4,7 @@ const { clamp, isUuid } = require("../lib/validation");
 const { validateAndNormalizeSql } = require("../services/sqlSafety");
 const { triggerRagReindexAsync } = require("../services/ragService");
 const { orchestrateQueryRun } = require("../services/queryOrchestrationService");
+const { enforceDataSourceAccess, listAccessibleDataSourceIds } = require("../lib/authGate");
 
 async function handleCreateSession(req, res) {
   const body = await readJsonBody(req);
@@ -16,6 +17,10 @@ async function handleCreateSession(req, res) {
   const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
   if (sourceResult.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const userId = req.user && req.user.id ? req.user.id : "anonymous";
@@ -42,6 +47,16 @@ async function handlePromptHistory(req, res, requestUrl) {
     return badRequest(res, "data_source_id must be a valid UUID");
   }
 
+  if (dataSourceId && !(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
+  }
+
+  const accessible = await listAccessibleDataSourceIds(req);
+  if (!dataSourceId && accessible && accessible.length === 0) {
+    return json(res, 200, { items: [] });
+  }
+  const accessFilter = !dataSourceId && accessible ? accessible : null;
+
   const result = await appDb.query(
     `
       SELECT
@@ -61,16 +76,28 @@ async function handlePromptHistory(req, res, requestUrl) {
       WHERE user_id = $1
         AND ($2::uuid IS NULL OR qs.data_source_id = $2::uuid)
         AND ($3::text = '' OR question ILIKE '%' || $3 || '%')
+        AND ($5::uuid[] IS NULL OR qs.data_source_id = ANY($5::uuid[]))
       ORDER BY qs.created_at DESC
       LIMIT $4
     `,
-    [userId, dataSourceId, search, limit]
+    [userId, dataSourceId, search, limit, accessFilter]
   );
 
   return json(res, 200, { items: result.rows });
 }
 
 async function handleRunSession(req, res, sessionId) {
+  const sessionLookup = await appDb.query(
+    "SELECT data_source_id FROM query_sessions WHERE id = $1",
+    [sessionId]
+  );
+  if (sessionLookup.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Session not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, sessionLookup.rows[0].data_source_id))) {
+    return undefined;
+  }
+
   const body = await readJsonBody(req);
   const requestedProvider = body.llm_provider || null;
   const requestedModel = body.model || null;
@@ -118,6 +145,10 @@ async function handleFeedback(req, res, sessionId) {
     return json(res, 404, { error: "not_found", message: "Session not found" });
   }
   const session = sessionResult.rows[0];
+
+  if (!(await enforceDataSourceAccess(req, res, session.data_source_id))) {
+    return undefined;
+  }
 
   await appDb.query(
     `

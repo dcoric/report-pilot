@@ -53,7 +53,11 @@ function ensureTestUser(label, role = "analyst") {
   if (testUsers[label]) {
     return testUsers[label];
   }
-  const user = authStub.seedUser({ email: `${label}@example.com`, roles: [role] });
+  const user = authStub.seedUser({
+    email: `${label}@example.com`,
+    roles: [role],
+    dataSourceAccess: [DATA_SOURCE_ID, OTHER_SOURCE_ID]
+  });
   const cookie = authStub.cookieFor(authStub.seedSession(user.id).token);
   testUsers[label] = { id: user.id, cookie, role };
   return testUsers[label];
@@ -129,6 +133,14 @@ before(async () => {
         return { rowCount: 1, rows: [{ id }] };
       }
       return { rowCount: 0, rows: [] };
+    }
+
+    if (normalized === "select data_source_id from saved_queries where id = $1") {
+      const [id] = params;
+      const row = savedQueries.get(id);
+      return row
+        ? { rowCount: 1, rows: [{ data_source_id: row.data_source_id }] }
+        : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("insert into saved_queries")) {

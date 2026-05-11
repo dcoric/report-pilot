@@ -4,8 +4,9 @@ const { logEvent } = require("../lib/observability");
 const { isUuid, groupByKey, validateDataSourceImportPayload } = require("../lib/validation");
 const { isSupportedDbType } = require("../adapters/dbAdapterFactory");
 const { reindexRagDocuments } = require("../services/ragService");
+const { enforceDataSourceAccess } = require("../lib/authGate");
 
-async function handleExportDataSource(_req, res, dataSourceId) {
+async function handleExportDataSource(req, res, dataSourceId) {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "dataSourceId must be a valid UUID");
   }
@@ -16,6 +17,9 @@ async function handleExportDataSource(_req, res, dataSourceId) {
   );
   if (dsResult.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
   const ds = dsResult.rows[0];
 

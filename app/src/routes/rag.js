@@ -3,14 +3,19 @@ const { json, badRequest, readJsonBody } = require("../lib/http");
 const { RAG_NOTE_TITLE_MAX_LENGTH, RAG_NOTE_CONTENT_MAX_LENGTH } = require("../lib/constants");
 const { isUuid } = require("../lib/validation");
 const { reindexRagDocuments, triggerRagReindexAsync } = require("../services/ragService");
+const { enforceDataSourceAccess } = require("../lib/authGate");
 
-async function handleListRagNotes(_req, res, requestUrl) {
+async function handleListRagNotes(req, res, requestUrl) {
   const dataSourceId = String(requestUrl.searchParams.get("data_source_id") || "").trim();
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
   }
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "data_source_id must be a valid UUID");
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const result = await appDb.query(
@@ -64,6 +69,10 @@ async function handleUpsertRagNote(req, res) {
   const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
   if (sourceResult.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const userId = req.user && req.user.id ? req.user.id : "anonymous";
@@ -126,9 +135,21 @@ async function handleUpsertRagNote(req, res) {
   return json(res, 200, insertResult.rows[0]);
 }
 
-async function handleDeleteRagNote(_req, res, noteId) {
+async function handleDeleteRagNote(req, res, noteId) {
   if (!isUuid(noteId)) {
     return badRequest(res, "noteId must be a valid UUID");
+  }
+
+  const noteLookup = await appDb.query(
+    "SELECT id, data_source_id FROM rag_notes WHERE id = $1",
+    [noteId]
+  );
+  if (noteLookup.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "RAG note not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, noteLookup.rows[0].data_source_id))) {
+    return undefined;
   }
 
   const deleteResult = await appDb.query(
@@ -160,6 +181,10 @@ async function handleRagReindex(req, res, requestUrl) {
   const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
   if (sourceResult.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
+  }
+
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+    return undefined;
   }
 
   const result = await reindexRagDocuments(dataSourceId);

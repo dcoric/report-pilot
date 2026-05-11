@@ -78,7 +78,10 @@ const {
 const {
   handleListUsers,
   handleCreateUser,
-  handleUpdateUserRoles
+  handleUpdateUserRoles,
+  handleListDataSourceAccess,
+  handleGrantDataSourceAccess,
+  handleRevokeDataSourceAccess
 } = require("./routes/admin");
 const { findPolicy } = require("./lib/routePolicy");
 const { enforcePolicy } = require("./lib/authGate");
@@ -168,6 +171,19 @@ async function routeRequest(req, res) {
   const adminUserRolesMatch = pathname.match(/^\/v1\/admin\/users\/([^/]+)\/roles$/);
   if (req.method === "POST" && adminUserRolesMatch) {
     return handleUpdateUserRoles(req, res, adminUserRolesMatch[1]);
+  }
+
+  const adminDataSourceAccessMatch = pathname.match(/^\/v1\/admin\/data-sources\/([^/]+)\/access$/);
+  if (req.method === "GET" && adminDataSourceAccessMatch) {
+    return handleListDataSourceAccess(req, res, adminDataSourceAccessMatch[1]);
+  }
+  if (req.method === "POST" && adminDataSourceAccessMatch) {
+    return handleGrantDataSourceAccess(req, res, adminDataSourceAccessMatch[1]);
+  }
+
+  const adminDataSourceRevokeMatch = pathname.match(/^\/v1\/admin\/data-sources\/([^/]+)\/access\/([^/]+)$/);
+  if (req.method === "DELETE" && adminDataSourceRevokeMatch) {
+    return handleRevokeDataSourceAccess(req, res, adminDataSourceRevokeMatch[1], adminDataSourceRevokeMatch[2]);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {

@@ -108,6 +108,96 @@ paths:
           description: Forbidden
         "409":
           description: Email already exists
+  /v1/admin/data-sources/{dataSourceId}/access:
+    get:
+      tags: [Admin]
+      summary: List users granted access to a data source
+      description: Requires the `admin` role. Admins implicitly access every data source; this endpoint returns only the explicit grants in `user_data_source_access`.
+      parameters:
+        - in: path
+          name: dataSourceId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of granted users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSourceAccessListResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Data source not found
+    post:
+      tags: [Admin]
+      summary: Grant a user access to a data source
+      description: Requires the `admin` role. Idempotent; re-granting an existing access returns 200 with `granted=false`.
+      parameters:
+        - in: path
+          name: dataSourceId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrantDataSourceAccessRequest"
+      responses:
+        "201":
+          description: Access newly granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSourceAccessChange"
+        "200":
+          description: Access already granted (no-op)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSourceAccessChange"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Data source or user not found
+  /v1/admin/data-sources/{dataSourceId}/access/{userId}:
+    delete:
+      tags: [Admin]
+      summary: Revoke a user's access to a data source
+      description: Requires the `admin` role.
+      parameters:
+        - in: path
+          name: dataSourceId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Access revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataSourceAccessChange"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: No access grant to revoke
   /v1/admin/users/{userId}/roles:
     post:
       tags: [Admin]
@@ -1225,6 +1315,52 @@ components:
           type: array
           items:
             type: string
+    DataSourceAccessGrant:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        granted_at:
+          type: string
+          format: date-time
+        granted_by_user_id:
+          type: string
+          nullable: true
+        roles:
+          type: array
+          items:
+            type: string
+    DataSourceAccessListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataSourceAccessGrant"
+    GrantDataSourceAccessRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+    DataSourceAccessChange:
+      type: object
+      properties:
+        granted:
+          type: boolean
+        revoked:
+          type: boolean
+        user_id:
+          type: string
+        data_source_id:
+          type: string
     UpdateUserRolesResponse:
       type: object
       properties:
