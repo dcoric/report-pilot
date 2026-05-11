@@ -42,7 +42,7 @@ async function handleExportDeliver(req, res, sessionId) {
     return json(res, 404, { error: "not_found", message: "Session not found" });
   }
 
-  const requestedBy = req.headers["x-user-id"] || "anonymous";
+  const requestedBy = req.user && req.user.id ? req.user.id : "anonymous";
 
   try {
     const delivery = await createDelivery({ sessionId, deliveryMode, format, recipients, requestedBy });

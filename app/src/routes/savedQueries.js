@@ -8,7 +8,7 @@ function writeResult(res, result) {
 async function handleCreateSavedQuery(req, res) {
   const body = await readJsonBody(req);
   const result = await savedQueryService.createSavedQuery({
-    ownerId: req.headers["x-user-id"],
+    ownerId: req.user && req.user.id ? req.user.id : null,
     name: body.name,
     description: body.description,
     dataSourceId: body.data_source_id,

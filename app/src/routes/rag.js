@@ -66,7 +66,7 @@ async function handleUpsertRagNote(req, res) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
   }
 
-  const userId = String(req.headers["x-user-id"] || "anonymous").trim() || "anonymous";
+  const userId = req.user && req.user.id ? req.user.id : "anonymous";
 
   if (id) {
     const updateResult = await appDb.query(
