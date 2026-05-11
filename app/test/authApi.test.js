@@ -14,6 +14,7 @@ let users;
 let sessions;
 let userIdCounter;
 let sessionIdCounter;
+let userRoleAssignments;
 let originalQuery;
 
 function uuid(prefix, counter) {
@@ -34,7 +35,13 @@ function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function seedUser({ email, password, displayName = null, isActive = true }) {
+const ROLE_PERMISSIONS = {
+  admin: ["users.read", "users.write", "data_sources.read", "data_sources.write"],
+  analyst: ["data_sources.read", "saved_queries.read", "saved_queries.write", "query.run"],
+  viewer: ["data_sources.read", "saved_queries.read"]
+};
+
+function seedUser({ email, password, displayName = null, isActive = true, roles = [] }) {
   const row = {
     id: nextUserId(),
     email,
@@ -46,6 +53,7 @@ function seedUser({ email, password, displayName = null, isActive = true }) {
     updated_at: new Date().toISOString()
   };
   users.set(row.id, row);
+  userRoleAssignments.set(row.id, [...roles]);
   return row;
 }
 
@@ -89,6 +97,7 @@ before(async () => {
   originalQuery = appDb.query;
   users = new Map();
   sessions = new Map();
+  userRoleAssignments = new Map();
   userIdCounter = 0;
   sessionIdCounter = 0;
 
@@ -202,6 +211,36 @@ before(async () => {
       return { rowCount: user ? 1 : 0, rows: [] };
     }
 
+    if (normalized.startsWith(
+      "select r.id, r.name, r.description, r.is_system, ur.assigned_at from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = $1 order by r.name"
+    )) {
+      const [userId] = params;
+      const assigned = userRoleAssignments.get(userId) || [];
+      const rows = [...assigned].sort().map((name, idx) => ({
+        id: `00000000-0000-4000-8000-cccc${String(idx + 1).padStart(8, "0")}`,
+        name,
+        description: `${name} role`,
+        is_system: true,
+        assigned_at: new Date().toISOString()
+      }));
+      return { rowCount: rows.length, rows };
+    }
+
+    if (normalized.startsWith(
+      "select distinct p.name from user_roles ur join role_permissions rp on rp.role_id = ur.role_id join permissions p on p.id = rp.permission_id where ur.user_id = $1 order by p.name"
+    )) {
+      const [userId] = params;
+      const assigned = userRoleAssignments.get(userId) || [];
+      const out = new Set();
+      for (const role of assigned) {
+        for (const perm of ROLE_PERMISSIONS[role] || []) {
+          out.add(perm);
+        }
+      }
+      const sorted = [...out].sort();
+      return { rowCount: sorted.length, rows: sorted.map((name) => ({ name })) };
+    }
+
     throw new Error(`Unexpected SQL in auth test stub: ${normalized}`);
   };
 
@@ -214,6 +253,7 @@ before(async () => {
 beforeEach(() => {
   users.clear();
   sessions.clear();
+  userRoleAssignments.clear();
   userIdCounter = 0;
   sessionIdCounter = 0;
 });
@@ -226,7 +266,12 @@ after(async () => {
 });
 
 test("login → me → logout happy path", async () => {
-  seedUser({ email: "alice@example.com", password: "hunter22ok", displayName: "Alice" });
+  seedUser({
+    email: "alice@example.com",
+    password: "hunter22ok",
+    displayName: "Alice",
+    roles: ["analyst"]
+  });
 
   const login = await api("POST", "/v1/auth/login", {
     email: "Alice@Example.com",
@@ -235,6 +280,11 @@ test("login → me → logout happy path", async () => {
   assert.equal(login.status, 200);
   assert.equal(login.payload.user.email, "alice@example.com");
   assert.equal(login.payload.user.display_name, "Alice");
+  assert.deepEqual(login.payload.user.roles, ["analyst"]);
+  assert.deepEqual(
+    login.payload.user.permissions,
+    ["data_sources.read", "query.run", "saved_queries.read", "saved_queries.write"]
+  );
   assert.ok(login.payload.expires_at);
   assert.ok(login.setCookie);
   assert.match(login.setCookie, /HttpOnly/);
@@ -247,6 +297,11 @@ test("login → me → logout happy path", async () => {
   const me = await api("GET", "/v1/auth/me", undefined, { cookie });
   assert.equal(me.status, 200);
   assert.equal(me.payload.user.email, "alice@example.com");
+  assert.deepEqual(me.payload.user.roles, ["analyst"]);
+  assert.deepEqual(
+    me.payload.user.permissions,
+    ["data_sources.read", "query.run", "saved_queries.read", "saved_queries.write"]
+  );
 
   const logout = await api("POST", "/v1/auth/logout", undefined, { cookie });
   assert.equal(logout.status, 200);

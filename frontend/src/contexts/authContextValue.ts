@@ -9,6 +9,10 @@ export interface AuthContextValue {
     status: AuthStatus;
     user: AuthUser | null;
     expiresAt: string | null;
+    roles: string[];
+    permissions: string[];
+    hasRole: (role: string) => boolean;
+    hasPermission: (permission: string) => boolean;
     login: (email: string, password: string) => Promise<{ ok: true } | { ok: false; message: string }>;
     logout: () => Promise<void>;
     refresh: () => Promise<void>;

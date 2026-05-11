@@ -4,6 +4,7 @@ import type { components } from '../../lib/api/types';
 import { SemanticEditorDialog } from '../../components/Semantic/SemanticEditorDialog';
 import { client } from '../../lib/api/client';
 import { toast } from 'sonner';
+import { useAuth } from '../../hooks/useAuth';
 
 type SchemaObject = components['schemas']['SchemaObject'];
 
@@ -14,6 +15,8 @@ interface SchemaObjectListProps {
 }
 
 export const SchemaObjectList: React.FC<SchemaObjectListProps> = ({ objects, filter, dataSourceId }) => {
+    const { hasPermission } = useAuth();
+    const canEditSemantic = hasPermission('semantic.write');
     const [selectedObject, setSelectedObject] = useState<SchemaObject | null>(null);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [localObjects, setLocalObjects] = useState<SchemaObject[]>(objects);
@@ -116,22 +119,32 @@ export const SchemaObjectList: React.FC<SchemaObjectListProps> = ({ objects, fil
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <div className="flex items-center justify-end gap-3">
-                                        <button
-                                            onClick={() => handleToggleIgnored(obj)}
-                                            disabled={pendingIds.has(obj.id)}
-                                            className={`disabled:opacity-50 ${obj.is_ignored ? 'text-red-600 hover:text-red-700' : 'text-gray-500 hover:text-oxblood'}`}
-                                            title={obj.is_ignored ? 'Hidden from queries (click to enable)' : 'Visible to queries (click to hide)'}
-                                            aria-label={obj.is_ignored ? `Enable ${obj.schema_name}.${obj.object_name}` : `Hide ${obj.schema_name}.${obj.object_name}`}
-                                        >
-                                            {obj.is_ignored ? <EyeOff size={16} /> : <Eye size={16} />}
-                                        </button>
-                                        <button
-                                            onClick={() => handleEnrich(obj)}
-                                            className="text-oxblood hover:text-oxblood-deep flex items-center gap-1"
-                                        >
-                                            <Sparkles size={14} />
-                                            Enrich
-                                        </button>
+                                        {canEditSemantic ? (
+                                            <>
+                                                <button
+                                                    onClick={() => handleToggleIgnored(obj)}
+                                                    disabled={pendingIds.has(obj.id)}
+                                                    className={`disabled:opacity-50 ${obj.is_ignored ? 'text-red-600 hover:text-red-700' : 'text-gray-500 hover:text-oxblood'}`}
+                                                    title={obj.is_ignored ? 'Hidden from queries (click to enable)' : 'Visible to queries (click to hide)'}
+                                                    aria-label={obj.is_ignored ? `Enable ${obj.schema_name}.${obj.object_name}` : `Hide ${obj.schema_name}.${obj.object_name}`}
+                                                >
+                                                    {obj.is_ignored ? <EyeOff size={16} /> : <Eye size={16} />}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleEnrich(obj)}
+                                                    className="text-oxblood hover:text-oxblood-deep flex items-center gap-1"
+                                                >
+                                                    <Sparkles size={14} />
+                                                    Enrich
+                                                </button>
+                                            </>
+                                        ) : (
+                                            obj.is_ignored ? (
+                                                <span className="inline-flex items-center gap-1 text-xs text-red-500" title="Hidden from queries">
+                                                    <EyeOff size={14} /> Hidden
+                                                </span>
+                                            ) : null
+                                        )}
                                     </div>
                                 </td>
                             </tr>

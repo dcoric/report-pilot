@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { client } from '../lib/api/client';
 import { AddProviderDialog } from '../components/Providers/AddProviderDialog';
 import { EditProviderApiKeyDialog } from '../components/Providers/EditProviderApiKeyDialog';
+import { useAuth } from '../hooks/useAuth';
 
 interface LlmProvider {
     id: string;
@@ -32,6 +33,8 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const LLMProviders: React.FC = () => {
+    const { hasPermission } = useAuth();
+    const canManage = hasPermission('providers.write');
     const [providers, setProviders] = useState<LlmProvider[]>([]);
     const [healthMap, setHealthMap] = useState<Record<string, ProviderHealth>>({});
     const [isLoading, setIsLoading] = useState(true);
@@ -131,13 +134,15 @@ export const LLMProviders: React.FC = () => {
                     <h1 className="text-2xl font-bold text-gray-900">LLM Providers</h1>
                     <p className="text-gray-500 mt-1">Manage AI model providers and API configurations.</p>
                 </div>
-                <button
-                    onClick={() => setIsAddDialogOpen(true)}
-                    className="flex items-center gap-2 bg-oxblood text-white px-4 py-2 rounded-md hover:bg-oxblood-deep transition"
-                >
-                    <Plus size={18} />
-                    Add Provider
-                </button>
+                {canManage && (
+                    <button
+                        onClick={() => setIsAddDialogOpen(true)}
+                        className="flex items-center gap-2 bg-oxblood text-white px-4 py-2 rounded-md hover:bg-oxblood-deep transition"
+                    >
+                        <Plus size={18} />
+                        Add Provider
+                    </button>
+                )}
             </div>
 
             <div className="bg-white rounded-lg shadow border border-gray-200 flex-1 overflow-hidden flex flex-col">
@@ -162,13 +167,19 @@ export const LLMProviders: React.FC = () => {
                         <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                             <Server size={48} className="mb-4 opacity-20" />
                             <p className="text-lg font-medium">No providers configured</p>
-                            <p className="text-sm">Add your first LLM provider to get started.</p>
-                            <button
-                                onClick={() => setIsAddDialogOpen(true)}
-                                className="mt-4 text-oxblood hover:underline"
-                            >
-                                Add Provider
-                            </button>
+                            <p className="text-sm">
+                                {canManage
+                                    ? 'Add your first LLM provider to get started.'
+                                    : 'Ask an administrator to configure an LLM provider.'}
+                            </p>
+                            {canManage && (
+                                <button
+                                    onClick={() => setIsAddDialogOpen(true)}
+                                    className="mt-4 text-oxblood hover:underline"
+                                >
+                                    Add Provider
+                                </button>
+                            )}
                         </div>
                     ) : (
                         providers.map((p) => (
@@ -201,27 +212,31 @@ export const LLMProviders: React.FC = () => {
                                     {p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-'}
                                 </div>
                                 <div className="col-span-2 flex items-center justify-end gap-2">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setApiKeyDialogProvider(p);
-                                        }}
-                                        className="text-gray-500 hover:text-oxblood"
-                                        title="Edit API key"
-                                    >
-                                        <Key size={16} />
-                                    </button>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleToggleEnabled(p);
-                                        }}
-                                        disabled={togglingIds.has(p.id)}
-                                        className={`text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed ${p.enabled ? 'hover:text-red-600' : 'hover:text-green-600'}`}
-                                        title={p.enabled ? 'Disable provider' : 'Enable provider'}
-                                    >
-                                        {p.enabled ? <PowerOff size={16} /> : <Power size={16} />}
-                                    </button>
+                                    {canManage && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setApiKeyDialogProvider(p);
+                                            }}
+                                            className="text-gray-500 hover:text-oxblood"
+                                            title="Edit API key"
+                                        >
+                                            <Key size={16} />
+                                        </button>
+                                    )}
+                                    {canManage && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleToggleEnabled(p);
+                                            }}
+                                            disabled={togglingIds.has(p.id)}
+                                            className={`text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed ${p.enabled ? 'hover:text-red-600' : 'hover:text-green-600'}`}
+                                            title={p.enabled ? 'Disable provider' : 'Enable provider'}
+                                        >
+                                            {p.enabled ? <PowerOff size={16} /> : <Power size={16} />}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         ))

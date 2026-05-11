@@ -6,11 +6,15 @@ import { client } from '../lib/api/client';
 import { readSqlFile } from '../lib/readSqlFile';
 import { AddDataSourceDialog } from '../components/DataSources/AddDataSourceDialog';
 import { RagNotesDialog } from '../components/DataSources/RagNotesDialog';
+import { useAuth } from '../hooks/useAuth';
 import type { components } from '../lib/api/types';
 
 type DataSource = components['schemas']['DataSourceListResponse']['items'][number];
 
 export const DataSources: React.FC = () => {
+    const { hasPermission } = useAuth();
+    const canManage = hasPermission('data_sources.write');
+    const canReindex = hasPermission('rag.write');
     const [dataSources, setDataSources] = useState<DataSource[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -190,13 +194,15 @@ export const DataSources: React.FC = () => {
                     <h1 className="text-2xl font-bold text-gray-900">Data Sources</h1>
                     <p className="text-gray-500 mt-1">Manage database connections and configurations.</p>
                 </div>
-                <button
-                    onClick={() => setIsAddDialogOpen(true)}
-                    className="flex items-center gap-2 bg-oxblood text-white px-4 py-2 rounded-md hover:bg-oxblood-deep transition"
-                >
-                    <Plus size={18} />
-                    Add Data Source
-                </button>
+                {canManage && (
+                    <button
+                        onClick={() => setIsAddDialogOpen(true)}
+                        className="flex items-center gap-2 bg-oxblood text-white px-4 py-2 rounded-md hover:bg-oxblood-deep transition"
+                    >
+                        <Plus size={18} />
+                        Add Data Source
+                    </button>
+                )}
             </div>
 
             <div className="bg-white rounded-lg shadow border border-gray-200 flex-1 overflow-hidden flex flex-col">
@@ -220,13 +226,19 @@ export const DataSources: React.FC = () => {
                         <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                             <Database size={48} className="mb-4 opacity-20" />
                             <p className="text-lg font-medium">No data sources found</p>
-                            <p className="text-sm">Add your first database connection to get started.</p>
-                            <button
-                                onClick={() => setIsAddDialogOpen(true)}
-                                className="mt-4 text-oxblood hover:underline"
-                            >
-                                Add Data Source
-                            </button>
+                            <p className="text-sm">
+                                {canManage
+                                    ? 'Add your first database connection to get started.'
+                                    : 'No data sources are available to you yet.'}
+                            </p>
+                            {canManage && (
+                                <button
+                                    onClick={() => setIsAddDialogOpen(true)}
+                                    className="mt-4 text-oxblood hover:underline"
+                                >
+                                    Add Data Source
+                                </button>
+                            )}
                         </div>
                     ) : (
                         dataSources.map((ds) => (
@@ -251,52 +263,58 @@ export const DataSources: React.FC = () => {
                                     {ds.created_at ? format(new Date(ds.created_at), 'MMM d, yyyy') : '-'}
                                 </div>
                                 <div className="col-span-2 flex items-center justify-end gap-2">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleIntrospect(ds);
-                                        }}
-                                        disabled={introspectingIds.has(ds.id)}
-                                        className="text-gray-500 hover:text-oxblood disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="Introspect Schema"
-                                    >
-                                        <RefreshCw size={16} className={introspectingIds.has(ds.id) ? 'animate-spin text-oxblood' : ''} />
-                                    </button>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleImportSchema(ds.id);
-                                        }}
-                                        disabled={importingIds.has(ds.id)}
-                                        className="text-gray-500 hover:text-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="Import Schema (DDL file)"
-                                    >
-                                        <Upload size={16} className={importingIds.has(ds.id) ? 'animate-pulse text-green-500' : ''} />
-                                    </button>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleReindex(ds.id, ds.name);
-                                        }}
-                                        className="text-gray-500 hover:text-purple-600"
-                                        title="Reindex RAG Documents"
-                                    >
-                                        <Sparkles size={16} />
-                                    </button>
+                                    {canManage && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleIntrospect(ds);
+                                            }}
+                                            disabled={introspectingIds.has(ds.id)}
+                                            className="text-gray-500 hover:text-oxblood disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Introspect Schema"
+                                        >
+                                            <RefreshCw size={16} className={introspectingIds.has(ds.id) ? 'animate-spin text-oxblood' : ''} />
+                                        </button>
+                                    )}
+                                    {canManage && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleImportSchema(ds.id);
+                                            }}
+                                            disabled={importingIds.has(ds.id)}
+                                            className="text-gray-500 hover:text-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Import Schema (DDL file)"
+                                        >
+                                            <Upload size={16} className={importingIds.has(ds.id) ? 'animate-pulse text-green-500' : ''} />
+                                        </button>
+                                    )}
+                                    {canReindex && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleReindex(ds.id, ds.name);
+                                            }}
+                                            className="text-gray-500 hover:text-purple-600"
+                                            title="Reindex RAG Documents"
+                                        >
+                                            <Sparkles size={16} />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             setRagNotesSource(ds);
                                         }}
                                         className="text-xs px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                                        title="Manage RAG Notes"
+                                        title="RAG Notes"
                                     >
                                         <span className="inline-flex items-center gap-1">
                                             <FileText size={12} />
                                             RAG Notes
                                         </span>
                                     </button>
-                                    {deleteConfirmId === ds.id ? (
+                                    {canManage && (deleteConfirmId === ds.id ? (
                                         <span className="flex items-center gap-1">
                                             <button
                                                 onClick={(e) => {
@@ -328,7 +346,7 @@ export const DataSources: React.FC = () => {
                                         >
                                             <Trash2 size={16} />
                                         </button>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
                         ))

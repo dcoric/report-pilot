@@ -1144,6 +1144,16 @@ components:
         created_at:
           type: string
           format: date-time
+        roles:
+          type: array
+          description: System role names the user holds (e.g. `admin`, `analyst`, `viewer`).
+          items:
+            type: string
+        permissions:
+          type: array
+          description: Effective permission names granted by the user's roles. The frontend uses this list to gate UI affordances.
+          items:
+            type: string
     AuthMeResponse:
       type: object
       properties:

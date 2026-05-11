@@ -54,9 +54,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    const roles = useMemo(() => user?.roles ?? [], [user]);
+    const permissions = useMemo(() => user?.permissions ?? [], [user]);
+
+    const hasRole = useCallback(
+        (role: string) => roles.includes(role),
+        [roles],
+    );
+    const hasPermission = useCallback(
+        (permission: string) => permissions.includes(permission),
+        [permissions],
+    );
+
     const value = useMemo(
-        () => ({ status, user, expiresAt, login, logout, refresh }),
-        [status, user, expiresAt, login, logout, refresh],
+        () => ({
+            status,
+            user,
+            expiresAt,
+            roles,
+            permissions,
+            hasRole,
+            hasPermission,
+            login,
+            logout,
+            refresh,
+        }),
+        [status, user, expiresAt, roles, permissions, hasRole, hasPermission, login, logout, refresh],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

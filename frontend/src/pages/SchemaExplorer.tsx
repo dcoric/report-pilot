@@ -3,12 +3,15 @@ import { Database, Search, RefreshCw, Layers, Link as LinkIcon } from 'lucide-re
 import { client } from '../lib/api/client';
 import { SchemaObjectList } from '../components/Schema/SchemaObjectList';
 import { JoinPolicyDialog } from '../components/Semantic/JoinPolicyDialog';
+import { useAuth } from '../hooks/useAuth';
 import type { components } from '../lib/api/types';
 
 type DataSource = components['schemas']['DataSourceListResponse']['items'][number];
 type SchemaObject = components['schemas']['SchemaObject'];
 
 export const SchemaExplorer: React.FC = () => {
+    const { hasPermission } = useAuth();
+    const canEditSemantic = hasPermission('semantic.write');
     const [dataSources, setDataSources] = useState<DataSource[]>([]);
     const [selectedDataSourceId, setSelectedDataSourceId] = useState<string>('');
     const [schemaObjects, setSchemaObjects] = useState<SchemaObject[]>([]);
@@ -74,14 +77,16 @@ export const SchemaExplorer: React.FC = () => {
                     <h1 className="text-2xl font-bold text-gray-900">Schema Explorer</h1>
                     <p className="text-gray-500 mt-1">Browse tables and views in your data sources.</p>
                 </div>
-                <button
-                    onClick={() => setIsJoinDialogOpen(true)}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-oxblood"
-                    disabled={!selectedDataSourceId}
-                >
-                    <LinkIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
-                    Join Policies
-                </button>
+                {canEditSemantic && (
+                    <button
+                        onClick={() => setIsJoinDialogOpen(true)}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-oxblood"
+                        disabled={!selectedDataSourceId}
+                    >
+                        <LinkIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
+                        Join Policies
+                    </button>
+                )}
             </div>
 
             <div className="flex flex-col gap-4 flex-1 overflow-hidden">
