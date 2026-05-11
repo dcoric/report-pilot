@@ -1,0 +1,105 @@
+// AUTH-003: route-to-permission mapping. Each entry pairs a method + path
+// pattern with one of:
+//   - `public: true`     — no auth required (login, health, openapi, etc.)
+//   - `role: "<name>"`   — must have the named role (currently only used for admin endpoints)
+//   - `permission: "<name>"` — must have the named permission
+//
+// The enforcer (lib/authGate.enforcePolicy) walks the list in order and uses
+// the first match. Any /v1/* path without a matching policy is treated as an
+// unknown endpoint and returns 404 — there is no implicit "open" policy.
+
+const POLICIES = [
+  // Service / docs
+  { method: "GET", pattern: /^\/health$/, public: true },
+  { method: "GET", pattern: /^\/ready$/, public: true },
+  { method: "GET", pattern: /^\/$/, public: true },
+  { method: "GET", pattern: /^\/docs\/?$/, public: true },
+  { method: "GET", pattern: /^\/openapi\.yaml$/, public: true },
+
+  // Auth surface — login/logout/me must be reachable without a session
+  { method: "POST", pattern: /^\/v1\/auth\/login$/, public: true },
+  { method: "POST", pattern: /^\/v1\/auth\/logout$/, public: true },
+  { method: "GET", pattern: /^\/v1\/auth\/me$/, public: true },
+
+  // Admin
+  { method: "GET", pattern: /^\/v1\/admin\/users$/, role: "admin" },
+  { method: "POST", pattern: /^\/v1\/admin\/users$/, role: "admin" },
+  { method: "POST", pattern: /^\/v1\/admin\/users\/[^/]+\/roles$/, role: "admin" },
+
+  // Data sources
+  { method: "GET", pattern: /^\/v1\/data-sources$/, permission: "data_sources.read" },
+  { method: "POST", pattern: /^\/v1\/data-sources$/, permission: "data_sources.write" },
+  { method: "POST", pattern: /^\/v1\/data-sources\/import$/, permission: "data_sources.write" },
+  { method: "DELETE", pattern: /^\/v1\/data-sources\/[^/]+$/, permission: "data_sources.write" },
+  { method: "POST", pattern: /^\/v1\/data-sources\/[^/]+\/introspect$/, permission: "data_sources.write" },
+  { method: "POST", pattern: /^\/v1\/data-sources\/[^/]+\/import-schema$/, permission: "data_sources.write" },
+  { method: "GET", pattern: /^\/v1\/data-sources\/[^/]+\/export$/, permission: "data_sources.read" },
+
+  // Schema metadata
+  { method: "GET", pattern: /^\/v1\/schema-objects$/, permission: "data_sources.read" },
+  { method: "PATCH", pattern: /^\/v1\/schema-objects\/[^/]+$/, permission: "semantic.write" },
+
+  // Semantic edits
+  { method: "POST", pattern: /^\/v1\/semantic-entities$/, permission: "semantic.write" },
+  { method: "POST", pattern: /^\/v1\/metric-definitions$/, permission: "semantic.write" },
+  { method: "POST", pattern: /^\/v1\/join-policies$/, permission: "semantic.write" },
+
+  // Query (NL → SQL execution path)
+  { method: "POST", pattern: /^\/v1\/query\/sessions$/, permission: "query.run" },
+  { method: "GET", pattern: /^\/v1\/query\/prompts\/history$/, permission: "query.run" },
+  { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/run$/, permission: "query.run" },
+  { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/feedback$/, permission: "query.run" },
+  { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/export$/, permission: "query.run" },
+  { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/export\/deliver$/, permission: "query.run" },
+  { method: "GET", pattern: /^\/v1\/exports\/[^/]+\/status$/, permission: "query.run" },
+
+  // Saved queries — list/get/validate are reads, write/delete are writes, run is query.run
+  { method: "GET", pattern: /^\/v1\/saved-queries$/, permission: "saved_queries.read" },
+  { method: "POST", pattern: /^\/v1\/saved-queries$/, permission: "saved_queries.write" },
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/validate-params$/, permission: "saved_queries.read" },
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/run$/, permission: "query.run" },
+  { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.read" },
+  { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
+  { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
+
+  // Providers / routing
+  { method: "GET", pattern: /^\/v1\/llm\/providers$/, permission: "providers.read" },
+  { method: "POST", pattern: /^\/v1\/llm\/providers$/, permission: "providers.write" },
+  { method: "POST", pattern: /^\/v1\/llm\/routing-rules$/, permission: "providers.write" },
+  { method: "GET", pattern: /^\/v1\/health\/providers$/, permission: "providers.read" },
+
+  // Observability
+  { method: "GET", pattern: /^\/v1\/observability\/metrics$/, permission: "observability.read" },
+  { method: "GET", pattern: /^\/v1\/observability\/release-gates$/, permission: "observability.read" },
+  { method: "GET", pattern: /^\/v1\/observability\/benchmark-command$/, permission: "observability.read" },
+  { method: "POST", pattern: /^\/v1\/observability\/release-gates\/report$/, permission: "observability.write" },
+
+  // RAG notes — reads are tied to data-source read access; writes need rag.write.
+  { method: "GET", pattern: /^\/v1\/rag\/notes$/, permission: "data_sources.read" },
+  { method: "POST", pattern: /^\/v1\/rag\/notes$/, permission: "rag.write" },
+  { method: "DELETE", pattern: /^\/v1\/rag\/notes\/[^/]+$/, permission: "rag.write" },
+  { method: "POST", pattern: /^\/v1\/rag\/reindex$/, permission: "rag.write" }
+];
+
+function findPolicy(method, pathname) {
+  for (const policy of POLICIES) {
+    if (policy.method !== method) continue;
+    if (!policy.pattern.test(pathname)) continue;
+    return policy;
+  }
+  return null;
+}
+
+function describePolicy(policy) {
+  if (!policy) return "unmapped";
+  if (policy.public) return "public";
+  if (policy.role) return `role:${policy.role}`;
+  if (policy.permission) return `permission:${policy.permission}`;
+  return "unmapped";
+}
+
+module.exports = {
+  POLICIES,
+  findPolicy,
+  describePolicy
+};

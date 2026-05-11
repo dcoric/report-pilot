@@ -80,10 +80,34 @@ const {
   handleCreateUser,
   handleUpdateUserRoles
 } = require("./routes/admin");
+const { findPolicy } = require("./lib/routePolicy");
+const { enforcePolicy } = require("./lib/authGate");
 
 async function routeRequest(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
   const { pathname } = requestUrl;
+
+  // Centralized authorization for any /v1/* route. Static / docs / health
+  // paths are matched by explicit public policies below; anything else outside
+  // /v1 is handled by the static-asset and frontend-fallback branches.
+  if (pathname.startsWith("/v1/")) {
+    const policy = findPolicy(req.method, pathname);
+    if (!policy) {
+      return notFound(res);
+    }
+    const decision = await enforcePolicy(req, res, policy);
+    if (!decision.allowed) {
+      return;
+    }
+  } else {
+    // Public surfaces — apply the policy table where one exists (records an
+    // audit event for transparency) and otherwise fall through to the static
+    // routing below.
+    const policy = findPolicy(req.method, pathname);
+    if (policy && policy.public) {
+      await enforcePolicy(req, res, policy);
+    }
+  }
 
   if (req.method === "GET" && pathname === "/health") {
     return json(res, 200, { status: "ok" });
@@ -331,7 +355,7 @@ function startServer() {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-user-id");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Vary", "Origin");
 
     if (req.method === "OPTIONS") {

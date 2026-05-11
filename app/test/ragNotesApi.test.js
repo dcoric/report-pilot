@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test";
 process.env.PORT = "0";
+process.env.AUTH_COOKIE_SECURE = "false";
 
 const appDb = require("../src/lib/appDb");
 const ragService = require("../src/services/ragService");
+const { createAuthTestStub } = require("./helpers/authTestStub");
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const OTHER_SOURCE_ID = "00000000-0000-4000-8000-000000000333";
@@ -18,6 +20,9 @@ let noteCounter;
 let originalQuery;
 let originalReindex;
 let originalSetImmediate;
+let authStub;
+let analystCookie;
+let viewerCookie;
 
 function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
@@ -28,13 +33,12 @@ function nextNoteId() {
   return `00000000-0000-4000-8000-${String(noteCounter).padStart(12, "0")}`;
 }
 
-async function api(method, path, body) {
+async function api(method, path, body, { cookie } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  headers.Cookie = cookie || analystCookie;
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "x-user-id": "test-user"
-    },
+    headers,
     body: body ? JSON.stringify(body) : undefined
   });
 
@@ -59,8 +63,16 @@ before(async () => {
   notes = new Map();
   reindexCalls = [];
   noteCounter = 0;
+  authStub = createAuthTestStub();
+  const analyst = authStub.seedUser({ email: "analyst@example.com", roles: ["analyst"] });
+  const viewer = authStub.seedUser({ email: "viewer@example.com", roles: ["viewer"] });
+  analystCookie = authStub.cookieFor(authStub.seedSession(analyst.id).token);
+  viewerCookie = authStub.cookieFor(authStub.seedSession(viewer.id).token);
 
   appDb.query = async (sql, params = []) => {
+    const auth = authStub.handleSql(sql, params);
+    if (auth) return auth;
+
     const normalized = normalizeSql(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
@@ -244,6 +256,27 @@ test("RAG notes validation returns 400", async () => {
   assert.equal(invalidDeleteId.status, 400);
 
   assert.equal(reindexCalls.length, 0);
+});
+
+test("RAG notes require auth and rag.write for mutations", async () => {
+  const noCookie = await fetch(`${baseUrl}/v1/rag/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data_source_id: DATA_SOURCE_ID, title: "x", content: "y" })
+  });
+  assert.equal(noCookie.status, 401);
+  assert.equal(reindexCalls.length, 0);
+
+  const viewerCreate = await api("POST", "/v1/rag/notes", {
+    data_source_id: DATA_SOURCE_ID,
+    title: "Viewer cannot write",
+    content: "should be 403"
+  }, { cookie: viewerCookie });
+  assert.equal(viewerCreate.status, 403);
+  assert.equal(reindexCalls.length, 0);
+
+  const viewerList = await api("GET", `/v1/rag/notes?data_source_id=${DATA_SOURCE_ID}`, undefined, { cookie: viewerCookie });
+  assert.equal(viewerList.status, 200);
 });
 
 test("RAG notes not found paths return 404", async () => {

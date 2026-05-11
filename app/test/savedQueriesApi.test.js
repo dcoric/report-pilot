@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test";
 process.env.PORT = "0";
+process.env.AUTH_COOKIE_SECURE = "false";
 
 const appDb = require("../src/lib/appDb");
 const dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
+const { createAuthTestStub } = require("./helpers/authTestStub");
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const OTHER_SOURCE_ID = "00000000-0000-4000-8000-000000000222";
@@ -19,6 +21,8 @@ let originalQuery;
 let originalCreateDatabaseAdapter;
 let originalIsSupportedDbType;
 let adapterCalls;
+let authStub;
+const testUsers = {};
 
 function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
@@ -45,13 +49,29 @@ function sortSavedQueries(rows) {
   });
 }
 
-async function api(method, path, body, userId = "test-user") {
+function ensureTestUser(label, role = "analyst") {
+  if (testUsers[label]) {
+    return testUsers[label];
+  }
+  const user = authStub.seedUser({ email: `${label}@example.com`, roles: [role] });
+  const cookie = authStub.cookieFor(authStub.seedSession(user.id).token);
+  testUsers[label] = { id: user.id, cookie, role };
+  return testUsers[label];
+}
+
+function userId(label) {
+  return ensureTestUser(label).id;
+}
+
+async function api(method, path, body, label = "test-user", { role = "analyst" } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (label !== null) {
+    const fixture = ensureTestUser(label, role);
+    headers.Cookie = fixture.cookie;
+  }
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "x-user-id": userId
-    },
+    headers,
     body: body ? JSON.stringify(body) : undefined
   });
 
@@ -75,6 +95,7 @@ before(async () => {
   savedQueries = new Map();
   savedQueryCounter = 0;
   adapterCalls = [];
+  authStub = createAuthTestStub();
 
   dbAdapterFactory.createDatabaseAdapter = () => ({
     async validateSql(sql) {
@@ -97,6 +118,9 @@ before(async () => {
   dbAdapterFactory.isSupportedDbType = (dbType) => dbType === "postgres" || dbType === "mssql";
 
   appDb.query = async (sql, params = []) => {
+    const auth = authStub.handleSql(sql, params);
+    if (auth) return auth;
+
     const normalized = normalizeSql(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
@@ -262,7 +286,7 @@ test("saved queries create/list/get/update/delete happy path", async () => {
   }, "alice");
 
   assert.equal(create.status, 201);
-  assert.equal(create.payload.owner_id, "alice");
+  assert.equal(create.payload.owner_id, userId("alice"));
   assert.equal(create.payload.name, "Revenue by Month");
   assert.equal(create.payload.description, "Monthly summary");
   assert.equal(create.payload.sql, "SELECT * FROM revenue");
@@ -285,7 +309,7 @@ test("saved queries create/list/get/update/delete happy path", async () => {
   const getById = await api("GET", `/v1/saved-queries/${savedQueryId}`, undefined, "bob");
   assert.equal(getById.status, 200);
   assert.equal(getById.payload.id, savedQueryId);
-  assert.equal(getById.payload.owner_id, "alice");
+  assert.equal(getById.payload.owner_id, userId("alice"));
 
   const update = await api("PUT", `/v1/saved-queries/${savedQueryId}`, {
     name: "Revenue by Region",
@@ -298,7 +322,7 @@ test("saved queries create/list/get/update/delete happy path", async () => {
     }
   }, "bob");
   assert.equal(update.status, 200);
-  assert.equal(update.payload.owner_id, "alice");
+  assert.equal(update.payload.owner_id, userId("alice"));
   assert.equal(update.payload.data_source_id, OTHER_SOURCE_ID);
   assert.deepEqual(update.payload.default_run_params, {
     model: "gpt-4.1-mini",
@@ -331,7 +355,7 @@ test("saved queries are publicly readable and openly writable", async () => {
 
   const fetchedByOtherUser = await api("GET", `/v1/saved-queries/${savedQueryId}`, undefined, "owner-b");
   assert.equal(fetchedByOtherUser.status, 200);
-  assert.equal(fetchedByOtherUser.payload.owner_id, "owner-a");
+  assert.equal(fetchedByOtherUser.payload.owner_id, userId("owner-a"));
 
   const updatedByOtherUser = await api("PUT", `/v1/saved-queries/${savedQueryId}`, {
     name: "Store Revenue Updated",
@@ -340,7 +364,7 @@ test("saved queries are publicly readable and openly writable", async () => {
     description: "updated by another user"
   }, "owner-b");
   assert.equal(updatedByOtherUser.status, 200);
-  assert.equal(updatedByOtherUser.payload.owner_id, "owner-a");
+  assert.equal(updatedByOtherUser.payload.owner_id, userId("owner-a"));
 
   const deletedByOtherUser = await api("DELETE", `/v1/saved-queries/${savedQueryId}`, undefined, "owner-c");
   assert.equal(deletedByOtherUser.status, 200);

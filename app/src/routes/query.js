@@ -18,7 +18,7 @@ async function handleCreateSession(req, res) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
   }
 
-  const userId = req.headers["x-user-id"] || "anonymous";
+  const userId = req.user && req.user.id ? req.user.id : "anonymous";
   const sessionResult = await appDb.query(
     `
       INSERT INTO query_sessions (user_id, data_source_id, question, status)
@@ -32,7 +32,7 @@ async function handleCreateSession(req, res) {
 }
 
 async function handlePromptHistory(req, res, requestUrl) {
-  const userId = req.headers["x-user-id"] || "anonymous";
+  const userId = req.user && req.user.id ? req.user.id : "anonymous";
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   const search = (requestUrl.searchParams.get("q") || "").trim();
   const requestedLimit = Number(requestUrl.searchParams.get("limit") || 20);
