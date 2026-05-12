@@ -84,7 +84,8 @@ const {
   handleRevokeDataSourceAccess,
   handleListAuthProviders,
   handleUpsertAuthProvider,
-  handleDeleteAuthProvider
+  handleDeleteAuthProvider,
+  handleTestAuthProvider
 } = require("./routes/admin");
 const {
   handleListEnabledProviders,
@@ -211,6 +212,11 @@ async function routeRequest(req, res) {
   }
   if (req.method === "POST" && pathname === "/v1/admin/auth-providers") {
     return handleUpsertAuthProvider(req, res);
+  }
+
+  const adminAuthProviderTestMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/test$/);
+  if (req.method === "POST" && adminAuthProviderTestMatch) {
+    return handleTestAuthProvider(req, res, adminAuthProviderTestMatch[1]);
   }
 
   const adminAuthProviderDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)$/);
