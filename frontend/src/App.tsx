@@ -15,6 +15,7 @@ import { NotFound } from './pages/NotFound';
 import { Settings } from './pages/Settings';
 import { LLMProviders } from './pages/LLMProviders';
 import { AuthProviders } from './pages/AuthProviders';
+import { AuditLog } from './pages/AuditLog';
 
 function App() {
   return (
@@ -83,6 +84,14 @@ function App() {
               element={(
                 <RequireAuth role="admin">
                   <AuthProviders />
+                </RequireAuth>
+              )}
+            />
+            <Route
+              path="/admin/audit-log"
+              element={(
+                <RequireAuth role="admin">
+                  <AuditLog />
                 </RequireAuth>
               )}
             />

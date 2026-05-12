@@ -4,6 +4,7 @@ const appDb = require("../lib/appDb");
 const adminUserService = require("../services/adminUserService");
 const dataSourceAccessService = require("../services/dataSourceAccessService");
 const authProviderService = require("../services/authProviderService");
+const auditService = require("../services/auditService");
 const oidcService = require("../services/oidcService");
 
 function writeResult(res, result) {
@@ -122,16 +123,43 @@ async function handleListAuthProviders(_req, res) {
 
 async function handleUpsertAuthProvider(req, res) {
   const body = await readJsonBody(req);
-  const result = await authProviderService.upsertProvider(body);
+  const result = await authProviderService.upsertProvider(body, {
+    actorUserId: req.user && req.user.id ? req.user.id : null
+  });
   return json(res, result.statusCode, result.body);
 }
 
-async function handleDeleteAuthProvider(_req, res, providerId) {
+async function handleDeleteAuthProvider(req, res, providerId) {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const result = await authProviderService.deleteProvider(providerId);
+  const result = await authProviderService.deleteProvider(providerId, {
+    actorUserId: req.user && req.user.id ? req.user.id : null
+  });
   return json(res, result.statusCode, result.body);
+}
+
+async function handleListAuditEvents(req, res, requestUrl) {
+  const params = requestUrl.searchParams;
+  const actorUserIdRaw = params.get("actor_user_id");
+  if (actorUserIdRaw && !isUuid(actorUserIdRaw)) {
+    return badRequest(res, "actor_user_id must be a uuid");
+  }
+  const targetUserIdRaw = params.get("target_user_id");
+  if (targetUserIdRaw && !isUuid(targetUserIdRaw)) {
+    return badRequest(res, "target_user_id must be a uuid");
+  }
+  const result = await auditService.listEvents({
+    action: params.get("action"),
+    actorUserId: actorUserIdRaw,
+    targetUserId: targetUserIdRaw,
+    outcome: params.get("outcome"),
+    since: params.get("since"),
+    until: params.get("until"),
+    limit: params.get("limit"),
+    offset: params.get("offset")
+  });
+  return json(res, 200, result);
 }
 
 async function handleTestAuthProvider(_req, res, providerId) {
@@ -156,5 +184,6 @@ module.exports = {
   handleListAuthProviders,
   handleUpsertAuthProvider,
   handleDeleteAuthProvider,
-  handleTestAuthProvider
+  handleTestAuthProvider,
+  handleListAuditEvents
 };

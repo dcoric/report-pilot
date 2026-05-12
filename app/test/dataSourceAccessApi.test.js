@@ -133,12 +133,20 @@ before(async () => {
     }
 
     if (n.startsWith("insert into auth_audit_log")) {
-      const [actor, target, action, details] = params;
+      // AUTH-008 widened the insert to include actor_email, outcome,
+      // ip_address, and user_agent. New positional layout is:
+      //   $1 actor_user_id, $2 actor_email, $3 target_user_id, $4 action,
+      //   $5 outcome, $6 details, $7 ip_address, $8 user_agent.
+      const [actor, actorEmail, target, action, outcome, details, ipAddress, userAgent] = params;
       auditEntries.push({
         actor_user_id: actor,
+        actor_email: actorEmail,
         target_user_id: target,
         action,
-        details: JSON.parse(details)
+        outcome,
+        details: JSON.parse(details),
+        ip_address: ipAddress,
+        user_agent: userAgent
       });
       return { rowCount: 1, rows: [] };
     }

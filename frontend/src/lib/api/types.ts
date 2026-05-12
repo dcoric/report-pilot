@@ -661,6 +661,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List audit events for auth and permission changes
+         * @description Requires the `admin` role. Returns audit entries written by AUTH-008
+         *     for login/logout, failed logins, role and permission mutations, data
+         *     source access changes, and auth provider CRUD. Results are reverse
+         *     chronological. Filters are AND-combined; pagination via `limit` /
+         *     `offset`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Exact action name (e.g. `auth.login.failure`, `role.assigned`). */
+                    action?: string;
+                    actor_user_id?: string;
+                    target_user_id?: string;
+                    outcome?: "success" | "failure" | "info";
+                    /** @description Inclusive lower bound on `created_at` (ISO 8601). */
+                    since?: string;
+                    /** @description Exclusive upper bound on `created_at` (ISO 8601). */
+                    until?: string;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page of audit events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditEventListResponse"];
+                    };
+                };
+                /** @description Invalid query parameter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/data-sources/{dataSourceId}/access": {
         parameters: {
             query?: never;
@@ -2728,6 +2804,42 @@ export interface components {
             response_types_supported?: string[];
             id_token_signing_alg_values_supported?: string[];
             code_challenge_methods_supported?: string[];
+        };
+        AuditEventActor: {
+            /** Format: uuid */
+            id?: string;
+            email?: string | null;
+            display_name?: string | null;
+        } | null;
+        AuditEvent: {
+            /** Format: uuid */
+            id: string;
+            /** @description Stable action identifier (e.g. `auth.login.success`, `role.assigned`, `auth_provider.created`). */
+            action: string;
+            /** @enum {string|null} */
+            outcome?: "success" | "failure" | "info" | null;
+            /** Format: uuid */
+            actor_user_id?: string | null;
+            /** @description Captured when there is no `actor_user_id` (e.g. failed login for an unknown email). */
+            actor_email?: string | null;
+            actor?: components["schemas"]["AuditEventActor"];
+            /** Format: uuid */
+            target_user_id?: string | null;
+            target?: components["schemas"]["AuditEventActor"];
+            details?: {
+                [key: string]: unknown;
+            };
+            ip_address?: string | null;
+            user_agent?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AuditEventListResponse: {
+            items: components["schemas"]["AuditEvent"][];
+            /** @description Total matching rows ignoring `limit` / `offset`. */
+            total: number;
+            limit: number;
+            offset: number;
         };
         OidcProviderLoginEntry: {
             id?: string;
