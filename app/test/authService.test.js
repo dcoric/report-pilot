@@ -14,12 +14,18 @@ test("normalizeEmail trims, lowercases, and rejects malformed addresses", () => 
   assert.equal(authService.normalizeEmail("a@b.c d"), null);
 });
 
-test("validatePassword enforces length bounds", () => {
+test("validatePassword enforces length and character-class policy (AUTH-009)", () => {
+  // Length floor
   assert.equal(authService.validatePassword("short"), false);
-  assert.equal(authService.validatePassword("12345678"), true);
-  assert.equal(authService.validatePassword(""), false);
+  // Length ceiling
   assert.equal(authService.validatePassword("x".repeat(257)), false);
+  // Empty / non-string
+  assert.equal(authService.validatePassword(""), false);
   assert.equal(authService.validatePassword(123456789), false);
+  // Single character class — rejected post-AUTH-009
+  assert.equal(authService.validatePassword("12345678"), false);
+  // Two character classes — accepted
+  assert.equal(authService.validatePassword("hunter22ok"), true);
 });
 
 test("hashPassword + verifyPassword round-trip and reject wrong values", () => {

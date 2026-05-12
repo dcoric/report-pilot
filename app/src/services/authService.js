@@ -33,14 +33,86 @@ function normalizeEmail(value) {
   return trimmed.toLowerCase();
 }
 
-function validatePassword(value) {
+// AUTH-009: a tiny banned-passwords list. Reject the obvious top hits and the
+// ones most often shown up in password-spray attempts against this app's
+// length minimum. Kept short on purpose — we lean on length + char-class
+// coverage for entropy, not on a giant denylist.
+const BANNED_PASSWORDS = new Set([
+  "password",
+  "password1",
+  "password!",
+  "passw0rd",
+  "qwerty123",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "letmein!",
+  "welcome1",
+  "admin123",
+  "iloveyou1"
+]);
+
+function passwordCharClasses(value) {
+  let classes = 0;
+  if (/[a-z]/.test(value)) classes += 1;
+  if (/[A-Z]/.test(value)) classes += 1;
+  if (/[0-9]/.test(value)) classes += 1;
+  // any non-alphanumeric, non-space character counts as a symbol
+  if (/[^A-Za-z0-9\s]/.test(value)) classes += 1;
+  return classes;
+}
+
+// Returns { ok: true } or { ok: false, code, message } with a stable error
+// code so the API can map it onto a `400` response and the frontend onto a
+// specific message.
+function checkPasswordPolicy(value, { email = null } = {}) {
   if (typeof value !== "string") {
-    return false;
+    return { ok: false, code: "invalid_password", message: "password must be a string" };
   }
-  if (value.length < PASSWORD_MIN_LENGTH || value.length > PASSWORD_MAX_LENGTH) {
-    return false;
+  if (value.length < PASSWORD_MIN_LENGTH) {
+    return {
+      ok: false,
+      code: "password_too_short",
+      message: `password must be at least ${PASSWORD_MIN_LENGTH} characters`
+    };
   }
-  return true;
+  if (value.length > PASSWORD_MAX_LENGTH) {
+    return {
+      ok: false,
+      code: "password_too_long",
+      message: `password must be at most ${PASSWORD_MAX_LENGTH} characters`
+    };
+  }
+  if (passwordCharClasses(value) < 2) {
+    return {
+      ok: false,
+      code: "password_too_weak",
+      message: "password must mix at least two of: lowercase, uppercase, digit, symbol"
+    };
+  }
+  const lowered = value.toLowerCase();
+  if (BANNED_PASSWORDS.has(lowered)) {
+    return {
+      ok: false,
+      code: "password_banned",
+      message: "password is on the common-passwords block list"
+    };
+  }
+  if (typeof email === "string" && email.includes("@")) {
+    const local = email.split("@")[0].toLowerCase();
+    if (local && local.length >= 3 && lowered === local) {
+      return {
+        ok: false,
+        code: "password_matches_email",
+        message: "password must not match your email address"
+      };
+    }
+  }
+  return { ok: true };
+}
+
+function validatePassword(value, options = {}) {
+  return checkPasswordPolicy(value, options).ok;
 }
 
 function hashPassword(password) {
@@ -146,9 +218,10 @@ async function createUser({ email, password, displayName = null }) {
     err.code = "invalid_email";
     throw err;
   }
-  if (!validatePassword(password)) {
-    const err = new Error(`password must be ${PASSWORD_MIN_LENGTH}-${PASSWORD_MAX_LENGTH} characters`);
-    err.code = "invalid_password";
+  const policy = checkPasswordPolicy(password, { email: normalized });
+  if (!policy.ok) {
+    const err = new Error(policy.message);
+    err.code = policy.code;
     throw err;
   }
   const passwordHash = hashPassword(password);
@@ -267,8 +340,10 @@ module.exports = {
   SESSION_COOKIE_NAME,
   PASSWORD_MIN_LENGTH,
   PASSWORD_MAX_LENGTH,
+  BANNED_PASSWORDS,
   normalizeEmail,
   validatePassword,
+  checkPasswordPolicy,
   hashPassword,
   verifyPassword,
   generateSessionToken,

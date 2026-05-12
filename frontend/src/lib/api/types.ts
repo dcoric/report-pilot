@@ -16,6 +16,9 @@ export interface paths {
         /**
          * Authenticate with email and password
          * @description Returns the authenticated user and sets an HttpOnly session cookie.
+         *     After repeated failures from the same email or source IP within a
+         *     sliding window, the endpoint refuses further attempts with `429` and
+         *     a `Retry-After` header (AUTH-009).
          */
         post: {
             parameters: {
@@ -52,6 +55,20 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /**
+                 * @description Too many failed login attempts for this email or source IP.
+                 *     Retry once `Retry-After` (in seconds) has elapsed.
+                 */
+                429: {
+                    headers: {
+                        /** @description Seconds the client should wait before retrying. */
+                        "Retry-After"?: number;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LoginLockoutResponse"];
+                    };
                 };
             };
         };
@@ -2700,6 +2717,13 @@ export interface components {
             /** Format: email */
             email: string;
             password: string;
+        };
+        LoginLockoutResponse: {
+            /** @enum {string} */
+            error: "too_many_requests";
+            /** @enum {string} */
+            reason?: "too_many_failed_logins" | "ip_throttled";
+            retry_after_seconds: number;
         };
         AuthUser: {
             id?: string;
