@@ -222,6 +222,27 @@ function createAuthTestStub() {
       return { rowCount: 1, rows: [] };
     }
 
+    // authService.createSession — sessions created by the real code (e.g.
+    // password login or OIDC callback) get persisted into the stub's map so
+    // subsequent /v1/auth/me lookups see them.
+    if (normalized.startsWith("insert into user_sessions")) {
+      const [userId, tokenHash, userAgent, ipAddress, expiresAt] = params;
+      sessionCounter += 1;
+      const sessionId = uuid("bbbb", sessionCounter);
+      sessions.set(sessionId, {
+        id: sessionId,
+        user_id: userId,
+        token_hash: tokenHash,
+        user_agent: userAgent,
+        ip_address: ipAddress,
+        created_at: new Date().toISOString(),
+        expires_at: expiresAt,
+        last_seen_at: new Date().toISOString(),
+        revoked_at: null
+      });
+      return { rowCount: 1, rows: [{ id: sessionId, expires_at: expiresAt }] };
+    }
+
     // dataSourceAccessService.hasAccess
     if (normalized.startsWith("select 1 from user_data_source_access where user_id = $1 and data_source_id = $2")) {
       const [userId, dataSourceId] = params;

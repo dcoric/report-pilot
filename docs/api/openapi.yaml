@@ -108,6 +108,138 @@ paths:
           description: Forbidden
         "409":
           description: Email already exists
+  /v1/auth/oidc/providers:
+    get:
+      tags: [Auth]
+      summary: List enabled OIDC providers for the login page
+      description: Public endpoint. Returns only the metadata the login UI needs (`id`, `name`, `display_name`, `type`); secrets and admin-only fields are never exposed here.
+      responses:
+        "200":
+          description: Enabled providers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OidcProviderLoginListResponse"
+  /v1/auth/oidc/login:
+    get:
+      tags: [Auth]
+      summary: Start the OIDC authorization-code (PKCE) flow
+      description: |
+        Public endpoint. Generates state / nonce / PKCE verifier, sets a
+        short-lived signed cookie (`rp_oidc_flow`), and 302-redirects to the
+        IdP's authorize URL. The user agent returns to `/v1/auth/oidc/callback`.
+      parameters:
+        - in: query
+          name: provider_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to IdP authorize URL
+        "400":
+          description: Missing provider_id
+        "404":
+          description: Provider not found or disabled
+  /v1/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      summary: OIDC callback — exchange code, validate ID token, create session
+      description: |
+        Public endpoint. Reads the signed flow cookie, verifies `state`/`nonce`,
+        exchanges the authorization code with PKCE, validates the ID token,
+        looks up a local user by `email`, and creates a session.
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: state
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: "Successful login — `Set-Cookie: rp_session=...` and redirect to `/dashboard`"
+        "400":
+          description: Missing or expired flow cookie / failed token exchange
+        "403":
+          description: No active local account for the IdP email claim
+        "404":
+          description: Provider no longer available
+  /v1/admin/auth-providers:
+    get:
+      tags: [Admin]
+      summary: List configured auth providers
+      description: Requires the `admin` role. `client_secret` is redacted as `***` when present.
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProviderListResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+    post:
+      tags: [Admin]
+      summary: Create or update an auth provider
+      description: |
+        Requires the `admin` role. Pass `id` to update an existing row; omit it
+        to create. Omitting `client_secret` on update keeps the existing value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthProviderUpsertRequest"
+      responses:
+        "200":
+          description: Provider updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProvider"
+        "201":
+          description: Provider created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProvider"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found (when updating)
+        "409":
+          description: A provider with that name already exists
+  /v1/admin/auth-providers/{providerId}:
+    delete:
+      tags: [Admin]
+      summary: Delete an auth provider
+      description: Requires the `admin` role.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Provider deleted
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found
   /v1/admin/data-sources/{dataSourceId}/access:
     get:
       tags: [Admin]
@@ -1315,6 +1447,106 @@ components:
           type: array
           items:
             type: string
+    AuthProvider:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [oidc]
+        name:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        issuer:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          nullable: true
+          description: Redacted as `***` when present; never returned in plaintext.
+        scopes:
+          type: array
+          items:
+            type: string
+        redirect_uri:
+          type: string
+        claims_mapping:
+          type: object
+          properties:
+            email:
+              type: string
+            display_name:
+              type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AuthProviderListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthProvider"
+    AuthProviderUpsertRequest:
+      type: object
+      required: [type, name, issuer, client_id, redirect_uri]
+      properties:
+        id:
+          type: string
+          description: Provide to update an existing provider; omit to create a new one.
+        type:
+          type: string
+          enum: [oidc]
+        name:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        issuer:
+          type: string
+        client_id:
+          type: string
+        client_secret:
+          type: string
+          nullable: true
+          description: Optional for public PKCE-only clients. Omit on update to keep the existing value.
+        scopes:
+          type: array
+          items:
+            type: string
+        redirect_uri:
+          type: string
+        claims_mapping:
+          type: object
+        enabled:
+          type: boolean
+    OidcProviderLoginEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        display_name:
+          type: string
+        type:
+          type: string
+    OidcProviderLoginListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OidcProviderLoginEntry"
     DataSourceAccessGrant:
       type: object
       properties:

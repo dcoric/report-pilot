@@ -255,6 +255,348 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/oidc/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List enabled OIDC providers for the login page
+         * @description Public endpoint. Returns only the metadata the login UI needs (`id`, `name`, `display_name`, `type`); secrets and admin-only fields are never exposed here.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Enabled providers */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OidcProviderLoginListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/oidc/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start the OIDC authorization-code (PKCE) flow
+         * @description Public endpoint. Generates state / nonce / PKCE verifier, sets a
+         *     short-lived signed cookie (`rp_oidc_flow`), and 302-redirects to the
+         *     IdP's authorize URL. The user agent returns to `/v1/auth/oidc/callback`.
+         */
+        get: {
+            parameters: {
+                query: {
+                    provider_id: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to IdP authorize URL */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing provider_id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider not found or disabled */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OIDC callback — exchange code, validate ID token, create session
+         * @description Public endpoint. Reads the signed flow cookie, verifies `state`/`nonce`,
+         *     exchanges the authorization code with PKCE, validates the ID token,
+         *     looks up a local user by `email`, and creates a session.
+         */
+        get: {
+            parameters: {
+                query: {
+                    code: string;
+                    state: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful login — `Set-Cookie: rp_session=...` and redirect to `/dashboard` */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or expired flow cookie / failed token exchange */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No active local account for the IdP email claim */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider no longer available */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/auth-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List configured auth providers
+         * @description Requires the `admin` role. `client_secret` is redacted as `***` when present.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Provider list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthProviderListResponse"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create or update an auth provider
+         * @description Requires the `admin` role. Pass `id` to update an existing row; omit it
+         *     to create. Omitting `client_secret` on update keeps the existing value.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AuthProviderUpsertRequest"];
+                };
+            };
+            responses: {
+                /** @description Provider updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthProvider"];
+                    };
+                };
+                /** @description Provider created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthProvider"];
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider not found (when updating) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A provider with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/auth-providers/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an auth provider
+         * @description Requires the `admin` role.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    providerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Provider deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/data-sources/{dataSourceId}/access": {
         parameters: {
             query?: never;
@@ -2266,6 +2608,56 @@ export interface components {
         UpdateUserRolesRequest: {
             assign?: string[];
             revoke?: string[];
+        };
+        AuthProvider: {
+            id?: string;
+            /** @enum {string} */
+            type?: "oidc";
+            name?: string;
+            display_name?: string | null;
+            issuer?: string;
+            client_id?: string;
+            /** @description Redacted as `***` when present; never returned in plaintext. */
+            client_secret?: string | null;
+            scopes?: string[];
+            redirect_uri?: string;
+            claims_mapping?: {
+                email?: string;
+                display_name?: string;
+            };
+            enabled?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        AuthProviderListResponse: {
+            items?: components["schemas"]["AuthProvider"][];
+        };
+        AuthProviderUpsertRequest: {
+            /** @description Provide to update an existing provider; omit to create a new one. */
+            id?: string;
+            /** @enum {string} */
+            type: "oidc";
+            name: string;
+            display_name?: string | null;
+            issuer: string;
+            client_id: string;
+            /** @description Optional for public PKCE-only clients. Omit on update to keep the existing value. */
+            client_secret?: string | null;
+            scopes?: string[];
+            redirect_uri: string;
+            claims_mapping?: Record<string, never>;
+            enabled?: boolean;
+        };
+        OidcProviderLoginEntry: {
+            id?: string;
+            name?: string;
+            display_name?: string;
+            type?: string;
+        };
+        OidcProviderLoginListResponse: {
+            items?: components["schemas"]["OidcProviderLoginEntry"][];
         };
         DataSourceAccessGrant: {
             id?: string;
