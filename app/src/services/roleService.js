@@ -1,4 +1,5 @@
 const appDb = require("../lib/appDb");
+const auditService = require("./auditService");
 
 const DEFAULT_ROLE = "viewer";
 const SYSTEM_ROLE_NAMES = new Set(["admin", "analyst", "viewer"]);
@@ -104,12 +105,12 @@ async function listPermissionNamesForUser(userId, client = null) {
 }
 
 async function writeAuditEntry(client, { actorUserId, targetUserId, action, details = {} }) {
-  await client.query(
-    `
-      INSERT INTO auth_audit_log (actor_user_id, target_user_id, action, details)
-      VALUES ($1, $2, $3, $4::jsonb)
-    `,
-    [actorUserId || null, targetUserId || null, action, JSON.stringify(details)]
+  // Thin shim kept for existing callers (role assignment, data source access).
+  // New code paths should use auditService.writeEvent directly so they can
+  // record outcome / IP / user-agent metadata too.
+  await auditService.writeEvent(
+    { actorUserId, targetUserId, action, details },
+    client
   );
 }
 

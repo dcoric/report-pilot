@@ -2,6 +2,7 @@ const { json, badRequest } = require("../lib/http");
 const { buildFlowCookie, buildClearFlowCookie, readFlowCookie } = require("../lib/oidcFlowCookie");
 const { buildSessionCookie, buildClearSessionCookie } = require("../lib/sessionCookie");
 const authService = require("../services/authService");
+const auditService = require("../services/auditService");
 const authProviderService = require("../services/authProviderService");
 const oidcService = require("../services/oidcService");
 
@@ -68,11 +69,23 @@ async function handleCallback(req, res, requestUrl) {
   const proto = req.headers["x-forwarded-proto"] || (req.socket && req.socket.encrypted ? "https" : "http");
   const currentUrl = `${proto}://${host}${requestUrl.pathname}${requestUrl.search}`;
 
+  const ipAddress = clientAddress(req);
+  const userAgent = req.headers["user-agent"] || null;
+
   let principal;
   try {
     principal = await oidcService.completeLogin(provider, currentUrl, flowState);
   } catch (err) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
+    await auditService
+      .writeEvent({
+        action: "auth.login.failure",
+        outcome: "failure",
+        details: { method: "oidc", provider: provider.name, reason: err.message || "oidc_error" },
+        ipAddress,
+        userAgent
+      })
+      .catch(() => {});
     const status = err.statusCode || 500;
     return json(res, status, { error: "oidc_error", message: err.message });
   }
@@ -80,6 +93,16 @@ async function handleCallback(req, res, requestUrl) {
   const user = await authService.findUserByEmail(principal.email);
   if (!user || !user.is_active) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
+    await auditService
+      .writeEvent({
+        actorEmail: principal.email,
+        action: "auth.login.failure",
+        outcome: "failure",
+        details: { method: "oidc", provider: provider.name, reason: "no_local_account" },
+        ipAddress,
+        userAgent
+      })
+      .catch(() => {});
     return json(res, 403, {
       error: "forbidden",
       message: `no active local account for ${principal.email}. Ask an administrator to create one.`
@@ -87,9 +110,21 @@ async function handleCallback(req, res, requestUrl) {
   }
 
   const session = await authService.createSession(user.id, {
-    userAgent: req.headers["user-agent"] || null,
-    ipAddress: clientAddress(req)
+    userAgent,
+    ipAddress
   });
+  await auditService
+    .writeEvent({
+      actorUserId: user.id,
+      actorEmail: user.email,
+      targetUserId: user.id,
+      action: "auth.login.success",
+      outcome: "success",
+      details: { method: "oidc", provider: provider.name },
+      ipAddress,
+      userAgent
+    })
+    .catch(() => {});
   // Best-effort last_login_at touch; mirrors password login path.
   authService
     .findUserByEmail(principal.email)

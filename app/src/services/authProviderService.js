@@ -1,4 +1,5 @@
 const appDb = require("../lib/appDb");
+const auditService = require("./auditService");
 
 const PROVIDER_NAME_MAX = 64;
 const PROVIDER_DISPLAY_NAME_MAX = 120;
@@ -178,7 +179,7 @@ function validatePayload(body) {
   };
 }
 
-async function upsertProvider(body) {
+async function upsertProvider(body, { actorUserId = null } = {}) {
   const parsed = validatePayload(body);
   if (!parsed.ok) {
     return { statusCode: 400, body: { error: "bad_request", message: parsed.message } };
@@ -213,6 +214,18 @@ async function upsertProvider(body) {
       if (result.rowCount === 0) {
         return { statusCode: 404, body: { error: "not_found", message: "auth provider not found" } };
       }
+      await auditService
+        .writeEvent({
+          actorUserId,
+          action: "auth_provider.updated",
+          outcome: "success",
+          details: {
+            provider_id: result.rows[0].id,
+            name: result.rows[0].name,
+            enabled: result.rows[0].enabled
+          }
+        })
+        .catch(() => {});
       return { statusCode: 200, body: publicProvider(result.rows[0]) };
     }
 
@@ -228,6 +241,18 @@ async function upsertProvider(body) {
         v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled
       ]
     );
+    await auditService
+      .writeEvent({
+        actorUserId,
+        action: "auth_provider.created",
+        outcome: "success",
+        details: {
+          provider_id: result.rows[0].id,
+          name: result.rows[0].name,
+          type: result.rows[0].type
+        }
+      })
+      .catch(() => {});
     return { statusCode: 201, body: publicProvider(result.rows[0]) };
   } catch (err) {
     if (err && err.code === "23505") {
@@ -237,14 +262,25 @@ async function upsertProvider(body) {
   }
 }
 
-async function deleteProvider(id) {
+async function deleteProvider(id, { actorUserId = null } = {}) {
   if (typeof id !== "string" || !id) {
     return { statusCode: 400, body: { error: "bad_request", message: "id is required" } };
   }
-  const result = await appDb.query("DELETE FROM auth_providers WHERE id = $1 RETURNING id", [id]);
+  const result = await appDb.query(
+    "DELETE FROM auth_providers WHERE id = $1 RETURNING id, name",
+    [id]
+  );
   if (result.rowCount === 0) {
     return { statusCode: 404, body: { error: "not_found", message: "auth provider not found" } };
   }
+  await auditService
+    .writeEvent({
+      actorUserId,
+      action: "auth_provider.deleted",
+      outcome: "success",
+      details: { provider_id: result.rows[0].id, name: result.rows[0].name }
+    })
+    .catch(() => {});
   return { statusCode: 200, body: { ok: true, id: result.rows[0].id } };
 }
 

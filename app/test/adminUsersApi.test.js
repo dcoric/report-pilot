@@ -292,14 +292,20 @@ async function runQuery(sql, params = []) {
     return { rowCount: 1, rows: [{ role_id: roleId }] };
   }
 
-  // --- roleService.writeAuditEntry
+  // --- auditService.writeEvent / roleService.writeAuditEntry
   if (normalized.startsWith("insert into auth_audit_log")) {
-    const [actorUserId, targetUserId, action, detailsJson] = params;
+    // AUTH-008 expanded the columns to: actor_user_id, actor_email,
+    // target_user_id, action, outcome, details, ip_address, user_agent.
+    const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params;
     auditLog.push({
       actor_user_id: actorUserId,
+      actor_email: actorEmail,
       target_user_id: targetUserId,
       action,
+      outcome,
       details: JSON.parse(detailsJson),
+      ip_address: ipAddress,
+      user_agent: userAgent,
       created_at: new Date().toISOString()
     });
     return { rowCount: 1, rows: [] };

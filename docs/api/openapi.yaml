@@ -267,6 +267,75 @@ paths:
           description: Forbidden
         "404":
           description: Provider not found
+  /v1/admin/audit-events:
+    get:
+      tags: [Admin]
+      summary: List audit events for auth and permission changes
+      description: |
+        Requires the `admin` role. Returns audit entries written by AUTH-008
+        for login/logout, failed logins, role and permission mutations, data
+        source access changes, and auth provider CRUD. Results are reverse
+        chronological. Filters are AND-combined; pagination via `limit` /
+        `offset`.
+      parameters:
+        - in: query
+          name: action
+          schema:
+            type: string
+          description: Exact action name (e.g. `auth.login.failure`, `role.assigned`).
+        - in: query
+          name: actor_user_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: target_user_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: outcome
+          schema:
+            type: string
+            enum: [success, failure, info]
+        - in: query
+          name: since
+          schema:
+            type: string
+            format: date-time
+          description: Inclusive lower bound on `created_at` (ISO 8601).
+        - in: query
+          name: until
+          schema:
+            type: string
+            format: date-time
+          description: Exclusive upper bound on `created_at` (ISO 8601).
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Page of audit events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventListResponse"
+        "400":
+          description: Invalid query parameter
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
   /v1/admin/data-sources/{dataSourceId}/access:
     get:
       tags: [Admin]
@@ -1595,6 +1664,76 @@ components:
           type: array
           items:
             type: string
+    AuditEventActor:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+    AuditEvent:
+      type: object
+      required: [id, action, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: Stable action identifier (e.g. `auth.login.success`, `role.assigned`, `auth_provider.created`).
+        outcome:
+          type: string
+          nullable: true
+          enum: [success, failure, info]
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        actor_email:
+          type: string
+          nullable: true
+          description: Captured when there is no `actor_user_id` (e.g. failed login for an unknown email).
+        actor:
+          $ref: "#/components/schemas/AuditEventActor"
+        target_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        target:
+          $ref: "#/components/schemas/AuditEventActor"
+        details:
+          type: object
+          additionalProperties: true
+        ip_address:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    AuditEventListResponse:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        total:
+          type: integer
+          description: Total matching rows ignoring `limit` / `offset`.
+        limit:
+          type: integer
+        offset:
+          type: integer
     OidcProviderLoginEntry:
       type: object
       properties:

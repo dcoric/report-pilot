@@ -6,6 +6,7 @@ import {
     ChevronDown,
     ChevronRight,
     Database,
+    FileSearch,
     HelpCircle,
     History,
     Home,
@@ -42,6 +43,7 @@ const PRIMARY_NAV: NavEntry[] = [
 
 const ADMIN_NAV: NavEntry[] = [
     { path: '/admin/auth-providers', label: 'Auth Providers', icon: KeyRound, role: 'admin' },
+    { path: '/admin/audit-log', label: 'Audit Log', icon: FileSearch, role: 'admin' },
 ];
 
 const FOOTER_NAV: NavEntry[] = [
@@ -62,6 +64,8 @@ const PATH_LABELS: Record<string, string> = {
     '/favorites': 'Favorites',
     '/recent': 'Recent',
     '/docs': 'Documentation',
+    '/admin/auth-providers': 'Auth Providers',
+    '/admin/audit-log': 'Audit Log',
 };
 
 function NavItem({ to, label, Icon, stub }: { to: string; label: string; Icon: typeof Home; stub?: boolean }) {

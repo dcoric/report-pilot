@@ -85,7 +85,8 @@ const {
   handleListAuthProviders,
   handleUpsertAuthProvider,
   handleDeleteAuthProvider,
-  handleTestAuthProvider
+  handleTestAuthProvider,
+  handleListAuditEvents
 } = require("./routes/admin");
 const {
   handleListEnabledProviders,
@@ -222,6 +223,10 @@ async function routeRequest(req, res) {
   const adminAuthProviderDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)$/);
   if (req.method === "DELETE" && adminAuthProviderDeleteMatch) {
     return handleDeleteAuthProvider(req, res, adminAuthProviderDeleteMatch[1]);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/admin/audit-events") {
+    return handleListAuditEvents(req, res, requestUrl);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {
