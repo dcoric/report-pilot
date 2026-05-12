@@ -3,6 +3,7 @@ const { isUuid } = require("../lib/validation");
 const appDb = require("../lib/appDb");
 const adminUserService = require("../services/adminUserService");
 const dataSourceAccessService = require("../services/dataSourceAccessService");
+const authProviderService = require("../services/authProviderService");
 
 function writeResult(res, result) {
   return json(res, result.statusCode, result.body);
@@ -113,11 +114,33 @@ async function handleRevokeDataSourceAccess(req, res, dataSourceId, userId) {
   });
 }
 
+async function handleListAuthProviders(_req, res) {
+  const items = await authProviderService.listProviders();
+  return json(res, 200, { items });
+}
+
+async function handleUpsertAuthProvider(req, res) {
+  const body = await readJsonBody(req);
+  const result = await authProviderService.upsertProvider(body);
+  return json(res, result.statusCode, result.body);
+}
+
+async function handleDeleteAuthProvider(_req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const result = await authProviderService.deleteProvider(providerId);
+  return json(res, result.statusCode, result.body);
+}
+
 module.exports = {
   handleListUsers,
   handleCreateUser,
   handleUpdateUserRoles,
   handleListDataSourceAccess,
   handleGrantDataSourceAccess,
-  handleRevokeDataSourceAccess
+  handleRevokeDataSourceAccess,
+  handleListAuthProviders,
+  handleUpsertAuthProvider,
+  handleDeleteAuthProvider
 };

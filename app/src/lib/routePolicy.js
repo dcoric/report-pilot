@@ -20,6 +20,9 @@ const POLICIES = [
   { method: "POST", pattern: /^\/v1\/auth\/login$/, public: true },
   { method: "POST", pattern: /^\/v1\/auth\/logout$/, public: true },
   { method: "GET", pattern: /^\/v1\/auth\/me$/, public: true },
+  { method: "GET", pattern: /^\/v1\/auth\/oidc\/providers$/, public: true },
+  { method: "GET", pattern: /^\/v1\/auth\/oidc\/login$/, public: true },
+  { method: "GET", pattern: /^\/v1\/auth\/oidc\/callback$/, public: true },
 
   // Admin
   { method: "GET", pattern: /^\/v1\/admin\/users$/, role: "admin" },
@@ -28,6 +31,9 @@ const POLICIES = [
   { method: "GET", pattern: /^\/v1\/admin\/data-sources\/[^/]+\/access$/, role: "admin" },
   { method: "POST", pattern: /^\/v1\/admin\/data-sources\/[^/]+\/access$/, role: "admin" },
   { method: "DELETE", pattern: /^\/v1\/admin\/data-sources\/[^/]+\/access\/[^/]+$/, role: "admin" },
+  { method: "GET", pattern: /^\/v1\/admin\/auth-providers$/, role: "admin" },
+  { method: "POST", pattern: /^\/v1\/admin\/auth-providers$/, role: "admin" },
+  { method: "DELETE", pattern: /^\/v1\/admin\/auth-providers\/[^/]+$/, role: "admin" },
 
   // Data sources
   { method: "GET", pattern: /^\/v1\/data-sources$/, permission: "data_sources.read" },

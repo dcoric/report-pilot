@@ -81,8 +81,16 @@ const {
   handleUpdateUserRoles,
   handleListDataSourceAccess,
   handleGrantDataSourceAccess,
-  handleRevokeDataSourceAccess
+  handleRevokeDataSourceAccess,
+  handleListAuthProviders,
+  handleUpsertAuthProvider,
+  handleDeleteAuthProvider
 } = require("./routes/admin");
+const {
+  handleListEnabledProviders,
+  handleStartLogin,
+  handleCallback
+} = require("./routes/oidc");
 const { findPolicy } = require("./lib/routePolicy");
 const { enforcePolicy } = require("./lib/authGate");
 
@@ -160,6 +168,18 @@ async function routeRequest(req, res) {
     return handleMe(req, res);
   }
 
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/providers") {
+    return handleListEnabledProviders(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/login") {
+    return handleStartLogin(req, res, requestUrl);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/callback") {
+    return handleCallback(req, res, requestUrl);
+  }
+
   if (req.method === "GET" && pathname === "/v1/admin/users") {
     return handleListUsers(req, res);
   }
@@ -184,6 +204,18 @@ async function routeRequest(req, res) {
   const adminDataSourceRevokeMatch = pathname.match(/^\/v1\/admin\/data-sources\/([^/]+)\/access\/([^/]+)$/);
   if (req.method === "DELETE" && adminDataSourceRevokeMatch) {
     return handleRevokeDataSourceAccess(req, res, adminDataSourceRevokeMatch[1], adminDataSourceRevokeMatch[2]);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/admin/auth-providers") {
+    return handleListAuthProviders(req, res);
+  }
+  if (req.method === "POST" && pathname === "/v1/admin/auth-providers") {
+    return handleUpsertAuthProvider(req, res);
+  }
+
+  const adminAuthProviderDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)$/);
+  if (req.method === "DELETE" && adminAuthProviderDeleteMatch) {
+    return handleDeleteAuthProvider(req, res, adminAuthProviderDeleteMatch[1]);
   }
 
   if (req.method === "POST" && pathname === "/v1/data-sources") {
