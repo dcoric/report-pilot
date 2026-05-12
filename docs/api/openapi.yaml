@@ -240,6 +240,33 @@ paths:
           description: Forbidden
         "404":
           description: Provider not found
+  /v1/admin/auth-providers/{providerId}/test:
+    post:
+      tags: [Admin]
+      summary: Test an OIDC provider's reachability and metadata
+      description: |
+        Requires the `admin` role. Runs OIDC discovery against the configured
+        issuer and returns the parsed metadata or a structured error. Does NOT
+        attempt authentication.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Test result (success or failure). Always 200 — inspect `ok`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProviderTestResult"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found
   /v1/admin/data-sources/{dataSourceId}/access:
     get:
       tags: [Admin]
@@ -1527,8 +1554,47 @@ components:
           type: string
         claims_mapping:
           type: object
+          properties:
+            email:
+              type: string
+            display_name:
+              type: string
         enabled:
           type: boolean
+    AuthProviderTestResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        issuer:
+          type: string
+        authorization_endpoint:
+          type: string
+          nullable: true
+        token_endpoint:
+          type: string
+          nullable: true
+        userinfo_endpoint:
+          type: string
+          nullable: true
+        jwks_uri:
+          type: string
+          nullable: true
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        id_token_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
     OidcProviderLoginEntry:
       type: object
       properties:

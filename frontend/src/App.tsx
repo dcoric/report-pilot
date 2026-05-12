@@ -14,6 +14,7 @@ import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
 import { Settings } from './pages/Settings';
 import { LLMProviders } from './pages/LLMProviders';
+import { AuthProviders } from './pages/AuthProviders';
 
 function App() {
   return (
@@ -77,6 +78,14 @@ function App() {
               )}
             />
             <Route path="/settings" element={<Settings />} />
+            <Route
+              path="/admin/auth-providers"
+              element={(
+                <RequireAuth role="admin">
+                  <AuthProviders />
+                </RequireAuth>
+              )}
+            />
             <Route path="/folders" element={<ComingSoon />} />
             <Route path="/favorites" element={<ComingSoon />} />
             <Route path="/recent" element={<ComingSoon />} />

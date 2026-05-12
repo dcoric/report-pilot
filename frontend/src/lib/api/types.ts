@@ -597,6 +597,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/auth-providers/{providerId}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test an OIDC provider's reachability and metadata
+         * @description Requires the `admin` role. Runs OIDC discovery against the configured
+         *     issuer and returns the parsed metadata or a structured error. Does NOT
+         *     attempt authentication.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    providerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Test result (success or failure). Always 200 — inspect `ok`. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthProviderTestResult"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/data-sources/{dataSourceId}/access": {
         parameters: {
             query?: never;
@@ -2647,8 +2711,23 @@ export interface components {
             client_secret?: string | null;
             scopes?: string[];
             redirect_uri: string;
-            claims_mapping?: Record<string, never>;
+            claims_mapping?: {
+                email?: string;
+                display_name?: string;
+            };
             enabled?: boolean;
+        };
+        AuthProviderTestResult: {
+            ok?: boolean;
+            error?: string | null;
+            issuer?: string;
+            authorization_endpoint?: string | null;
+            token_endpoint?: string | null;
+            userinfo_endpoint?: string | null;
+            jwks_uri?: string | null;
+            response_types_supported?: string[];
+            id_token_signing_alg_values_supported?: string[];
+            code_challenge_methods_supported?: string[];
         };
         OidcProviderLoginEntry: {
             id?: string;

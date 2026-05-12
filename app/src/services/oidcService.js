@@ -131,7 +131,43 @@ async function completeLogin(provider, currentUrl, flowState) {
   };
 }
 
+// Lightweight reachability check: runs discovery against the issuer (which
+// fetches `.well-known/openid-configuration` and the JWKS) and returns a
+// success/error summary the admin UI can show. We do not actually try to
+// authenticate.
+async function testConnection(provider) {
+  if (!provider) {
+    return { ok: false, error: "provider not found" };
+  }
+  try {
+    const client = await getOidcClient();
+    const config = await buildConfiguration(provider);
+    const metadata = config.serverMetadata();
+    return {
+      ok: true,
+      issuer: metadata.issuer || provider.issuer,
+      authorization_endpoint: metadata.authorization_endpoint || null,
+      token_endpoint: metadata.token_endpoint || null,
+      userinfo_endpoint: metadata.userinfo_endpoint || null,
+      jwks_uri: metadata.jwks_uri || null,
+      id_token_signing_alg_values_supported: metadata.id_token_signing_alg_values_supported || [],
+      code_challenge_methods_supported: metadata.code_challenge_methods_supported || [],
+      // Surface a name-only summary of what the IdP advertises so the UI can
+      // sanity-check scope/response_type configuration without sending the
+      // entire blob through.
+      response_types_supported: metadata.response_types_supported || []
+    };
+    // eslint-disable-next-line no-unreachable
+  } catch (err) {
+    return {
+      ok: false,
+      error: err && err.message ? err.message : String(err)
+    };
+  }
+}
+
 module.exports = {
   startLogin,
-  completeLogin
+  completeLogin,
+  testConnection
 };

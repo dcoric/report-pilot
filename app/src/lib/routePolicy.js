@@ -34,6 +34,7 @@ const POLICIES = [
   { method: "GET", pattern: /^\/v1\/admin\/auth-providers$/, role: "admin" },
   { method: "POST", pattern: /^\/v1\/admin\/auth-providers$/, role: "admin" },
   { method: "DELETE", pattern: /^\/v1\/admin\/auth-providers\/[^/]+$/, role: "admin" },
+  { method: "POST", pattern: /^\/v1\/admin\/auth-providers\/[^/]+\/test$/, role: "admin" },
 
   // Data sources
   { method: "GET", pattern: /^\/v1\/data-sources$/, permission: "data_sources.read" },

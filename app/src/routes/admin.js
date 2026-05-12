@@ -4,6 +4,7 @@ const appDb = require("../lib/appDb");
 const adminUserService = require("../services/adminUserService");
 const dataSourceAccessService = require("../services/dataSourceAccessService");
 const authProviderService = require("../services/authProviderService");
+const oidcService = require("../services/oidcService");
 
 function writeResult(res, result) {
   return json(res, result.statusCode, result.body);
@@ -133,6 +134,18 @@ async function handleDeleteAuthProvider(_req, res, providerId) {
   return json(res, result.statusCode, result.body);
 }
 
+async function handleTestAuthProvider(_req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const provider = await authProviderService.findProviderById(providerId, { withSecret: true });
+  if (!provider) {
+    return json(res, 404, { error: "not_found", message: "auth provider not found" });
+  }
+  const result = await oidcService.testConnection(provider);
+  return json(res, 200, result);
+}
+
 module.exports = {
   handleListUsers,
   handleCreateUser,
@@ -142,5 +155,6 @@ module.exports = {
   handleRevokeDataSourceAccess,
   handleListAuthProviders,
   handleUpsertAuthProvider,
-  handleDeleteAuthProvider
+  handleDeleteAuthProvider,
+  handleTestAuthProvider
 };

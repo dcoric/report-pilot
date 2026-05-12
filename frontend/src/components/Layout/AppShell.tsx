@@ -9,6 +9,7 @@ import {
     HelpCircle,
     History,
     Home,
+    KeyRound,
     Plus,
     Settings as SettingsIcon,
     Star,
@@ -27,6 +28,7 @@ type NavEntry = {
     icon: typeof Home;
     stub?: boolean;
     permission?: string;
+    role?: string;
 };
 
 const PRIMARY_NAV: NavEntry[] = [
@@ -36,6 +38,10 @@ const PRIMARY_NAV: NavEntry[] = [
     { path: '/folders', label: 'Folders', icon: FolderClosed, stub: true },
     { path: '/favorites', label: 'Favorites', icon: Star, stub: true },
     { path: '/recent', label: 'Recent', icon: History, stub: true },
+];
+
+const ADMIN_NAV: NavEntry[] = [
+    { path: '/admin/auth-providers', label: 'Auth Providers', icon: KeyRound, role: 'admin' },
 ];
 
 const FOOTER_NAV: NavEntry[] = [
@@ -168,7 +174,7 @@ function HeaderInner() {
 
 function AppShellInner() {
     const navigate = useNavigate();
-    const { hasPermission } = useAuth();
+    const { hasPermission, hasRole } = useAuth();
     const canRunQueries = hasPermission('query.run');
 
     const NewQueryButton = useMemo(() => (
@@ -184,8 +190,14 @@ function AppShellInner() {
         </button>
     ), [canRunQueries, navigate]);
 
-    const primaryNav = PRIMARY_NAV.filter((item) => !item.permission || hasPermission(item.permission));
-    const footerNav = FOOTER_NAV.filter((item) => !item.permission || hasPermission(item.permission));
+    function isVisible(item: NavEntry) {
+        if (item.role && !hasRole(item.role)) return false;
+        if (item.permission && !hasPermission(item.permission)) return false;
+        return true;
+    }
+    const primaryNav = PRIMARY_NAV.filter(isVisible);
+    const adminNav = ADMIN_NAV.filter(isVisible);
+    const footerNav = FOOTER_NAV.filter(isVisible);
 
     return (
         <div className="flex h-screen w-screen overflow-hidden">
@@ -206,6 +218,14 @@ function AppShellInner() {
                     {primaryNav.map((item) => (
                         <NavItem key={item.path} to={item.path} label={item.label} Icon={item.icon} stub={item.stub} />
                     ))}
+                    {adminNav.length > 0 && (
+                        <div className="mt-4 space-y-1 border-t border-white/5 pt-3">
+                            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Admin</div>
+                            {adminNav.map((item) => (
+                                <NavItem key={item.path} to={item.path} label={item.label} Icon={item.icon} stub={item.stub} />
+                            ))}
+                        </div>
+                    )}
                 </nav>
 
                 <div className="mt-auto space-y-1 border-t border-white/5 px-2 pt-3">
