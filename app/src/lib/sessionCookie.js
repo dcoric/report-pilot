@@ -49,6 +49,11 @@ function buildSessionCookie(token, expiresAt) {
   if (expiresAt) {
     const expires = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
     parts.push(`Expires=${expires.toUTCString()}`);
+    // AUTH-009: pair Expires with Max-Age so a clock-skewed client still
+    // receives a finite-lifetime cookie. Clamp to 0 to avoid negative values
+    // if the server passes an already-expired timestamp.
+    const maxAgeSeconds = Math.max(0, Math.floor((expires.getTime() - Date.now()) / 1000));
+    parts.push(`Max-Age=${maxAgeSeconds}`);
   }
   if (isSecureCookie()) {
     parts.push("Secure");

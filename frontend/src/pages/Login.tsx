@@ -91,10 +91,15 @@ export function Login() {
                             type="password"
                             autoComplete="current-password"
                             required
+                            minLength={8}
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-oxblood focus:border-transparent"
+                            aria-describedby="login-password-hint"
                         />
+                        <p id="login-password-hint" className="mt-1 text-xs text-gray-500">
+                            At least 8 characters with a mix of letters and digits.
+                        </p>
                     </div>
 
                     {error && (

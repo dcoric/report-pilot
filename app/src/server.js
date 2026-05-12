@@ -417,6 +417,22 @@ function startServer() {
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Vary", "Origin");
 
+    // AUTH-009 baseline security headers — applied to every response so that
+    // both the JSON API and the served frontend HTML get them.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    );
+    // HSTS only makes sense when the deployment terminates TLS. Gated on the
+    // same flag we use for `Secure` cookies so test/dev runs don't accidentally
+    // pin localhost browsers to HTTPS.
+    if (process.env.AUTH_COOKIE_SECURE === "true" || process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+
     if (req.method === "OPTIONS") {
       res.writeHead(204);
       res.end();

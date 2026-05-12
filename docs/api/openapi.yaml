@@ -18,7 +18,11 @@ paths:
     post:
       tags: [Auth]
       summary: Authenticate with email and password
-      description: Returns the authenticated user and sets an HttpOnly session cookie.
+      description: |
+        Returns the authenticated user and sets an HttpOnly session cookie.
+        After repeated failures from the same email or source IP within a
+        sliding window, the endpoint refuses further attempts with `429` and
+        a `Retry-After` header (AUTH-009).
       requestBody:
         required: true
         content:
@@ -36,6 +40,19 @@ paths:
           description: Missing email or password
         "401":
           description: Invalid credentials
+        "429":
+          description: |
+            Too many failed login attempts for this email or source IP.
+            Retry once `Retry-After` (in seconds) has elapsed.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds the client should wait before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginLockoutResponse"
   /v1/auth/logout:
     post:
       tags: [Auth]
@@ -1443,6 +1460,19 @@ components:
           format: email
         password:
           type: string
+    LoginLockoutResponse:
+      type: object
+      required: [error, retry_after_seconds]
+      properties:
+        error:
+          type: string
+          enum: [too_many_requests]
+        reason:
+          type: string
+          enum: [too_many_failed_logins, ip_throttled]
+        retry_after_seconds:
+          type: integer
+          minimum: 1
     AuthUser:
       type: object
       properties:

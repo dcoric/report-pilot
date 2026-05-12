@@ -57,11 +57,9 @@ async function createUser({ email, password, displayName, roles, actorUserId }) 
   if (!normalizedEmail) {
     return failure(400, { error: "bad_request", message: "email is not a valid address" });
   }
-  if (!authService.validatePassword(password)) {
-    return failure(400, {
-      error: "bad_request",
-      message: `password must be ${authService.PASSWORD_MIN_LENGTH}-${authService.PASSWORD_MAX_LENGTH} characters`
-    });
+  const policy = authService.checkPasswordPolicy(password, { email: normalizedEmail });
+  if (!policy.ok) {
+    return failure(400, { error: "bad_request", code: policy.code, message: policy.message });
   }
 
   let requestedRoleNames = null;

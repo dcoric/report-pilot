@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const login = useCallback(
         async (email: string, password: string) => {
-            const { data, response } = await client.POST('/v1/auth/login', {
+            const { data, response, error } = await client.POST('/v1/auth/login', {
                 body: { email, password },
             });
             if (response.ok && data?.user) {
@@ -34,6 +34,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setExpiresAt(data.expires_at ?? null);
                 setStatus('authenticated');
                 return { ok: true } as const;
+            }
+            if (response.status === 429) {
+                // AUTH-009 lockout: backend returns retry_after_seconds in the
+                // body and a Retry-After header. Prefer the body so the message
+                // matches whichever predicate (email vs ip) tripped.
+                const retryHeader = response.headers.get('Retry-After');
+                const bodyRetry =
+                    error && typeof error === 'object' && 'retry_after_seconds' in error
+                        ? Number((error as { retry_after_seconds?: unknown }).retry_after_seconds)
+                        : NaN;
+                const seconds = Number.isFinite(bodyRetry)
+                    ? bodyRetry
+                    : retryHeader
+                        ? Number(retryHeader)
+                        : 60;
+                const minutes = Math.max(1, Math.ceil(seconds / 60));
+                return {
+                    ok: false,
+                    message: `Too many failed sign-in attempts. Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+                } as const;
             }
             const message =
                 response.status === 401

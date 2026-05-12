@@ -6,6 +6,7 @@ const {
 } = require("../lib/sessionCookie");
 const authService = require("../services/authService");
 const auditService = require("../services/auditService");
+const loginLockoutService = require("../services/loginLockoutService");
 const roleService = require("../services/roleService");
 
 function clientAddress(req) {
@@ -54,6 +55,31 @@ async function handleLogin(req, res) {
 
   const userAgent = req.headers["user-agent"] || null;
   const ipAddress = clientAddress(req);
+
+  // AUTH-009: refuse the attempt entirely when the account or source IP is
+  // currently locked out. We record the blocked attempt so operators can see
+  // brute-force traffic continuing against a locked account.
+  const lockout = await loginLockoutService
+    .checkLockout({ email, ipAddress })
+    .catch(() => ({ locked: false }));
+  if (lockout.locked) {
+    await auditService
+      .writeEvent({
+        actorEmail: email,
+        action: "auth.login.locked_out",
+        outcome: "failure",
+        details: { reason: lockout.reason, retry_after_seconds: lockout.retryAfterSeconds },
+        ipAddress,
+        userAgent
+      })
+      .catch(() => {});
+    res.setHeader("Retry-After", String(lockout.retryAfterSeconds));
+    return json(res, 429, {
+      error: "too_many_requests",
+      reason: lockout.reason,
+      retry_after_seconds: lockout.retryAfterSeconds
+    });
+  }
 
   const result = await authService.loginWithPassword({
     email,
