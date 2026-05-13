@@ -43,24 +43,39 @@ export function AuthProviders() {
     const redirectUri = useMemo(() => defaultRedirectUri(), []);
 
     async function handleSubmit(values: AuthProviderFormValues): Promise<{ ok: boolean; message?: string }> {
-        const { id, ...rest } = values;
+        const { id, mapping_rules, ...rest } = values;
         const body = id ? { id, ...rest } : rest;
         const { response, data, error } = await client.POST('/v1/admin/auth-providers', { body });
-        if (response.ok) {
-            toast.success(id ? 'Provider updated.' : 'Provider created.');
-            setDialogOpen(false);
-            setEditing(null);
-            await fetchProviders();
-            if (data && 'id' in data && typeof data.id === 'string') {
-                setTests((prev) => ({ ...prev, [data.id as string]: { ok: null } }));
+        if (!response.ok) {
+            let message = `Failed (${response.status}).`;
+            if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: string }).message === 'string') {
+                message = (error as { message: string }).message;
             }
-            return { ok: true };
+            return { ok: false, message };
         }
-        let message = `Failed (${response.status}).`;
-        if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: string }).message === 'string') {
-            message = (error as { message: string }).message;
+
+        // AUTH-012: persist the linking / JIT rules separately. Best-effort —
+        // the provider record itself is already saved, so a rule-update
+        // failure shouldn't roll back the parent save.
+        const providerId = (data && 'id' in data && typeof data.id === 'string') ? data.id : null;
+        if (providerId && mapping_rules) {
+            const rulesResp = await client.POST('/v1/admin/auth-providers/{providerId}/mapping-rules', {
+                params: { path: { providerId } },
+                body: mapping_rules,
+            });
+            if (!rulesResp.response.ok) {
+                toast.error('Provider saved, but linking & JIT rules could not be updated.');
+            }
         }
-        return { ok: false, message };
+
+        toast.success(id ? 'Provider updated.' : 'Provider created.');
+        setDialogOpen(false);
+        setEditing(null);
+        await fetchProviders();
+        if (providerId) {
+            setTests((prev) => ({ ...prev, [providerId]: { ok: null } }));
+        }
+        return { ok: true };
     }
 
     async function handleDelete(id: string) {

@@ -49,6 +49,12 @@ function seedProvider(row) {
     redirect_uri: row.redirect_uri,
     claims_mapping: row.claims_mapping || {},
     enabled: row.enabled !== false,
+    // AUTH-012 defaults — match the migration so providers seeded in tests
+    // behave like production rows (auto-link on by default, JIT off).
+    auto_link_by_email: row.auto_link_by_email !== undefined ? row.auto_link_by_email : true,
+    jit_enabled: row.jit_enabled === true,
+    jit_default_role: row.jit_default_role || "viewer",
+    jit_allowed_domains: row.jit_allowed_domains || [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -133,7 +139,7 @@ before(async () => {
     }
 
     // authProviderService queries
-    if (n.startsWith("select id, type, name, display_name, issuer, client_id, client_secret, scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at from auth_providers where id = $1")) {
+    if (n.startsWith("select") && /from auth_providers\s+where id = \$1/.test(n)) {
       const [id] = params;
       const row = providers.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
@@ -149,7 +155,7 @@ before(async () => {
       return { rowCount: rows.length, rows };
     }
 
-    if (n.startsWith("select id, type, name, display_name, issuer, client_id, client_secret, scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at from auth_providers order by lower(name)")) {
+    if (n.startsWith("select") && /from auth_providers\s+order by lower\(name\)/.test(n)) {
       const rows = [...providers.values()].sort((a, b) => a.name.localeCompare(b.name));
       return { rowCount: rows.length, rows };
     }
@@ -195,6 +201,24 @@ before(async () => {
       if (!providers.has(id)) return { rowCount: 0, rows: [] };
       providers.delete(id);
       return { rowCount: 1, rows: [{ id }] };
+    }
+
+    // AUTH-012: linked_identities lookups exercised by externalLoginService.
+    // In this suite we never pre-seed links, so the lookup always misses; the
+    // INSERT is a no-op for assertions (we only care that the route succeeds).
+    if (n.startsWith("select") && /from linked_identities\s+where provider_id = \$1 and subject = \$2/.test(n)) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (n.startsWith("insert into linked_identities")) {
+      return { rowCount: 1, rows: [{ id: "00000000-0000-4000-8000-ffff00000001" }] };
+    }
+    if (n.startsWith("update linked_identities set last_seen_at = now() where id = $1")) {
+      return { rowCount: 1, rows: [] };
+    }
+    // Audit writes from the resolver are .catch'd by callers, so failure is
+    // tolerable — but returning an empty result keeps the logs clean.
+    if (n.startsWith("insert into auth_audit_log")) {
+      return { rowCount: 1, rows: [] };
     }
 
     throw new Error(`Unexpected SQL in OIDC test stub: ${n}`);

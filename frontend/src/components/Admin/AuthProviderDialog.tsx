@@ -16,6 +16,14 @@ export interface AuthProviderFormValues {
     redirect_uri: string;
     claims_mapping: { email?: string; display_name?: string };
     enabled: boolean;
+    // AUTH-012 mapping rules. Persisted by a separate POST to
+    // /v1/admin/auth-providers/{id}/mapping-rules after the main upsert.
+    mapping_rules: {
+        auto_link_by_email: boolean;
+        jit_enabled: boolean;
+        jit_default_role: string;
+        jit_allowed_domains: string[];
+    };
 }
 
 interface Props {
@@ -30,6 +38,14 @@ type FieldErrors = Partial<Record<keyof AuthProviderFormValues | 'scopes_input',
 
 const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const URL_PATTERN = /^https?:\/\//i;
+const DOMAIN_PATTERN = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
+
+const DEFAULT_MAPPING_RULES = {
+    auto_link_by_email: true,
+    jit_enabled: false,
+    jit_default_role: 'viewer',
+    jit_allowed_domains: [] as string[],
+};
 
 function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string): AuthProviderFormValues {
     if (!initial) {
@@ -44,6 +60,7 @@ function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string)
             redirect_uri: defaultRedirectUri,
             claims_mapping: {},
             enabled: true,
+            mapping_rules: { ...DEFAULT_MAPPING_RULES },
         };
     }
     return {
@@ -58,6 +75,12 @@ function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string)
         redirect_uri: initial.redirect_uri ?? defaultRedirectUri,
         claims_mapping: initial.claims_mapping ?? {},
         enabled: initial.enabled ?? true,
+        mapping_rules: {
+            auto_link_by_email: initial.auto_link_by_email ?? true,
+            jit_enabled: initial.jit_enabled ?? false,
+            jit_default_role: initial.jit_default_role ?? 'viewer',
+            jit_allowed_domains: initial.jit_allowed_domains ?? [],
+        },
     };
 }
 
@@ -104,6 +127,7 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
     const [errors, setErrors] = useState<FieldErrors>({});
     const [serverError, setServerError] = useState<string | null>(null);
     const [scopesInput, setScopesInput] = useState<string>(values.scopes.join(' '));
+    const [domainsInput, setDomainsInput] = useState<string>(values.mapping_rules.jit_allowed_domains.join(' '));
     const [submitting, setSubmitting] = useState(false);
 
     const setField = <K extends keyof AuthProviderFormValues>(key: K, value: AuthProviderFormValues[K]) => {
@@ -120,6 +144,16 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
         event.preventDefault();
         if (submitting) return;
         const scopes = scopesInput.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+        const domains = domainsInput
+            .split(/[\s,]+/)
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+        const invalidDomain = domains.find((d) => !DOMAIN_PATTERN.test(d));
+        if (invalidDomain) {
+            setErrors({ name: undefined });
+            setServerError(`Invalid domain in allowlist: '${invalidDomain}'.`);
+            return;
+        }
         const normalized: AuthProviderFormValues = {
             ...values,
             name: values.name.trim(),
@@ -129,6 +163,12 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
             display_name: values.display_name?.trim() || null,
             client_secret: values.client_secret && values.client_secret.length > 0 ? values.client_secret : null,
             scopes,
+            mapping_rules: {
+                auto_link_by_email: values.mapping_rules.auto_link_by_email,
+                jit_enabled: values.mapping_rules.jit_enabled,
+                jit_default_role: values.mapping_rules.jit_default_role.trim().toLowerCase() || 'viewer',
+                jit_allowed_domains: Array.from(new Set(domains)),
+            },
         };
         const found = validate(normalized, isEdit);
         if (Object.keys(found).length > 0) {
@@ -143,6 +183,13 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
         if (!result.ok) {
             setServerError(result.message || 'Failed to save provider.');
         }
+    }
+
+    function setRule<K extends keyof AuthProviderFormValues['mapping_rules']>(
+        key: K,
+        value: AuthProviderFormValues['mapping_rules'][K]
+    ) {
+        setValues((prev) => ({ ...prev, mapping_rules: { ...prev.mapping_rules, [key]: value } }));
     }
 
     return (
@@ -276,6 +323,66 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
                             </div>
                         </div>
                         <p className="mt-2 text-xs text-gray-500">Empty fields fall back to the OIDC standard claim names.</p>
+                    </fieldset>
+
+                    <fieldset className="rounded-md border border-gray-200 p-3">
+                        <legend className="px-2 text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Account linking &amp; JIT
+                        </legend>
+                        <label className="flex items-start gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={values.mapping_rules.auto_link_by_email}
+                                onChange={(e) => setRule('auto_link_by_email', e.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-oxblood focus:ring-oxblood"
+                            />
+                            <span>
+                                Auto-link by email
+                                <span className="block text-xs text-gray-500">
+                                    When an SSO login email matches an existing local user, attach the external identity automatically. Disable for IdPs that don&apos;t verify email ownership.
+                                </span>
+                            </span>
+                        </label>
+                        <label className="mt-3 flex items-start gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={values.mapping_rules.jit_enabled}
+                                onChange={(e) => setRule('jit_enabled', e.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-oxblood focus:ring-oxblood"
+                            />
+                            <span>
+                                Just-in-time provisioning
+                                <span className="block text-xs text-gray-500">
+                                    Create a local user on first successful SSO when no email matches. Off by default.
+                                </span>
+                            </span>
+                        </label>
+                        {values.mapping_rules.jit_enabled && (
+                            <div className="mt-3 grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="mb-1 block text-xs text-gray-600">Default role</label>
+                                    <input
+                                        type="text"
+                                        value={values.mapping_rules.jit_default_role}
+                                        onChange={(e) => setRule('jit_default_role', e.target.value)}
+                                        placeholder="viewer"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
+                                    />
+                                    <p className="mt-1 text-xs text-gray-500">Role assigned to JIT-created users.</p>
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs text-gray-600">Allowed email domains</label>
+                                    <input
+                                        type="text"
+                                        value={domainsInput}
+                                        onChange={(e) => setDomainsInput(e.target.value)}
+                                        placeholder="example.com other.org"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-oxblood"
+                                    />
+                                    <p className="mt-1 text-xs text-gray-500">Space- or comma-separated. Empty allows all.</p>
+                                </div>
+                            </div>
+                        )}
                     </fieldset>
 
                     <label className="flex items-center gap-2 text-sm text-gray-700">

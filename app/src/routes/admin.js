@@ -5,6 +5,7 @@ const adminUserService = require("../services/adminUserService");
 const dataSourceAccessService = require("../services/dataSourceAccessService");
 const authProviderService = require("../services/authProviderService");
 const auditService = require("../services/auditService");
+const linkedIdentityService = require("../services/linkedIdentityService");
 const oidcService = require("../services/oidcService");
 
 function writeResult(res, result) {
@@ -162,6 +163,52 @@ async function handleListAuditEvents(req, res, requestUrl) {
   return json(res, 200, result);
 }
 
+async function handleUpsertAuthProviderMappingRules(req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const body = await readJsonBody(req);
+  const result = await authProviderService.updateMappingRules(providerId, body, {
+    actorUserId: req.user && req.user.id ? req.user.id : null
+  });
+  return json(res, result.statusCode, result.body);
+}
+
+async function handleListUserLinkedIdentities(_req, res, userId) {
+  if (!isUuid(userId)) {
+    return badRequest(res, "user id must be a uuid");
+  }
+  const userRow = await appDb.query("SELECT id FROM users WHERE id = $1", [userId]);
+  if (userRow.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "user not found" });
+  }
+  const items = await linkedIdentityService.listForUser(userId);
+  return json(res, 200, { items });
+}
+
+async function handleDeleteUserLinkedIdentity(req, res, userId, providerId) {
+  if (!isUuid(userId)) {
+    return badRequest(res, "user id must be a uuid");
+  }
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const removed = await linkedIdentityService.unlink({ userId, providerId });
+  if (!removed) {
+    return json(res, 404, { error: "not_found", message: "no linked identity for that user / provider" });
+  }
+  await auditService
+    .writeEvent({
+      actorUserId: req.user && req.user.id ? req.user.id : null,
+      targetUserId: userId,
+      action: "auth.identity.unlinked",
+      outcome: "success",
+      details: { provider_id: providerId, subject: removed.subject }
+    })
+    .catch(() => {});
+  return json(res, 200, { ok: true, user_id: userId, provider_id: providerId });
+}
+
 async function handleTestAuthProvider(_req, res, providerId) {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
@@ -185,5 +232,8 @@ module.exports = {
   handleUpsertAuthProvider,
   handleDeleteAuthProvider,
   handleTestAuthProvider,
+  handleUpsertAuthProviderMappingRules,
+  handleListUserLinkedIdentities,
+  handleDeleteUserLinkedIdentity,
   handleListAuditEvents
 };

@@ -86,6 +86,9 @@ const {
   handleUpsertAuthProvider,
   handleDeleteAuthProvider,
   handleTestAuthProvider,
+  handleUpsertAuthProviderMappingRules,
+  handleListUserLinkedIdentities,
+  handleDeleteUserLinkedIdentity,
   handleListAuditEvents
 } = require("./routes/admin");
 const {
@@ -220,9 +223,29 @@ async function routeRequest(req, res) {
     return handleTestAuthProvider(req, res, adminAuthProviderTestMatch[1]);
   }
 
+  const adminAuthProviderMappingMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/mapping-rules$/);
+  if (req.method === "POST" && adminAuthProviderMappingMatch) {
+    return handleUpsertAuthProviderMappingRules(req, res, adminAuthProviderMappingMatch[1]);
+  }
+
   const adminAuthProviderDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)$/);
   if (req.method === "DELETE" && adminAuthProviderDeleteMatch) {
     return handleDeleteAuthProvider(req, res, adminAuthProviderDeleteMatch[1]);
+  }
+
+  const adminUserLinkedIdentitiesMatch = pathname.match(/^\/v1\/admin\/users\/([^/]+)\/linked-identities$/);
+  if (req.method === "GET" && adminUserLinkedIdentitiesMatch) {
+    return handleListUserLinkedIdentities(req, res, adminUserLinkedIdentitiesMatch[1]);
+  }
+
+  const adminUserLinkedIdentityDeleteMatch = pathname.match(/^\/v1\/admin\/users\/([^/]+)\/linked-identities\/([^/]+)$/);
+  if (req.method === "DELETE" && adminUserLinkedIdentityDeleteMatch) {
+    return handleDeleteUserLinkedIdentity(
+      req,
+      res,
+      adminUserLinkedIdentityDeleteMatch[1],
+      adminUserLinkedIdentityDeleteMatch[2]
+    );
   }
 
   if (req.method === "GET" && pathname === "/v1/admin/audit-events") {
