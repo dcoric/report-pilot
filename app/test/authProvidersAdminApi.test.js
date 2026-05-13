@@ -96,13 +96,13 @@ before(async () => {
 
     const n = normalize(sql);
 
-    if (n.startsWith("select id, type, name, display_name, issuer, client_id, client_secret, scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at from auth_providers where id = $1")) {
+    if (n.startsWith("select") && /from auth_providers\s+where id = \$1/.test(n)) {
       const [id] = params;
       const row = providers.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
-    if (n.startsWith("select id, type, name, display_name, issuer, client_id, client_secret, scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at from auth_providers order by lower(name)")) {
+    if (n.startsWith("select") && /from auth_providers\s+order by lower\(name\)/.test(n)) {
       const rows = [...providers.values()].sort((a, b) => a.name.localeCompare(b.name));
       return { rowCount: rows.length, rows };
     }

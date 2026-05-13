@@ -44,6 +44,16 @@ function normalizeClaimsMapping(value) {
   return out;
 }
 
+// Columns selected from auth_providers everywhere the full provider record is
+// needed. Kept in one place so adding a column (AUTH-012 did this with the
+// JIT rules) only needs one edit.
+const PROVIDER_COLUMNS = `
+  id, type, name, display_name, issuer, client_id, client_secret,
+  scopes, redirect_uri, claims_mapping, enabled,
+  auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains,
+  created_at, updated_at
+`;
+
 function publicProvider(row, { includeSecret = false } = {}) {
   if (!row) return null;
   return {
@@ -58,6 +68,10 @@ function publicProvider(row, { includeSecret = false } = {}) {
     redirect_uri: row.redirect_uri,
     claims_mapping: row.claims_mapping,
     enabled: row.enabled,
+    auto_link_by_email: row.auto_link_by_email !== false,
+    jit_enabled: row.jit_enabled === true,
+    jit_default_role: row.jit_default_role || "viewer",
+    jit_allowed_domains: row.jit_allowed_domains || [],
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -65,8 +79,7 @@ function publicProvider(row, { includeSecret = false } = {}) {
 
 async function listProviders() {
   const result = await appDb.query(
-    `SELECT id, type, name, display_name, issuer, client_id, client_secret,
-            scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at
+    `SELECT ${PROVIDER_COLUMNS}
        FROM auth_providers
        ORDER BY lower(name)`
   );
@@ -91,10 +104,7 @@ async function listEnabledProvidersForLogin() {
 async function findProviderById(id, { withSecret = false } = {}) {
   if (typeof id !== "string" || !id) return null;
   const result = await appDb.query(
-    `SELECT id, type, name, display_name, issuer, client_id, client_secret,
-            scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at
-       FROM auth_providers
-       WHERE id = $1`,
+    `SELECT ${PROVIDER_COLUMNS} FROM auth_providers WHERE id = $1`,
     [id]
   );
   if (result.rowCount === 0) return null;
@@ -105,10 +115,7 @@ async function findProviderRawByName(name) {
   const normalized = normalizeName(name);
   if (!normalized) return null;
   const result = await appDb.query(
-    `SELECT id, type, name, display_name, issuer, client_id, client_secret,
-            scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at
-       FROM auth_providers
-       WHERE lower(name) = lower($1)`,
+    `SELECT ${PROVIDER_COLUMNS} FROM auth_providers WHERE lower(name) = lower($1)`,
     [normalized]
   );
   return result.rowCount > 0 ? result.rows[0] : null;
@@ -203,8 +210,7 @@ async function upsertProvider(body, { actorUserId = null } = {}) {
                 enabled = $11,
                 updated_at = NOW()
           WHERE id = $1
-          RETURNING id, type, name, display_name, issuer, client_id, client_secret,
-                    scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at`,
+          RETURNING ${PROVIDER_COLUMNS}`,
         [
           id, v.type, v.name, v.display_name, v.issuer, v.client_id,
           v.client_secret, v.scopes, v.redirect_uri,
@@ -234,8 +240,7 @@ async function upsertProvider(body, { actorUserId = null } = {}) {
          (type, name, display_name, issuer, client_id, client_secret,
           scopes, redirect_uri, claims_mapping, enabled)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-       RETURNING id, type, name, display_name, issuer, client_id, client_secret,
-                 scopes, redirect_uri, claims_mapping, enabled, created_at, updated_at`,
+       RETURNING ${PROVIDER_COLUMNS}`,
       [
         v.type, v.name, v.display_name, v.issuer, v.client_id, v.client_secret,
         v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled
@@ -284,6 +289,122 @@ async function deleteProvider(id, { actorUserId = null } = {}) {
   return { statusCode: 200, body: { ok: true, id: result.rows[0].id } };
 }
 
+// AUTH-012: helpers for the per-provider JIT / linking rules. The rules live
+// on the auth_providers row itself (no separate table) since they're a small
+// fixed set of policy knobs. validate / publish / persist are kept distinct
+// so the admin route can return a clean 400 instead of a 500 on bad input.
+
+const RESERVED_DOMAIN = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
+
+function validateMappingRules(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, message: "mapping rules body must be an object" };
+  }
+  const value = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, "auto_link_by_email")) {
+    if (typeof body.auto_link_by_email !== "boolean") {
+      return { ok: false, message: "auto_link_by_email must be a boolean" };
+    }
+    value.auto_link_by_email = body.auto_link_by_email;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "jit_enabled")) {
+    if (typeof body.jit_enabled !== "boolean") {
+      return { ok: false, message: "jit_enabled must be a boolean" };
+    }
+    value.jit_enabled = body.jit_enabled;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "jit_default_role")) {
+    if (typeof body.jit_default_role !== "string" || !body.jit_default_role.trim()) {
+      return { ok: false, message: "jit_default_role must be a non-empty string" };
+    }
+    value.jit_default_role = body.jit_default_role.trim().toLowerCase();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "jit_allowed_domains")) {
+    const raw = body.jit_allowed_domains;
+    if (!Array.isArray(raw)) {
+      return { ok: false, message: "jit_allowed_domains must be an array of strings" };
+    }
+    const out = [];
+    const seen = new Set();
+    for (const entry of raw) {
+      if (typeof entry !== "string") {
+        return { ok: false, message: "jit_allowed_domains entries must be strings" };
+      }
+      const trimmed = entry.trim().toLowerCase();
+      if (!trimmed) continue;
+      if (!RESERVED_DOMAIN.test(trimmed)) {
+        return {
+          ok: false,
+          message: `jit_allowed_domains entry '${entry}' is not a valid domain`
+        };
+      }
+      if (!seen.has(trimmed)) {
+        seen.add(trimmed);
+        out.push(trimmed);
+      }
+    }
+    value.jit_allowed_domains = out;
+  }
+
+  if (Object.keys(value).length === 0) {
+    return { ok: false, message: "at least one rule field must be provided" };
+  }
+  return { ok: true, value };
+}
+
+async function updateMappingRules(providerId, body, { actorUserId = null } = {}) {
+  if (typeof providerId !== "string" || !providerId) {
+    return { statusCode: 400, body: { error: "bad_request", message: "provider id is required" } };
+  }
+  const parsed = validateMappingRules(body);
+  if (!parsed.ok) {
+    return { statusCode: 400, body: { error: "bad_request", message: parsed.message } };
+  }
+  const updates = [];
+  const params = [providerId];
+  for (const [field, val] of Object.entries(parsed.value)) {
+    params.push(val);
+    updates.push(`${field} = $${params.length}`);
+  }
+  const result = await appDb.query(
+    `UPDATE auth_providers
+        SET ${updates.join(", ")}, updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${PROVIDER_COLUMNS}`,
+    params
+  );
+  if (result.rowCount === 0) {
+    return { statusCode: 404, body: { error: "not_found", message: "auth provider not found" } };
+  }
+  await auditService
+    .writeEvent({
+      actorUserId,
+      action: "auth_provider.mapping_rules.updated",
+      outcome: "success",
+      details: {
+        provider_id: result.rows[0].id,
+        name: result.rows[0].name,
+        ...parsed.value
+      }
+    })
+    .catch(() => {});
+  const row = result.rows[0];
+  return {
+    statusCode: 200,
+    body: {
+      provider_id: row.id,
+      auto_link_by_email: row.auto_link_by_email,
+      jit_enabled: row.jit_enabled,
+      jit_default_role: row.jit_default_role,
+      jit_allowed_domains: row.jit_allowed_domains || []
+    }
+  };
+}
+
 module.exports = {
   DEFAULT_SCOPES,
   publicProvider,
@@ -293,5 +414,7 @@ module.exports = {
   findProviderRawByName,
   upsertProvider,
   deleteProvider,
-  validatePayload
+  validatePayload,
+  validateMappingRules,
+  updateMappingRules
 };

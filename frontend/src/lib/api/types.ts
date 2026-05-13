@@ -614,6 +614,211 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/auth-providers/{providerId}/mapping-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update account-linking and JIT provisioning rules for a provider
+         * @description Requires the `admin` role. Updates the per-provider mapping rules
+         *     (account linking by email + just-in-time user provisioning). Only the
+         *     fields supplied in the body are changed; omitted fields keep their
+         *     current value. AUTH-012.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    providerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AuthProviderMappingRulesRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated rules */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthProviderMappingRulesResponse"];
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Provider not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/users/{userId}/linked-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List external identities linked to a local user
+         * @description Requires the `admin` role. Returns each (provider, subject) pair attached to the user, including the original email captured at link time.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Linked identities */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LinkedIdentityListResponse"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description User not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/users/{userId}/linked-identities/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink an external identity from a user
+         * @description Requires the `admin` role. Removes the link between the user and the auth provider. The user keeps their local account; subsequent SSO from this provider will go through the linking / JIT path again.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: string;
+                    providerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Unlinked */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok?: boolean;
+                            user_id?: string;
+                            provider_id?: string;
+                        };
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No linked identity for that user / provider */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/auth-providers/{providerId}/test": {
         parameters: {
             query?: never;
@@ -2790,10 +2995,57 @@ export interface components {
                 display_name?: string;
             };
             enabled?: boolean;
+            /** @description AUTH-012. When true, an SSO login whose email matches an existing local user is auto-linked. */
+            auto_link_by_email?: boolean;
+            /** @description AUTH-012. When true, an SSO login for an unknown email creates a local user. */
+            jit_enabled?: boolean;
+            /** @description Role name assigned to JIT-created users (case-insensitive). */
+            jit_default_role?: string;
+            /** @description When non-empty, JIT only applies to emails whose domain is in this list (case-insensitive). */
+            jit_allowed_domains?: string[];
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description AUTH-012 mapping rules. Only the fields supplied are updated. */
+        AuthProviderMappingRulesRequest: {
+            auto_link_by_email?: boolean;
+            jit_enabled?: boolean;
+            jit_default_role?: string;
+            jit_allowed_domains?: string[];
+        };
+        AuthProviderMappingRulesResponse: {
+            /** Format: uuid */
+            provider_id: string;
+            auto_link_by_email: boolean;
+            jit_enabled: boolean;
+            jit_default_role: string;
+            jit_allowed_domains: string[];
+        };
+        LinkedIdentity: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            user_id: string;
+            /** Format: uuid */
+            provider_id: string;
+            subject: string;
+            email_at_link?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            last_seen_at?: string;
+            provider?: {
+                id?: string;
+                name?: string;
+                display_name?: string | null;
+                type?: string;
+                enabled?: boolean;
+            };
+        };
+        LinkedIdentityListResponse: {
+            items: components["schemas"]["LinkedIdentity"][];
         };
         AuthProviderListResponse: {
             items?: components["schemas"]["AuthProvider"][];

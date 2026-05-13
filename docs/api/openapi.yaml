@@ -257,6 +257,102 @@ paths:
           description: Forbidden
         "404":
           description: Provider not found
+  /v1/admin/auth-providers/{providerId}/mapping-rules:
+    post:
+      tags: [Admin]
+      summary: Update account-linking and JIT provisioning rules for a provider
+      description: |
+        Requires the `admin` role. Updates the per-provider mapping rules
+        (account linking by email + just-in-time user provisioning). Only the
+        fields supplied in the body are changed; omitted fields keep their
+        current value. AUTH-012.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthProviderMappingRulesRequest"
+      responses:
+        "200":
+          description: Updated rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthProviderMappingRulesResponse"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found
+  /v1/admin/users/{userId}/linked-identities:
+    get:
+      tags: [Admin]
+      summary: List external identities linked to a local user
+      description: Requires the `admin` role. Returns each (provider, subject) pair attached to the user, including the original email captured at link time.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Linked identities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkedIdentityListResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: User not found
+  /v1/admin/users/{userId}/linked-identities/{providerId}:
+    delete:
+      tags: [Admin]
+      summary: Unlink an external identity from a user
+      description: Requires the `admin` role. Removes the link between the user and the auth provider. The user keeps their local account; subsequent SSO from this provider will go through the linking / JIT path again.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unlinked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  user_id:
+                    type: string
+                  provider_id:
+                    type: string
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: No linked identity for that user / provider
   /v1/admin/auth-providers/{providerId}/test:
     post:
       tags: [Admin]
@@ -1609,12 +1705,104 @@ components:
               type: string
         enabled:
           type: boolean
+        auto_link_by_email:
+          type: boolean
+          description: AUTH-012. When true, an SSO login whose email matches an existing local user is auto-linked.
+        jit_enabled:
+          type: boolean
+          description: AUTH-012. When true, an SSO login for an unknown email creates a local user.
+        jit_default_role:
+          type: string
+          description: Role name assigned to JIT-created users (case-insensitive).
+        jit_allowed_domains:
+          type: array
+          description: When non-empty, JIT only applies to emails whose domain is in this list (case-insensitive).
+          items:
+            type: string
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    AuthProviderMappingRulesRequest:
+      type: object
+      description: |
+        AUTH-012 mapping rules. Only the fields supplied are updated.
+      properties:
+        auto_link_by_email:
+          type: boolean
+        jit_enabled:
+          type: boolean
+        jit_default_role:
+          type: string
+        jit_allowed_domains:
+          type: array
+          items:
+            type: string
+    AuthProviderMappingRulesResponse:
+      type: object
+      required: [provider_id, auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains]
+      properties:
+        provider_id:
+          type: string
+          format: uuid
+        auto_link_by_email:
+          type: boolean
+        jit_enabled:
+          type: boolean
+        jit_default_role:
+          type: string
+        jit_allowed_domains:
+          type: array
+          items:
+            type: string
+    LinkedIdentity:
+      type: object
+      required: [id, user_id, provider_id, subject]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        provider_id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        email_at_link:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        provider:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            display_name:
+              type: string
+              nullable: true
+            type:
+              type: string
+            enabled:
+              type: boolean
+    LinkedIdentityListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkedIdentity"
     AuthProviderListResponse:
       type: object
       properties:

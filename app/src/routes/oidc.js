@@ -4,6 +4,7 @@ const { buildSessionCookie, buildClearSessionCookie } = require("../lib/sessionC
 const authService = require("../services/authService");
 const auditService = require("../services/auditService");
 const authProviderService = require("../services/authProviderService");
+const externalLoginService = require("../services/externalLoginService");
 const oidcService = require("../services/oidcService");
 
 function clientAddress(req) {
@@ -90,24 +91,37 @@ async function handleCallback(req, res, requestUrl) {
     return json(res, status, { error: "oidc_error", message: err.message });
   }
 
-  const user = await authService.findUserByEmail(principal.email);
-  if (!user || !user.is_active) {
+  // AUTH-012: resolve the IdP principal to a local user, applying account
+  // linking + JIT provisioning rules. The resolver itself records the
+  // identity-side audit events (linked / provisioned / rejected).
+  const resolution = await externalLoginService.resolveExternalLogin(
+    provider,
+    principal,
+    { ipAddress, userAgent }
+  );
+  if (!resolution.ok) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
     await auditService
       .writeEvent({
         actorEmail: principal.email,
         action: "auth.login.failure",
         outcome: "failure",
-        details: { method: "oidc", provider: provider.name, reason: "no_local_account" },
+        details: {
+          method: "oidc",
+          provider: provider.name,
+          reason: resolution.code
+        },
         ipAddress,
         userAgent
       })
       .catch(() => {});
-    return json(res, 403, {
-      error: "forbidden",
-      message: `no active local account for ${principal.email}. Ask an administrator to create one.`
+    return json(res, resolution.status, {
+      error: resolution.status === 409 ? "conflict" : "forbidden",
+      code: resolution.code,
+      message: resolution.message
     });
   }
+  const user = resolution.user;
 
   const session = await authService.createSession(user.id, {
     userAgent,
@@ -120,15 +134,10 @@ async function handleCallback(req, res, requestUrl) {
       targetUserId: user.id,
       action: "auth.login.success",
       outcome: "success",
-      details: { method: "oidc", provider: provider.name },
+      details: { method: "oidc", provider: provider.name, mode: resolution.mode },
       ipAddress,
       userAgent
     })
-    .catch(() => {});
-  // Best-effort last_login_at touch; mirrors password login path.
-  authService
-    .findUserByEmail(principal.email)
-    .then(() => {})
     .catch(() => {});
 
   const sessionCookie = buildSessionCookie(session.token, session.expiresAt);
