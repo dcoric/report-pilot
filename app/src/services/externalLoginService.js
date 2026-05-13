@@ -100,6 +100,15 @@ async function resolveExternalLogin(provider, principal, context = {}) {
     return { ok: true, user: rowToUser(userRow), mode: "linked_by_sub" };
   }
 
+  // AUTH-015: when the IdP exposes an `email_verified` claim and it's
+  // explicitly false, refuse any path that trusts the email (auto-link
+  // by email + JIT). Linking by subject already happened above and is
+  // unaffected — the IdP's prior attestation of subject ownership is what
+  // protects that path.
+  const emailUnverified = provider.require_email_verified !== false
+    && principal.claims
+    && principal.claims.email_verified === false;
+
   // 2) No existing link — look for a local user by email.
   const userByEmail = await authService.findUserByEmail(principal.email);
   if (userByEmail) {
@@ -109,6 +118,29 @@ async function resolveExternalLogin(provider, principal, context = {}) {
         code: "inactive_user",
         status: 403,
         message: "local account is inactive"
+      };
+    }
+    if (emailUnverified) {
+      await auditService
+        .writeEvent({
+          actorEmail: principal.email,
+          action: "auth.security.email_unverified",
+          outcome: "failure",
+          details: {
+            provider: provider.name,
+            provider_id: provider.id,
+            subject: principal.sub,
+            phase: "auto_link"
+          },
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent
+        })
+        .catch(() => {});
+      return {
+        ok: false,
+        code: "email_unverified",
+        status: 403,
+        message: `cannot link ${principal.email}: the IdP did not assert that the email is verified.`
       };
     }
     if (!provider.auto_link_by_email) {
@@ -173,6 +205,29 @@ async function resolveExternalLogin(provider, principal, context = {}) {
       code: "jit_disabled",
       status: 403,
       message: `no active local account for ${principal.email}. Ask an administrator to create one.`
+    };
+  }
+  if (emailUnverified) {
+    await auditService
+      .writeEvent({
+        actorEmail: principal.email,
+        action: "auth.security.email_unverified",
+        outcome: "failure",
+        details: {
+          provider: provider.name,
+          provider_id: provider.id,
+          subject: principal.sub,
+          phase: "jit"
+        },
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent
+      })
+      .catch(() => {});
+    return {
+      ok: false,
+      code: "email_unverified",
+      status: 403,
+      message: `cannot provision ${principal.email}: the IdP did not assert that the email is verified.`
     };
   }
   if (!domainAllowed(principal.email, provider.jit_allowed_domains)) {

@@ -165,7 +165,10 @@ paths:
       description: |
         Public endpoint. Reads the signed flow cookie, verifies `state`/`nonce`,
         exchanges the authorization code with PKCE, validates the ID token,
-        looks up a local user by `email`, and creates a session.
+        looks up a local user by `email`, and creates a session. AUTH-015
+        adds replay protection: each `state` value can only be redeemed
+        once — a second callback with the same state returns `400` with
+        `code: "state_replayed"`.
       parameters:
         - in: query
           name: code
@@ -181,9 +184,14 @@ paths:
         "302":
           description: "Successful login — `Set-Cookie: rp_session=...` and redirect to `/dashboard`"
         "400":
-          description: Missing or expired flow cookie / failed token exchange
+          description: |
+            Missing or expired flow cookie, failed token exchange, or replayed
+            `state` (response body `code: "state_replayed"`).
         "403":
-          description: No active local account for the IdP email claim
+          description: |
+            No active local account for the IdP email claim, JIT disabled, JIT
+            domain not allowed, or `email_verified=false` from the IdP
+            (`code: "email_unverified"`).
         "404":
           description: Provider no longer available
   /v1/admin/auth-providers:
@@ -1719,6 +1727,9 @@ components:
           description: When non-empty, JIT only applies to emails whose domain is in this list (case-insensitive).
           items:
             type: string
+        require_email_verified:
+          type: boolean
+          description: AUTH-015. When true, the IdP must assert `email_verified=true` before this app will auto-link an existing local user by email or provision a new one via JIT. Default true.
         created_at:
           type: string
           format: date-time
@@ -1728,7 +1739,8 @@ components:
     AuthProviderMappingRulesRequest:
       type: object
       description: |
-        AUTH-012 mapping rules. Only the fields supplied are updated.
+        AUTH-012 mapping rules + AUTH-015 email-verified gate. Only the
+        fields supplied are updated.
       properties:
         auto_link_by_email:
           type: boolean
@@ -1740,9 +1752,11 @@ components:
           type: array
           items:
             type: string
+        require_email_verified:
+          type: boolean
     AuthProviderMappingRulesResponse:
       type: object
-      required: [provider_id, auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains]
+      required: [provider_id, auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains, require_email_verified]
       properties:
         provider_id:
           type: string
@@ -1757,6 +1771,8 @@ components:
           type: array
           items:
             type: string
+        require_email_verified:
+          type: boolean
     LinkedIdentity:
       type: object
       required: [id, user_id, provider_id, subject]

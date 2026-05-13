@@ -6,6 +6,7 @@ const auditService = require("../services/auditService");
 const authProviderService = require("../services/authProviderService");
 const externalLoginService = require("../services/externalLoginService");
 const oidcService = require("../services/oidcService");
+const oidcStateService = require("../services/oidcStateService");
 
 function clientAddress(req) {
   const fwd = req.headers["x-forwarded-for"];
@@ -72,6 +73,32 @@ async function handleCallback(req, res, requestUrl) {
 
   const ipAddress = clientAddress(req);
   const userAgent = req.headers["user-agent"] || null;
+
+  // AUTH-015: replay protection. Mark the state as consumed BEFORE running
+  // the token exchange so a concurrent replay can't sneak in. If the state
+  // hash is already on file we abort with a 400 and record a security
+  // event.
+  const stateExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  const recorded = await oidcStateService
+    .recordUsedState({ state: flowState.state, providerId: provider.id, expiresAt: stateExpiresAt })
+    .catch((err) => ({ replayed: false, ok: false, reason: err && err.message }));
+  if (recorded.replayed) {
+    res.setHeader("Set-Cookie", buildClearFlowCookie());
+    await auditService
+      .writeEvent({
+        action: "auth.security.state_replay_blocked",
+        outcome: "failure",
+        details: { method: "oidc", provider: provider.name, reason: recorded.reason || "state_replayed" },
+        ipAddress,
+        userAgent
+      })
+      .catch(() => {});
+    return json(res, 400, {
+      error: "bad_request",
+      code: "state_replayed",
+      message: "this authorization response has already been processed"
+    });
+  }
 
   let principal;
   try {
