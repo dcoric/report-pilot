@@ -4,6 +4,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
 import { AuthProviderDialog, type AuthProvider, type AuthProviderFormValues } from '../components/Admin/AuthProviderDialog';
+import { ScimDialog } from '../components/Admin/ScimDialog';
 
 type TestState = {
     ok: boolean | null;
@@ -25,6 +26,7 @@ export function AuthProviders() {
     const [editing, setEditing] = useState<AuthProvider | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [tests, setTests] = useState<Record<string, TestState>>({});
+    const [scimProvider, setScimProvider] = useState<AuthProvider | null>(null);
 
     const fetchProviders = useCallback(async () => {
         setIsLoading(true);
@@ -216,6 +218,14 @@ export function AuthProviders() {
                                         >
                                             Edit
                                         </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setScimProvider(provider)}
+                                            className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100"
+                                            title="Configure SCIM tokens and group mapping"
+                                        >
+                                            SCIM
+                                        </button>
                                         {confirmDeleteId === provider.id ? (
                                             <span className="flex items-center gap-1">
                                                 <button
@@ -267,6 +277,16 @@ export function AuthProviders() {
                 onClose={() => { setDialogOpen(false); setEditing(null); }}
                 onSubmit={handleSubmit}
             />
+
+            {scimProvider && scimProvider.id && (
+                <ScimDialog
+                    isOpen={true}
+                    providerId={scimProvider.id}
+                    providerName={scimProvider.display_name || scimProvider.name || 'provider'}
+                    initialGroupMappings={scimProvider.scim_group_mappings ?? {}}
+                    onClose={() => setScimProvider(null)}
+                />
+            )}
         </div>
     );
 }

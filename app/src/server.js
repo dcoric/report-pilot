@@ -89,6 +89,10 @@ const {
   handleUpsertAuthProviderMappingRules,
   handleListUserLinkedIdentities,
   handleDeleteUserLinkedIdentity,
+  handleUpsertScimGroupMappings,
+  handleListScimTokens,
+  handleIssueScimToken,
+  handleRevokeScimToken,
   handleListAuditEvents
 } = require("./routes/admin");
 const {
@@ -96,6 +100,20 @@ const {
   handleStartLogin,
   handleCallback
 } = require("./routes/oidc");
+const {
+  handleServiceProviderConfig,
+  handleResourceTypes,
+  handleSchemas,
+  handleListUsers: handleScimListUsers,
+  handleCreateUser: handleScimCreateUser,
+  handleGetUser: handleScimGetUser,
+  handleReplaceUser: handleScimReplaceUser,
+  handlePatchUser: handleScimPatchUser,
+  handleDeleteUser: handleScimDeleteUser,
+  handleListGroups: handleScimListGroups,
+  handleCreateOrReplaceGroup: handleScimCreateGroup,
+  handlePatchGroup: handleScimPatchGroup
+} = require("./routes/scim");
 const { findPolicy } = require("./lib/routePolicy");
 const { enforcePolicy } = require("./lib/authGate");
 
@@ -103,25 +121,32 @@ async function routeRequest(req, res) {
   const requestUrl = new URL(req.url, "http://localhost");
   const { pathname } = requestUrl;
 
+  // AUTH-013: SCIM routes carry their own bearer-token auth gate and do
+  // NOT participate in the session-cookie policy table. Skip the /v1
+  // enforcement entirely and dispatch directly below.
+  const isScimPath = pathname.startsWith("/scim/v2/");
+
   // Centralized authorization for any /v1/* route. Static / docs / health
   // paths are matched by explicit public policies below; anything else outside
   // /v1 is handled by the static-asset and frontend-fallback branches.
-  if (pathname.startsWith("/v1/")) {
-    const policy = findPolicy(req.method, pathname);
-    if (!policy) {
-      return notFound(res);
-    }
-    const decision = await enforcePolicy(req, res, policy);
-    if (!decision.allowed) {
-      return;
-    }
-  } else {
-    // Public surfaces — apply the policy table where one exists (records an
-    // audit event for transparency) and otherwise fall through to the static
-    // routing below.
-    const policy = findPolicy(req.method, pathname);
-    if (policy && policy.public) {
-      await enforcePolicy(req, res, policy);
+  if (!isScimPath) {
+    if (pathname.startsWith("/v1/")) {
+      const policy = findPolicy(req.method, pathname);
+      if (!policy) {
+        return notFound(res);
+      }
+      const decision = await enforcePolicy(req, res, policy);
+      if (!decision.allowed) {
+        return;
+      }
+    } else {
+      // Public surfaces — apply the policy table where one exists (records an
+      // audit event for transparency) and otherwise fall through to the static
+      // routing below.
+      const policy = findPolicy(req.method, pathname);
+      if (policy && policy.public) {
+        await enforcePolicy(req, res, policy);
+      }
     }
   }
 
@@ -159,6 +184,43 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && serveFrontendAsset(res, pathname)) {
     return;
+  }
+
+  // AUTH-013: SCIM 2.0 surface. Bearer-token auth happens inside each
+  // handler.
+  if (isScimPath) {
+    if (req.method === "GET" && pathname === "/scim/v2/ServiceProviderConfig") {
+      return handleServiceProviderConfig(req, res);
+    }
+    if (req.method === "GET" && pathname === "/scim/v2/ResourceTypes") {
+      return handleResourceTypes(req, res);
+    }
+    if (req.method === "GET" && pathname === "/scim/v2/Schemas") {
+      return handleSchemas(req, res);
+    }
+    if (req.method === "GET" && pathname === "/scim/v2/Users") {
+      return handleScimListUsers(req, res, requestUrl);
+    }
+    if (req.method === "POST" && pathname === "/scim/v2/Users") {
+      return handleScimCreateUser(req, res);
+    }
+    const scimUserIdMatch = pathname.match(/^\/scim\/v2\/Users\/([^/]+)$/);
+    if (scimUserIdMatch) {
+      if (req.method === "GET") return handleScimGetUser(req, res, scimUserIdMatch[1]);
+      if (req.method === "PUT") return handleScimReplaceUser(req, res, scimUserIdMatch[1]);
+      if (req.method === "PATCH") return handleScimPatchUser(req, res, scimUserIdMatch[1]);
+      if (req.method === "DELETE") return handleScimDeleteUser(req, res, scimUserIdMatch[1]);
+    }
+    if (req.method === "GET" && pathname === "/scim/v2/Groups") {
+      return handleScimListGroups(req, res);
+    }
+    if ((req.method === "POST" || req.method === "PUT") && pathname.match(/^\/scim\/v2\/Groups(\/[^/]+)?$/)) {
+      return handleScimCreateGroup(req, res);
+    }
+    if (req.method === "PATCH" && pathname.match(/^\/scim\/v2\/Groups\/[^/]+$/)) {
+      return handleScimPatchGroup(req, res);
+    }
+    return notFound(res);
   }
 
   if (req.method === "POST" && pathname === "/v1/auth/login") {
@@ -226,6 +288,22 @@ async function routeRequest(req, res) {
   const adminAuthProviderMappingMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/mapping-rules$/);
   if (req.method === "POST" && adminAuthProviderMappingMatch) {
     return handleUpsertAuthProviderMappingRules(req, res, adminAuthProviderMappingMatch[1]);
+  }
+
+  const adminScimGroupMappingsMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/scim-group-mappings$/);
+  if (req.method === "POST" && adminScimGroupMappingsMatch) {
+    return handleUpsertScimGroupMappings(req, res, adminScimGroupMappingsMatch[1]);
+  }
+
+  const adminScimTokensListMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/scim-tokens$/);
+  if (adminScimTokensListMatch) {
+    if (req.method === "GET") return handleListScimTokens(req, res, adminScimTokensListMatch[1]);
+    if (req.method === "POST") return handleIssueScimToken(req, res, adminScimTokensListMatch[1]);
+  }
+
+  const adminScimTokenDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)\/scim-tokens\/([^/]+)$/);
+  if (req.method === "DELETE" && adminScimTokenDeleteMatch) {
+    return handleRevokeScimToken(req, res, adminScimTokenDeleteMatch[1], adminScimTokenDeleteMatch[2]);
   }
 
   const adminAuthProviderDeleteMatch = pathname.match(/^\/v1\/admin\/auth-providers\/([^/]+)$/);
