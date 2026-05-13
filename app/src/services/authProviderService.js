@@ -51,6 +51,7 @@ const PROVIDER_COLUMNS = `
   id, type, name, display_name, issuer, client_id, client_secret,
   scopes, redirect_uri, claims_mapping, enabled,
   auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains,
+  require_email_verified,
   created_at, updated_at
 `;
 
@@ -72,6 +73,7 @@ function publicProvider(row, { includeSecret = false } = {}) {
     jit_enabled: row.jit_enabled === true,
     jit_default_role: row.jit_default_role || "viewer",
     jit_allowed_domains: row.jit_allowed_domains || [],
+    require_email_verified: row.require_email_verified !== false,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -309,6 +311,13 @@ function validateMappingRules(body) {
     value.auto_link_by_email = body.auto_link_by_email;
   }
 
+  if (Object.prototype.hasOwnProperty.call(body, "require_email_verified")) {
+    if (typeof body.require_email_verified !== "boolean") {
+      return { ok: false, message: "require_email_verified must be a boolean" };
+    }
+    value.require_email_verified = body.require_email_verified;
+  }
+
   if (Object.prototype.hasOwnProperty.call(body, "jit_enabled")) {
     if (typeof body.jit_enabled !== "boolean") {
       return { ok: false, message: "jit_enabled must be a boolean" };
@@ -400,7 +409,8 @@ async function updateMappingRules(providerId, body, { actorUserId = null } = {})
       auto_link_by_email: row.auto_link_by_email,
       jit_enabled: row.jit_enabled,
       jit_default_role: row.jit_default_role,
-      jit_allowed_domains: row.jit_allowed_domains || []
+      jit_allowed_domains: row.jit_allowed_domains || [],
+      require_email_verified: row.require_email_verified !== false
     }
   };
 }

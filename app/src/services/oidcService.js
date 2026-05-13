@@ -29,6 +29,19 @@ function displayNameClaimFor(provider) {
   return (provider.claims_mapping && provider.claims_mapping.display_name) || DEFAULT_CLAIM_DISPLAY_NAME;
 }
 
+// AUTH-015: clock-skew tolerance for ID-token validation. Most production
+// IdPs sit behind load balancers whose clock can drift a handful of seconds;
+// 60s is the openid-client recommended default for production deployments
+// and matches what every major IdP documents. Configurable so deployments
+// with stricter requirements can dial it down.
+function getClockToleranceSeconds() {
+  const raw = Number(process.env.AUTH_OIDC_CLOCK_TOLERANCE_SECONDS);
+  if (Number.isFinite(raw) && raw >= 0 && raw <= 600) {
+    return Math.floor(raw);
+  }
+  return 60;
+}
+
 async function buildConfiguration(provider) {
   const client = await getOidcClient();
   const issuerUrl = new URL(provider.issuer);
@@ -36,10 +49,14 @@ async function buildConfiguration(provider) {
   // localhost / dev / tests; production should be https anyway.
   const allowHttp = issuerUrl.protocol === "http:";
   const options = allowHttp ? { execute: [client.allowInsecureRequests] } : undefined;
+  // Metadata object carries the clientSecret (when present) and the
+  // clock-skew tolerance. openid-client treats clockTolerance as a Symbol
+  // key on the metadata object.
+  const metadata = { [client.clockTolerance]: getClockToleranceSeconds() };
   if (provider.client_secret) {
-    return client.discovery(issuerUrl, provider.client_id, provider.client_secret, undefined, options);
+    metadata.client_secret = provider.client_secret;
   }
-  return client.discovery(issuerUrl, provider.client_id, undefined, undefined, options);
+  return client.discovery(issuerUrl, provider.client_id, metadata, undefined, options);
 }
 
 async function startLogin(provider) {

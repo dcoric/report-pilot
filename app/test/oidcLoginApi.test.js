@@ -215,6 +215,15 @@ before(async () => {
     if (n.startsWith("update linked_identities set last_seen_at = now() where id = $1")) {
       return { rowCount: 1, rows: [] };
     }
+    // AUTH-015: state replay protection. Tests in this file always present
+    // a fresh state, so the insert succeeds; the dedicated replay coverage
+    // lives in federationHardeningApi.test.js.
+    if (n.startsWith("insert into oidc_used_states")) {
+      return { rowCount: 1, rows: [] };
+    }
+    if (n.startsWith("delete from oidc_used_states")) {
+      return { rowCount: 0, rows: [] };
+    }
     // Audit writes from the resolver are .catch'd by callers, so failure is
     // tolerable — but returning an empty result keeps the logs clean.
     if (n.startsWith("insert into auth_audit_log")) {

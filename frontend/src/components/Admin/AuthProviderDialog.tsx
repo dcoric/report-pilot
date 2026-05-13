@@ -16,13 +16,15 @@ export interface AuthProviderFormValues {
     redirect_uri: string;
     claims_mapping: { email?: string; display_name?: string };
     enabled: boolean;
-    // AUTH-012 mapping rules. Persisted by a separate POST to
-    // /v1/admin/auth-providers/{id}/mapping-rules after the main upsert.
+    // AUTH-012 mapping rules + AUTH-015 email-verified gate. Persisted by a
+    // separate POST to /v1/admin/auth-providers/{id}/mapping-rules after the
+    // main upsert.
     mapping_rules: {
         auto_link_by_email: boolean;
         jit_enabled: boolean;
         jit_default_role: string;
         jit_allowed_domains: string[];
+        require_email_verified: boolean;
     };
 }
 
@@ -45,6 +47,7 @@ const DEFAULT_MAPPING_RULES = {
     jit_enabled: false,
     jit_default_role: 'viewer',
     jit_allowed_domains: [] as string[],
+    require_email_verified: true,
 };
 
 function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string): AuthProviderFormValues {
@@ -80,6 +83,7 @@ function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string)
             jit_enabled: initial.jit_enabled ?? false,
             jit_default_role: initial.jit_default_role ?? 'viewer',
             jit_allowed_domains: initial.jit_allowed_domains ?? [],
+            require_email_verified: initial.require_email_verified ?? true,
         },
     };
 }
@@ -168,6 +172,7 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
                 jit_enabled: values.mapping_rules.jit_enabled,
                 jit_default_role: values.mapping_rules.jit_default_role.trim().toLowerCase() || 'viewer',
                 jit_allowed_domains: Array.from(new Set(domains)),
+                require_email_verified: values.mapping_rules.require_email_verified,
             },
         };
         const found = validate(normalized, isEdit);
@@ -340,6 +345,20 @@ function AuthProviderDialogInner({ initial, defaultRedirectUri, onClose, onSubmi
                                 Auto-link by email
                                 <span className="block text-xs text-gray-500">
                                     When an SSO login email matches an existing local user, attach the external identity automatically. Disable for IdPs that don&apos;t verify email ownership.
+                                </span>
+                            </span>
+                        </label>
+                        <label className="mt-3 flex items-start gap-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={values.mapping_rules.require_email_verified}
+                                onChange={(e) => setRule('require_email_verified', e.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-oxblood focus:ring-oxblood"
+                            />
+                            <span>
+                                Require <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">email_verified</code> claim
+                                <span className="block text-xs text-gray-500">
+                                    Refuse auto-link and JIT when the IdP says the email isn&apos;t verified. Keep on unless you trust this IdP to never assert unverified emails.
                                 </span>
                             </span>
                         </label>

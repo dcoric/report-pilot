@@ -377,7 +377,10 @@ export interface paths {
          * OIDC callback — exchange code, validate ID token, create session
          * @description Public endpoint. Reads the signed flow cookie, verifies `state`/`nonce`,
          *     exchanges the authorization code with PKCE, validates the ID token,
-         *     looks up a local user by `email`, and creates a session.
+         *     looks up a local user by `email`, and creates a session. AUTH-015
+         *     adds replay protection: each `state` value can only be redeemed
+         *     once — a second callback with the same state returns `400` with
+         *     `code: "state_replayed"`.
          */
         get: {
             parameters: {
@@ -398,14 +401,21 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Missing or expired flow cookie / failed token exchange */
+                /**
+                 * @description Missing or expired flow cookie, failed token exchange, or replayed
+                 *     `state` (response body `code: "state_replayed"`).
+                 */
                 400: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description No active local account for the IdP email claim */
+                /**
+                 * @description No active local account for the IdP email claim, JIT disabled, JIT
+                 *     domain not allowed, or `email_verified=false` from the IdP
+                 *     (`code: "email_unverified"`).
+                 */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3003,17 +3013,23 @@ export interface components {
             jit_default_role?: string;
             /** @description When non-empty, JIT only applies to emails whose domain is in this list (case-insensitive). */
             jit_allowed_domains?: string[];
+            /** @description AUTH-015. When true, the IdP must assert `email_verified=true` before this app will auto-link an existing local user by email or provision a new one via JIT. Default true. */
+            require_email_verified?: boolean;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
             updated_at?: string;
         };
-        /** @description AUTH-012 mapping rules. Only the fields supplied are updated. */
+        /**
+         * @description AUTH-012 mapping rules + AUTH-015 email-verified gate. Only the
+         *     fields supplied are updated.
+         */
         AuthProviderMappingRulesRequest: {
             auto_link_by_email?: boolean;
             jit_enabled?: boolean;
             jit_default_role?: string;
             jit_allowed_domains?: string[];
+            require_email_verified?: boolean;
         };
         AuthProviderMappingRulesResponse: {
             /** Format: uuid */
@@ -3022,6 +3038,7 @@ export interface components {
             jit_enabled: boolean;
             jit_default_role: string;
             jit_allowed_domains: string[];
+            require_email_verified: boolean;
         };
         LinkedIdentity: {
             /** Format: uuid */
