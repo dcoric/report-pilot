@@ -13,6 +13,7 @@ tags:
   - name: Providers
   - name: Observability
   - name: Auth
+  - name: SCIM
 paths:
   /v1/auth/login:
     post:
@@ -388,6 +389,183 @@ paths:
           description: Forbidden
         "404":
           description: Provider not found
+  /v1/admin/auth-providers/{providerId}/scim-group-mappings:
+    post:
+      tags: [Admin]
+      summary: Update the SCIM-group-to-local-role mapping for a provider
+      description: |
+        Requires the `admin` role. Replaces the SCIM group mapping object
+        for the provider — keys are SCIM Group `displayName` values, values
+        are local role names. AUTH-013.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        "200":
+          description: Updated mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScimGroupMappingsResponse"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found
+  /v1/admin/auth-providers/{providerId}/scim-tokens:
+    get:
+      tags: [Admin]
+      summary: List SCIM bearer tokens issued for a provider
+      description: Requires the `admin` role. Token plaintext is never returned — only the label, IDs, and timestamps.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScimTokenListResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+    post:
+      tags: [Admin]
+      summary: Issue a new SCIM bearer token for a provider
+      description: |
+        Requires the `admin` role. The plaintext token is returned ONLY in
+        this response — store it immediately. Subsequent reads return only
+        the record metadata. AUTH-013.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                label:
+                  type: string
+      responses:
+        "201":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScimTokenIssueResponse"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Provider not found
+  /v1/admin/auth-providers/{providerId}/scim-tokens/{tokenId}:
+    delete:
+      tags: [Admin]
+      summary: Revoke a SCIM bearer token
+      description: Requires the `admin` role. Revocation is irreversible.
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: tokenId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  record:
+                    $ref: "#/components/schemas/ScimTokenRecord"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+        "404":
+          description: Token not found
+  /scim/v2/ServiceProviderConfig:
+    get:
+      tags: [SCIM]
+      summary: SCIM 2.0 service-provider configuration (RFC 7644 §4)
+      description: Bearer-authenticated. Returns capabilities and the auth scheme. Used by upstream IdPs to discover what's supported before pushing.
+      responses:
+        "200":
+          description: Service provider configuration
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "401":
+          description: Missing or invalid bearer token
+  /scim/v2/Users:
+    get:
+      tags: [SCIM]
+      summary: List or filter SCIM users for this provider
+      description: |
+        Bearer-authenticated. Supports `filter` with `userName eq "x"` and
+        `externalId eq "x"` — the minimum every major IdP uses to dedup
+        before POST.
+      responses:
+        "200":
+          description: List response
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "401":
+          description: Missing or invalid bearer token
+    post:
+      tags: [SCIM]
+      summary: Create or link a user
+      description: Bearer-authenticated. Idempotency is handled by the `externalId` field.
+      responses:
+        "201":
+          description: User created (or existing user linked)
+          content:
+            application/scim+json:
+              schema:
+                type: object
+        "400":
+          description: Invalid SCIM payload
+        "409":
+          description: Subject already linked to a different user
   /v1/admin/audit-events:
     get:
       tags: [Admin]
@@ -1730,6 +1908,11 @@ components:
         require_email_verified:
           type: boolean
           description: AUTH-015. When true, the IdP must assert `email_verified=true` before this app will auto-link an existing local user by email or provision a new one via JIT. Default true.
+        scim_group_mappings:
+          type: object
+          description: AUTH-013. SCIM group `displayName` (key, case-insensitive at lookup) to local role name (value).
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
@@ -1811,6 +1994,57 @@ components:
               type: string
             enabled:
               type: boolean
+    ScimTokenRecord:
+      type: object
+      required: [id, provider_id, label, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+    ScimTokenListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScimTokenRecord"
+    ScimTokenIssueResponse:
+      type: object
+      required: [token, record]
+      properties:
+        token:
+          type: string
+          description: AUTH-013. Plaintext bearer token. Shown exactly once.
+        record:
+          $ref: "#/components/schemas/ScimTokenRecord"
+    ScimGroupMappingsResponse:
+      type: object
+      required: [provider_id, group_mappings]
+      properties:
+        provider_id:
+          type: string
+          format: uuid
+        group_mappings:
+          type: object
+          additionalProperties:
+            type: string
     LinkedIdentityListResponse:
       type: object
       required: [items]

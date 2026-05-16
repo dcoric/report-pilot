@@ -52,6 +52,7 @@ const PROVIDER_COLUMNS = `
   scopes, redirect_uri, claims_mapping, enabled,
   auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains,
   require_email_verified,
+  scim_group_mappings,
   created_at, updated_at
 `;
 
@@ -74,6 +75,7 @@ function publicProvider(row, { includeSecret = false } = {}) {
     jit_default_role: row.jit_default_role || "viewer",
     jit_allowed_domains: row.jit_allowed_domains || [],
     require_email_verified: row.require_email_verified !== false,
+    scim_group_mappings: row.scim_group_mappings || {},
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -415,6 +417,92 @@ async function updateMappingRules(providerId, body, { actorUserId = null } = {})
   };
 }
 
+// AUTH-013: SCIM group → local-role mapping. Stored as a JSONB column on
+// the provider row; we treat the keys (SCIM group displayNames) as
+// case-insensitive at lookup time but preserve their original casing for
+// display purposes when admins view the rules.
+function validateScimGroupMappings(body) {
+  if (body == null || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, message: "group_mappings must be an object" };
+  }
+  const out = {};
+  for (const [groupName, roleName] of Object.entries(body)) {
+    if (typeof groupName !== "string") {
+      return { ok: false, message: "group_mappings keys must be strings" };
+    }
+    const trimmedGroup = groupName.trim();
+    if (!trimmedGroup) {
+      return { ok: false, message: "group_mappings keys must be non-empty" };
+    }
+    if (typeof roleName !== "string") {
+      return { ok: false, message: `group_mappings['${groupName}'] must be a role name string` };
+    }
+    const trimmedRole = roleName.trim().toLowerCase();
+    if (!trimmedRole) {
+      return { ok: false, message: `group_mappings['${groupName}'] must be a non-empty role name` };
+    }
+    out[trimmedGroup] = trimmedRole;
+  }
+  return { ok: true, value: out };
+}
+
+async function updateScimGroupMappings(providerId, body, { actorUserId = null } = {}) {
+  if (typeof providerId !== "string" || !providerId) {
+    return { statusCode: 400, body: { error: "bad_request", message: "provider id is required" } };
+  }
+  const parsed = validateScimGroupMappings(body);
+  if (!parsed.ok) {
+    return { statusCode: 400, body: { error: "bad_request", message: parsed.message } };
+  }
+  const result = await appDb.query(
+    `UPDATE auth_providers
+        SET scim_group_mappings = $2::jsonb, updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${PROVIDER_COLUMNS}`,
+    [providerId, JSON.stringify(parsed.value)]
+  );
+  if (result.rowCount === 0) {
+    return { statusCode: 404, body: { error: "not_found", message: "auth provider not found" } };
+  }
+  await auditService
+    .writeEvent({
+      actorUserId,
+      action: "auth_provider.scim_group_mappings.updated",
+      outcome: "success",
+      details: {
+        provider_id: result.rows[0].id,
+        name: result.rows[0].name,
+        mappings: parsed.value
+      }
+    })
+    .catch(() => {});
+  return {
+    statusCode: 200,
+    body: {
+      provider_id: result.rows[0].id,
+      group_mappings: result.rows[0].scim_group_mappings || {}
+    }
+  };
+}
+
+// Resolve a list of SCIM group display names to a sorted, deduplicated set
+// of local role names, using the provider's case-insensitive mapping.
+function scimGroupsToRoles(provider, groupDisplayNames) {
+  if (!provider || !Array.isArray(groupDisplayNames)) return [];
+  const mappings = provider.scim_group_mappings || {};
+  const lookup = new Map();
+  for (const [key, value] of Object.entries(mappings)) {
+    lookup.set(String(key).toLowerCase(), value);
+  }
+  const out = new Set();
+  for (const name of groupDisplayNames) {
+    if (typeof name !== "string") continue;
+    const match = lookup.get(name.trim().toLowerCase());
+    if (match) out.add(match);
+  }
+  return [...out].sort();
+}
+
 module.exports = {
   DEFAULT_SCOPES,
   publicProvider,
@@ -426,5 +514,8 @@ module.exports = {
   deleteProvider,
   validatePayload,
   validateMappingRules,
-  updateMappingRules
+  updateMappingRules,
+  validateScimGroupMappings,
+  updateScimGroupMappings,
+  scimGroupsToRoles
 };

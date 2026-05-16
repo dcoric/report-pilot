@@ -7,6 +7,7 @@ const authProviderService = require("../services/authProviderService");
 const auditService = require("../services/auditService");
 const linkedIdentityService = require("../services/linkedIdentityService");
 const oidcService = require("../services/oidcService");
+const scimTokenService = require("../services/scimTokenService");
 
 function writeResult(res, result) {
   return json(res, result.statusCode, result.body);
@@ -209,6 +210,73 @@ async function handleDeleteUserLinkedIdentity(req, res, userId, providerId) {
   return json(res, 200, { ok: true, user_id: userId, provider_id: providerId });
 }
 
+async function handleUpsertScimGroupMappings(req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const body = await readJsonBody(req);
+  const result = await authProviderService.updateScimGroupMappings(providerId, body, {
+    actorUserId: req.user && req.user.id ? req.user.id : null
+  });
+  return json(res, result.statusCode, result.body);
+}
+
+async function handleListScimTokens(_req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  const items = await scimTokenService.listForProvider(providerId);
+  return json(res, 200, { items });
+}
+
+async function handleIssueScimToken(req, res, providerId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  // Confirm the provider exists before issuing a token so we don't create
+  // an orphan row tied to a phantom id.
+  const provider = await authProviderService.findProviderById(providerId);
+  if (!provider) {
+    return json(res, 404, { error: "not_found", message: "auth provider not found" });
+  }
+  const body = await readJsonBody(req);
+  const result = await scimTokenService.issueToken({ providerId, label: body && body.label });
+  if (!result.ok) {
+    return badRequest(res, result.message);
+  }
+  await auditService
+    .writeEvent({
+      actorUserId: req.user && req.user.id ? req.user.id : null,
+      action: "scim.token.issued",
+      outcome: "success",
+      details: { provider_id: providerId, token_id: result.record.id, label: result.record.label }
+    })
+    .catch(() => {});
+  return json(res, 201, { token: result.token, record: result.record });
+}
+
+async function handleRevokeScimToken(req, res, providerId, tokenId) {
+  if (!isUuid(providerId)) {
+    return badRequest(res, "provider id must be a uuid");
+  }
+  if (!isUuid(tokenId)) {
+    return badRequest(res, "token id must be a uuid");
+  }
+  const revoked = await scimTokenService.revokeToken({ providerId, tokenId });
+  if (!revoked) {
+    return json(res, 404, { error: "not_found", message: "scim token not found" });
+  }
+  await auditService
+    .writeEvent({
+      actorUserId: req.user && req.user.id ? req.user.id : null,
+      action: "scim.token.revoked",
+      outcome: "success",
+      details: { provider_id: providerId, token_id: tokenId }
+    })
+    .catch(() => {});
+  return json(res, 200, { ok: true, record: revoked });
+}
+
 async function handleTestAuthProvider(_req, res, providerId) {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
@@ -235,5 +303,9 @@ module.exports = {
   handleUpsertAuthProviderMappingRules,
   handleListUserLinkedIdentities,
   handleDeleteUserLinkedIdentity,
+  handleUpsertScimGroupMappings,
+  handleListScimTokens,
+  handleIssueScimToken,
+  handleRevokeScimToken,
   handleListAuditEvents
 };
