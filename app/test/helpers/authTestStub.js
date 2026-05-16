@@ -18,6 +18,11 @@
 
 const authService = require("../../src/services/authService");
 
+// AUTH-006 added users.read_self / users.write_self, granted to every
+// system role. Mirror that here so route tests against /v1/users/me/*
+// don't 403.
+const SELF_PERMS = ["users.read_self", "users.write_self"];
+
 const ROLE_PERMISSIONS = {
   admin: [
     "users.read",
@@ -33,7 +38,8 @@ const ROLE_PERMISSIONS = {
     "saved_queries.read",
     "saved_queries.write",
     "observability.read",
-    "observability.write"
+    "observability.write",
+    ...SELF_PERMS
   ],
   analyst: [
     "data_sources.read",
@@ -43,13 +49,15 @@ const ROLE_PERMISSIONS = {
     "query.run",
     "saved_queries.read",
     "saved_queries.write",
-    "observability.read"
+    "observability.read",
+    ...SELF_PERMS
   ],
   viewer: [
     "data_sources.read",
     "providers.read",
     "saved_queries.read",
-    "observability.read"
+    "observability.read",
+    ...SELF_PERMS
   ]
 };
 

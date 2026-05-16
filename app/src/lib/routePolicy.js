@@ -24,6 +24,10 @@ const POLICIES = [
   { method: "GET", pattern: /^\/v1\/auth\/oidc\/login$/, public: true },
   { method: "GET", pattern: /^\/v1\/auth\/oidc\/callback$/, public: true },
 
+  // AUTH-006 — self-service config (any authenticated role)
+  { method: "GET", pattern: /^\/v1\/users\/me\/config$/, permission: "users.read_self" },
+  { method: "PUT", pattern: /^\/v1\/users\/me\/config$/, permission: "users.write_self" },
+
   // Admin
   { method: "GET", pattern: /^\/v1\/admin\/users$/, role: "admin" },
   { method: "POST", pattern: /^\/v1\/admin\/users$/, role: "admin" },
