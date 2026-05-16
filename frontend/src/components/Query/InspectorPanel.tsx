@@ -1,4 +1,4 @@
-import { Database, Info, Table } from 'lucide-react';
+import { Bookmark, Clock, Database, Info, Table } from 'lucide-react';
 import type { CitationCollection, RunResponse, SavedQuery } from './types';
 import type { components } from '../../lib/api/types';
 
@@ -9,6 +9,14 @@ interface InspectorPanelProps {
     selectedDataSource: DataSource | null;
     queryResult: RunResponse | null;
     isDryRun: boolean;
+}
+
+function formatTimestamp(value: string) {
+    try {
+        return new Date(value).toLocaleString();
+    } catch {
+        return value;
+    }
 }
 
 function MetricRow({ label, value }: { label: string; value: string }) {
@@ -66,6 +74,24 @@ export function InspectorPanel({
                         </span>
                     </div>
                     <div className="space-y-3">
+                        {loadedSavedQuery && (
+                            <div>
+                                <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Source</p>
+                                <p className="flex items-start gap-1.5 text-[12px] font-semibold text-on-surface">
+                                    <Bookmark size={14} className="mt-0.5 shrink-0 text-oxblood" />
+                                    <span className="break-words">{loadedSavedQuery.name}</span>
+                                </p>
+                                {loadedSavedQuery.description && (
+                                    <p className="mt-1 line-clamp-3 pl-5 text-[11px] text-slate-500">
+                                        {loadedSavedQuery.description}
+                                    </p>
+                                )}
+                                <p className="mt-1.5 flex items-center gap-1 pl-5 text-[10px] text-slate-400">
+                                    <Clock size={10} />
+                                    Updated {formatTimestamp(loadedSavedQuery.updated_at)}
+                                </p>
+                            </div>
+                        )}
                         <div>
                             <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Data Source</p>
                             <p className="flex items-center gap-1.5 text-[12px] font-semibold text-on-surface">

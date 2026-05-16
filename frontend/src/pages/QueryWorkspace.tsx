@@ -9,6 +9,7 @@ import { InspectorPanel } from '../components/Query/InspectorPanel';
 import { PromptSection } from '../components/Query/PromptSection';
 import { ResultSection } from '../components/Query/ResultSection';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
+import { SavedQueryParamsPanel, type ParamValues } from '../components/Query/SavedQueryParamsPanel';
 import { SqlSection } from '../components/Query/SqlSection';
 import type {
     LlmProvider,
@@ -81,6 +82,8 @@ export const QueryWorkspace = () => {
     const [timeout, setTimeout] = useState(60);
     const [isDryRun, setIsDryRun] = useState(false);
     const [loadedSavedQuery, setLoadedSavedQuery] = useState<SavedQuery | null>(null);
+    const [paramValues, setParamValues] = useState<ParamValues>({});
+    const [paramErrors, setParamErrors] = useState<Record<string, string> | null>(null);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const [isSubmittingSave, setIsSubmittingSave] = useState(false);
 
@@ -197,7 +200,72 @@ export const QueryWorkspace = () => {
         }
     };
 
+    const useSavedQueryRunPath = Boolean(
+        loadedSavedQuery
+        && loadedSavedQuery.parameter_schema?.length
+        && generatedSql.trim() === originalSql.trim()
+    );
+
+    const runSavedQueryWithParams = async () => {
+        if (!loadedSavedQuery) return;
+        setIsRunning(true);
+        setParamErrors(null);
+        try {
+            const { data, error, response } = await client.POST('/v1/saved-queries/{savedQueryId}/run', {
+                params: { path: { savedQueryId: loadedSavedQuery.id } },
+                body: {
+                    params: paramValues,
+                    max_rows: maxRows,
+                    timeout_ms: Math.max(1000, Math.round(timeout * 1000)),
+                },
+            });
+
+            if (data) {
+                setGeneratedSql(data.sql);
+                setQueryResult({
+                    sql: data.sql,
+                    columns: data.columns,
+                    rows: data.rows,
+                    row_count: data.row_count,
+                    duration_ms: data.duration_ms,
+                    attempt_id: loadedSavedQuery.id,
+                    preview: false,
+                } as RunResponse);
+                toast.success('Query executed successfully');
+                return;
+            }
+
+            if (error) {
+                const payload = error as { errors?: Array<{ param?: string | null; message: string }>; message?: string };
+                if (response.status === 400 && Array.isArray(payload.errors)) {
+                    const nextErrors: Record<string, string> = {};
+                    for (const item of payload.errors) {
+                        if (item.param) {
+                            nextErrors[item.param] = item.message;
+                        }
+                    }
+                    if (Object.keys(nextErrors).length > 0) {
+                        setParamErrors(nextErrors);
+                        toast.error('Invalid parameters');
+                        return;
+                    }
+                }
+                toast.error(payload.message || 'Run failed');
+            }
+        } catch (caught) {
+            console.error(caught);
+            toast.error('Run failed');
+        } finally {
+            setIsRunning(false);
+        }
+    };
+
     const handleRun = async () => {
+        if (useSavedQueryRunPath) {
+            await runSavedQueryWithParams();
+            return;
+        }
+
         const sqlOverride = generatedSql.trim();
         if (!sqlOverride) {
             return;
@@ -269,6 +337,13 @@ export const QueryWorkspace = () => {
         setOriginalSql(savedQuery.sql);
         setQueryResult(null);
         setLoadedSavedQuery(savedQuery);
+
+        const seededParams: ParamValues = {};
+        for (const param of savedQuery.parameter_schema ?? []) {
+            seededParams[param.name] = param.default ?? null;
+        }
+        setParamValues(seededParams);
+        setParamErrors(null);
 
         if (typeof defaultRunParams.max_rows === 'number') {
             setMaxRows(defaultRunParams.max_rows);
@@ -508,6 +583,18 @@ export const QueryWorkspace = () => {
                     onPromptHistorySelect={handlePromptHistorySelect}
                     onAsk={handleAsk}
                 />
+
+                {loadedSavedQuery && loadedSavedQuery.parameter_schema?.length > 0 && (
+                    <SavedQueryParamsPanel
+                        parameters={loadedSavedQuery.parameter_schema}
+                        values={paramValues}
+                        errors={paramErrors}
+                        onChange={(next) => {
+                            setParamValues(next);
+                            setParamErrors(null);
+                        }}
+                    />
+                )}
 
                 <SqlSection
                     generatedSql={generatedSql}
