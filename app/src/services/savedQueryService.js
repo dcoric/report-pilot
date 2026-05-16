@@ -42,9 +42,13 @@ const SAVED_QUERY_COLUMNS = `
   default_run_params,
   parameter_schema,
   tags,
+  visibility,
   created_at,
   updated_at
 `;
+
+const ALLOWED_VISIBILITY = new Set(["private", "shared"]);
+const ALLOWED_SHARE_PERMISSIONS = new Set(["view", "run"]);
 
 function normalizeTags(value) {
   if (value === undefined || value === null) {
@@ -110,6 +114,7 @@ async function loadSavedQueryForExecution(savedQueryId) {
         sq.default_run_params,
         sq.parameter_schema,
         sq.tags,
+        sq.visibility,
         sq.created_at,
         sq.updated_at,
         ds.connection_ref,
@@ -181,7 +186,7 @@ function resolveRunOptions(defaultRunParams, requested) {
   };
 }
 
-async function getSavedQuery(savedQueryId) {
+async function getSavedQuery(savedQueryId, { callerUserId } = {}) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -189,10 +194,16 @@ async function getSavedQuery(savedQueryId) {
   if (!savedQuery) {
     return failure(404, { error: "not_found", message: "Saved query not found" });
   }
+  if (callerUserId) {
+    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    if (!access) {
+      return failure(403, { error: "forbidden", message: "You do not have access to this saved query" });
+    }
+  }
   return success(savedQuery);
 }
 
-async function listSavedQueries(dataSourceId, tag) {
+async function listSavedQueries(dataSourceId, tag, { callerUserId } = {}) {
   const filter = typeof dataSourceId === "string" ? dataSourceId.trim() : "";
   if (filter && !isUuid(filter)) {
     return failure(400, { error: "bad_request", message: "data_source_id must be a valid UUID" });
@@ -204,6 +215,34 @@ async function listSavedQueries(dataSourceId, tag) {
       error: "bad_request",
       message: `tag exceeds ${SAVED_QUERY_TAG_MAX_LENGTH} characters`
     });
+  }
+
+  // When a caller is supplied, restrict to:
+  //   - queries the caller owns
+  //   - queries with visibility = 'shared'
+  //   - queries with an explicit share row for the caller
+  // The data-source-access filter still runs in the route layer so an admin
+  // doesn't suddenly leak queries from sources they were never granted.
+  if (callerUserId) {
+    const result = await appDb.query(
+      `
+        SELECT ${SAVED_QUERY_COLUMNS}
+        FROM saved_queries sq
+        WHERE ($1::uuid IS NULL OR sq.data_source_id = $1::uuid)
+          AND ($2::text IS NULL OR $2::text = ANY(sq.tags))
+          AND (
+            sq.owner_id = $3
+            OR sq.visibility = 'shared'
+            OR EXISTS (
+              SELECT 1 FROM saved_query_shares s
+              WHERE s.saved_query_id = sq.id AND s.user_id = $3
+            )
+          )
+        ORDER BY sq.updated_at DESC, sq.created_at DESC
+      `,
+      [filter || null, tagFilter || null, callerUserId]
+    );
+    return success({ items: result.rows });
   }
 
   const result = await appDb.query(
@@ -220,6 +259,14 @@ async function listSavedQueries(dataSourceId, tag) {
   return success({ items: result.rows });
 }
 
+function normalizeVisibility(value, fallback = "private") {
+  if (value === undefined) return { ok: true, value: fallback };
+  if (typeof value !== "string" || !ALLOWED_VISIBILITY.has(value)) {
+    return { ok: false, message: `visibility must be one of: ${[...ALLOWED_VISIBILITY].join(", ")}` };
+  }
+  return { ok: true, value };
+}
+
 async function createSavedQuery({
   ownerId,
   name,
@@ -228,7 +275,8 @@ async function createSavedQuery({
   sql,
   defaultRunParams,
   parameterSchema,
-  tags
+  tags,
+  visibility
 }) {
   const trimmedOwnerId = String(ownerId || "anonymous").trim() || "anonymous";
   const trimmedDataSourceId = String(dataSourceId || "").trim();
@@ -238,6 +286,7 @@ async function createSavedQuery({
   const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(defaultRunParams);
   const parameterSchemaValidation = resolveParameterSchema(trimmedSql, parameterSchema, []);
   const tagsValidation = normalizeTags(tags);
+  const visibilityValidation = normalizeVisibility(visibility);
 
   if (!trimmedName || !trimmedDataSourceId || !trimmedSql) {
     return failure(400, { error: "bad_request", message: "name, data_source_id and sql are required" });
@@ -266,6 +315,9 @@ async function createSavedQuery({
   if (!tagsValidation.ok) {
     return failure(400, { error: "bad_request", message: tagsValidation.message });
   }
+  if (!visibilityValidation.ok) {
+    return failure(400, { error: "bad_request", message: visibilityValidation.message });
+  }
 
   if (!(await ensureDataSourceExists(trimmedDataSourceId))) {
     return failure(404, { error: "not_found", message: "Data source not found" });
@@ -282,8 +334,9 @@ async function createSavedQuery({
           sql,
           default_run_params,
           parameter_schema,
-          tags
-        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::text[])
+          tags,
+          visibility
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::text[], $9)
         RETURNING ${SAVED_QUERY_COLUMNS}
       `,
       [
@@ -294,7 +347,8 @@ async function createSavedQuery({
         trimmedSql,
         JSON.stringify(defaultRunParamsValidation.value),
         JSON.stringify(parameterSchemaValidation.value),
-        tagsValidation.value
+        tagsValidation.value,
+        visibilityValidation.value
       ]
     );
 
@@ -317,7 +371,9 @@ async function updateSavedQuery(savedQueryId, {
   sql,
   defaultRunParams,
   parameterSchema,
-  tags
+  tags,
+  visibility,
+  callerUserId
 }) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
@@ -326,6 +382,9 @@ async function updateSavedQuery(savedQueryId, {
   const existing = await loadSavedQuery(savedQueryId);
   if (!existing) {
     return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId && existing.owner_id !== callerUserId) {
+    return failure(403, { error: "forbidden", message: "Only the owner can update this saved query" });
   }
 
   const trimmedDataSourceId = String(dataSourceId || "").trim();
@@ -337,6 +396,7 @@ async function updateSavedQuery(savedQueryId, {
   const tagsValidation = tags === undefined
     ? { ok: true, value: existing.tags || [] }
     : normalizeTags(tags);
+  const visibilityValidation = normalizeVisibility(visibility, existing.visibility || "private");
 
   if (!trimmedName || !trimmedDataSourceId || !trimmedSql) {
     return failure(400, { error: "bad_request", message: "name, data_source_id and sql are required" });
@@ -365,6 +425,9 @@ async function updateSavedQuery(savedQueryId, {
   if (!tagsValidation.ok) {
     return failure(400, { error: "bad_request", message: tagsValidation.message });
   }
+  if (!visibilityValidation.ok) {
+    return failure(400, { error: "bad_request", message: visibilityValidation.message });
+  }
 
   if (!(await ensureDataSourceExists(trimmedDataSourceId))) {
     return failure(404, { error: "not_found", message: "Data source not found" });
@@ -382,6 +445,7 @@ async function updateSavedQuery(savedQueryId, {
           default_run_params = $6::jsonb,
           parameter_schema = $7::jsonb,
           tags = $8::text[],
+          visibility = $9,
           updated_at = NOW()
         WHERE id = $1
         RETURNING ${SAVED_QUERY_COLUMNS}
@@ -394,7 +458,8 @@ async function updateSavedQuery(savedQueryId, {
         trimmedSql,
         JSON.stringify(defaultRunParamsValidation.value),
         JSON.stringify(parameterSchemaValidation.value),
-        tagsValidation.value
+        tagsValidation.value,
+        visibilityValidation.value
       ]
     );
 
@@ -410,9 +475,19 @@ async function updateSavedQuery(savedQueryId, {
   }
 }
 
-async function deleteSavedQuery(savedQueryId) {
+async function deleteSavedQuery(savedQueryId, { callerUserId } = {}) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
+  }
+
+  if (callerUserId) {
+    const existing = await loadSavedQuery(savedQueryId);
+    if (!existing) {
+      return failure(404, { error: "not_found", message: "Saved query not found" });
+    }
+    if (existing.owner_id !== callerUserId) {
+      return failure(403, { error: "forbidden", message: "Only the owner can delete this saved query" });
+    }
   }
 
   const deleteResult = await appDb.query(
@@ -427,7 +502,29 @@ async function deleteSavedQuery(savedQueryId) {
   return success({ ok: true, id: deleteResult.rows[0].id });
 }
 
-async function validateSavedQueryParams(savedQueryId, providedParams) {
+async function loadShareRecord(savedQueryId, userId) {
+  if (!isUuid(savedQueryId) || !userId) return null;
+  const result = await appDb.query(
+    `SELECT permission FROM saved_query_shares WHERE saved_query_id = $1 AND user_id = $2`,
+    [savedQueryId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+// Effective access for the caller. Owner is always full. Visibility 'shared'
+// gives view; explicit share row gives view-or-run. Returns one of:
+// 'owner' | 'run' | 'view' | null
+async function resolveCallerAccess(savedQuery, callerUserId) {
+  if (!savedQuery) return null;
+  if (!callerUserId) return null;
+  if (savedQuery.owner_id === callerUserId) return "owner";
+  const share = await loadShareRecord(savedQuery.id, callerUserId);
+  if (share) return share.permission;
+  if (savedQuery.visibility === "shared") return "view";
+  return null;
+}
+
+async function validateSavedQueryParams(savedQueryId, providedParams, { callerUserId } = {}) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -435,6 +532,12 @@ async function validateSavedQueryParams(savedQueryId, providedParams) {
   const savedQuery = await loadSavedQuery(savedQueryId);
   if (!savedQuery) {
     return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId) {
+    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    if (!access) {
+      return failure(403, { error: "forbidden", message: "You do not have access to this saved query" });
+    }
   }
 
   const validation = validateParameterValues(savedQuery.parameter_schema, providedParams);
@@ -445,7 +548,7 @@ async function validateSavedQueryParams(savedQueryId, providedParams) {
   return success({ ok: true, resolved_values: validation.resolvedValues });
 }
 
-async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs } = {}) {
+async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, callerUserId } = {}) {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -453,6 +556,17 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs } = 
   const savedQuery = await loadSavedQueryForExecution(savedQueryId);
   if (!savedQuery) {
     return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId) {
+    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    if (!access || access === "view") {
+      return failure(403, {
+        error: "forbidden",
+        message: access === "view"
+          ? "You can view this saved query but not run it"
+          : "You do not have access to this saved query"
+      });
+    }
   }
   if (!isSupportedDbType(savedQuery.db_type)) {
     return failure(400, {
@@ -525,6 +639,165 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs } = 
   }
 }
 
+async function listSharesForQuery(savedQueryId) {
+  const result = await appDb.query(
+    `
+      SELECT saved_query_id, user_id, permission, granted_by_user_id, created_at
+      FROM saved_query_shares
+      WHERE saved_query_id = $1
+      ORDER BY created_at ASC
+    `,
+    [savedQueryId]
+  );
+  return result.rows;
+}
+
+function normalizeShareGrants(grants) {
+  if (grants === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(grants)) {
+    return { ok: false, message: "shares must be an array" };
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of grants) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return { ok: false, message: "each share entry must be an object" };
+    }
+    const userId = typeof entry.user_id === "string" ? entry.user_id.trim() : "";
+    if (!isUuid(userId)) {
+      return { ok: false, message: "each share entry must include a user_id UUID" };
+    }
+    if (seen.has(userId)) {
+      return { ok: false, message: `duplicate share entry for user ${userId}` };
+    }
+    seen.add(userId);
+    const permission = typeof entry.permission === "string" ? entry.permission : "";
+    if (!ALLOWED_SHARE_PERMISSIONS.has(permission)) {
+      return {
+        ok: false,
+        message: `permission must be one of: ${[...ALLOWED_SHARE_PERMISSIONS].join(", ")}`
+      };
+    }
+    normalized.push({ user_id: userId, permission });
+  }
+  return { ok: true, value: normalized };
+}
+
+// Replace-semantics: the body's `shares` array fully replaces whatever
+// rows exist for this query. Pass `shares: []` to revoke everyone.
+// Visibility is optional and only changed when present in the body.
+// Returns the new access summary plus a diff so callers can audit each change.
+async function shareSavedQuery(savedQueryId, { callerUserId, visibility, shares } = {}) {
+  if (!isUuid(savedQueryId)) {
+    return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
+  }
+  if (!callerUserId) {
+    return failure(401, { error: "unauthenticated" });
+  }
+
+  const existing = await loadSavedQuery(savedQueryId);
+  if (!existing) {
+    return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (existing.owner_id !== callerUserId) {
+    return failure(403, { error: "forbidden", message: "Only the owner can share this saved query" });
+  }
+
+  const visibilityValidation = visibility === undefined
+    ? { ok: true, value: existing.visibility || "private" }
+    : normalizeVisibility(visibility, existing.visibility || "private");
+  if (!visibilityValidation.ok) {
+    return failure(400, { error: "bad_request", message: visibilityValidation.message });
+  }
+
+  const sharesValidation = normalizeShareGrants(shares);
+  if (!sharesValidation.ok) {
+    return failure(400, { error: "bad_request", message: sharesValidation.message });
+  }
+
+  const previousVisibility = existing.visibility || "private";
+  const previousShares = await listSharesForQuery(savedQueryId);
+  const previousByUser = new Map(previousShares.map((row) => [row.user_id, row.permission]));
+
+  if (visibility !== undefined && visibilityValidation.value !== previousVisibility) {
+    await appDb.query(
+      `UPDATE saved_queries SET visibility = $2, updated_at = NOW() WHERE id = $1`,
+      [savedQueryId, visibilityValidation.value]
+    );
+  }
+
+  const added = [];
+  const updated = [];
+  const removed = [];
+
+  if (sharesValidation.value !== undefined) {
+    const nextByUser = new Map(sharesValidation.value.map((row) => [row.user_id, row.permission]));
+
+    for (const [userId, permission] of nextByUser) {
+      const prev = previousByUser.get(userId);
+      if (!prev) {
+        added.push({ user_id: userId, permission });
+      } else if (prev !== permission) {
+        updated.push({ user_id: userId, permission, previous_permission: prev });
+      }
+    }
+    for (const [userId, permission] of previousByUser) {
+      if (!nextByUser.has(userId)) {
+        removed.push({ user_id: userId, permission });
+      }
+    }
+
+    if (removed.length > 0) {
+      await appDb.query(
+        `DELETE FROM saved_query_shares WHERE saved_query_id = $1 AND user_id = ANY($2::uuid[])`,
+        [savedQueryId, removed.map((entry) => entry.user_id)]
+      );
+    }
+    for (const row of [...added, ...updated]) {
+      await appDb.query(
+        `
+          INSERT INTO saved_query_shares (saved_query_id, user_id, permission, granted_by_user_id)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (saved_query_id, user_id)
+            DO UPDATE SET permission = EXCLUDED.permission, granted_by_user_id = EXCLUDED.granted_by_user_id
+        `,
+        [savedQueryId, row.user_id, row.permission, callerUserId]
+      );
+    }
+  }
+
+  const finalShares = await listSharesForQuery(savedQueryId);
+  return success({
+    visibility: visibilityValidation.value,
+    previous_visibility: previousVisibility,
+    shares: finalShares,
+    diff: { added, updated, removed }
+  });
+}
+
+async function getSavedQueryAccess(savedQueryId, { callerUserId } = {}) {
+  if (!isUuid(savedQueryId)) {
+    return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
+  }
+  const savedQuery = await loadSavedQuery(savedQueryId);
+  if (!savedQuery) {
+    return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId) {
+    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    if (!access) {
+      return failure(403, { error: "forbidden", message: "You do not have access to this saved query" });
+    }
+  }
+  const shares = await listSharesForQuery(savedQueryId);
+  return success({
+    saved_query_id: savedQueryId,
+    owner_id: savedQuery.owner_id,
+    visibility: savedQuery.visibility || "private",
+    shares
+  });
+}
+
 module.exports = {
   getSavedQuery,
   listSavedQueries,
@@ -532,5 +805,8 @@ module.exports = {
   updateSavedQuery,
   deleteSavedQuery,
   validateSavedQueryParams,
-  executeSavedQuery
+  executeSavedQuery,
+  shareSavedQuery,
+  getSavedQueryAccess,
+  resolveCallerAccess
 };

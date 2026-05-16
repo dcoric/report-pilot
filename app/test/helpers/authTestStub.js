@@ -37,6 +37,7 @@ const ROLE_PERMISSIONS = {
     "query.run",
     "saved_queries.read",
     "saved_queries.write",
+    "saved_queries.share",
     "observability.read",
     "observability.write",
     ...SELF_PERMS
@@ -49,6 +50,7 @@ const ROLE_PERMISSIONS = {
     "query.run",
     "saved_queries.read",
     "saved_queries.write",
+    "saved_queries.share",
     "observability.read",
     ...SELF_PERMS
   ],

@@ -2,7 +2,16 @@ const appDb = require("../lib/appDb");
 const { json, readJsonBody } = require("../lib/http");
 const { isUuid } = require("../lib/validation");
 const savedQueryService = require("../services/savedQueryService");
+const auditService = require("../services/auditService");
 const { enforceDataSourceAccess, listAccessibleDataSourceIds } = require("../lib/authGate");
+
+function callerId(req) {
+  return (req.user && req.user.id) || null;
+}
+
+function requestClientIp(req) {
+  return (req.socket && req.socket.remoteAddress) || null;
+}
 
 function writeResult(res, result) {
   return json(res, result.statusCode, result.body);
@@ -31,14 +40,15 @@ async function handleCreateSavedQuery(req, res) {
     }
   }
   const result = await savedQueryService.createSavedQuery({
-    ownerId: req.user && req.user.id ? req.user.id : null,
+    ownerId: callerId(req),
     name: body.name,
     description: body.description,
     dataSourceId: body.data_source_id,
     sql: body.sql,
     defaultRunParams: body.default_run_params,
     parameterSchema: body.parameter_schema,
-    tags: body.tags
+    tags: body.tags,
+    visibility: body.visibility
   });
   return writeResult(res, result);
 }
@@ -51,7 +61,8 @@ async function handleListSavedQueries(req, res, requestUrl) {
   const accessible = await listAccessibleDataSourceIds(req);
   const result = await savedQueryService.listSavedQueries(
     dataSourceId,
-    requestUrl.searchParams.get("tag")
+    requestUrl.searchParams.get("tag"),
+    { callerUserId: callerId(req) }
   );
   if (accessible !== null && Array.isArray(result.body && result.body.items)) {
     const accessibleSet = new Set(accessible);
@@ -68,7 +79,7 @@ async function handleGetSavedQuery(req, res, savedQueryId) {
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.getSavedQuery(savedQueryId);
+  const result = await savedQueryService.getSavedQuery(savedQueryId, { callerUserId: callerId(req) });
   return writeResult(res, result);
 }
 
@@ -91,7 +102,9 @@ async function handleUpdateSavedQuery(req, res, savedQueryId) {
     sql: body.sql,
     defaultRunParams: body.default_run_params,
     parameterSchema: body.parameter_schema,
-    tags: body.tags
+    tags: body.tags,
+    visibility: body.visibility,
+    callerUserId: callerId(req)
   });
   return writeResult(res, result);
 }
@@ -101,7 +114,7 @@ async function handleDeleteSavedQuery(req, res, savedQueryId) {
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.deleteSavedQuery(savedQueryId);
+  const result = await savedQueryService.deleteSavedQuery(savedQueryId, { callerUserId: callerId(req) });
   return writeResult(res, result);
 }
 
@@ -111,7 +124,9 @@ async function handleValidateParams(req, res, savedQueryId) {
     return undefined;
   }
   const body = await readJsonBody(req);
-  const result = await savedQueryService.validateSavedQueryParams(savedQueryId, body.params);
+  const result = await savedQueryService.validateSavedQueryParams(savedQueryId, body.params, {
+    callerUserId: callerId(req)
+  });
   return writeResult(res, result);
 }
 
@@ -124,7 +139,88 @@ async function handleRunSavedQuery(req, res, savedQueryId) {
   const result = await savedQueryService.executeSavedQuery(savedQueryId, {
     params: body.params,
     maxRows: body.max_rows,
-    timeoutMs: body.timeout_ms
+    timeoutMs: body.timeout_ms,
+    callerUserId: callerId(req)
+  });
+  return writeResult(res, result);
+}
+
+async function handleShareSavedQuery(req, res, savedQueryId) {
+  const dsId = await loadSavedQueryDataSourceId(savedQueryId);
+  if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
+    return undefined;
+  }
+  const body = await readJsonBody(req);
+  const result = await savedQueryService.shareSavedQuery(savedQueryId, {
+    callerUserId: callerId(req),
+    visibility: body.visibility,
+    shares: body.shares
+  });
+
+  if (result.ok) {
+    const actor = callerId(req);
+    const summary = result.body;
+    const ip = requestClientIp(req);
+    const userAgent = req.headers["user-agent"] || null;
+    if (summary.previous_visibility !== summary.visibility) {
+      auditService.writeEvent({
+        actorUserId: actor,
+        action: "saved_query.visibility.changed",
+        details: {
+          saved_query_id: savedQueryId,
+          previous: summary.previous_visibility,
+          next: summary.visibility
+        },
+        ipAddress: ip,
+        userAgent
+      }).catch(() => {});
+    }
+    for (const entry of summary.diff.added) {
+      auditService.writeEvent({
+        actorUserId: actor,
+        targetUserId: entry.user_id,
+        action: "saved_query.share.granted",
+        details: { saved_query_id: savedQueryId, permission: entry.permission },
+        ipAddress: ip,
+        userAgent
+      }).catch(() => {});
+    }
+    for (const entry of summary.diff.updated) {
+      auditService.writeEvent({
+        actorUserId: actor,
+        targetUserId: entry.user_id,
+        action: "saved_query.share.updated",
+        details: {
+          saved_query_id: savedQueryId,
+          previous_permission: entry.previous_permission,
+          permission: entry.permission
+        },
+        ipAddress: ip,
+        userAgent
+      }).catch(() => {});
+    }
+    for (const entry of summary.diff.removed) {
+      auditService.writeEvent({
+        actorUserId: actor,
+        targetUserId: entry.user_id,
+        action: "saved_query.share.revoked",
+        details: { saved_query_id: savedQueryId, permission: entry.permission },
+        ipAddress: ip,
+        userAgent
+      }).catch(() => {});
+    }
+  }
+
+  return writeResult(res, result);
+}
+
+async function handleGetSavedQueryAccess(req, res, savedQueryId) {
+  const dsId = await loadSavedQueryDataSourceId(savedQueryId);
+  if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
+    return undefined;
+  }
+  const result = await savedQueryService.getSavedQueryAccess(savedQueryId, {
+    callerUserId: callerId(req)
   });
   return writeResult(res, result);
 }
@@ -136,5 +232,7 @@ module.exports = {
   handleUpdateSavedQuery,
   handleDeleteSavedQuery,
   handleValidateParams,
-  handleRunSavedQuery
+  handleRunSavedQuery,
+  handleShareSavedQuery,
+  handleGetSavedQueryAccess
 };

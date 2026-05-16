@@ -7,12 +7,15 @@ import {
     Database,
     FileText,
     Filter,
+    Globe,
     Loader2,
+    Lock,
     MoreVertical,
     Pencil,
     Plus,
     RefreshCw,
     Search,
+    Share2,
     Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,6 +23,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../hooks/useDataSource';
 import { useSavedQueries } from '../hooks/useSavedQueries';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
+import { ShareSavedQueryDialog } from '../components/Query/ShareSavedQueryDialog';
 import type { SavedQuery } from '../components/Query/types';
 
 type FilterMode = 'current' | 'all';
@@ -34,8 +38,10 @@ function formatDate(value: string) {
 
 export const SavedQueries = () => {
     const navigate = useNavigate();
-    const { hasPermission } = useAuth();
+    const { user, hasPermission } = useAuth();
     const canWriteSavedQueries = hasPermission('saved_queries.write');
+    const canShareSavedQueries = hasPermission('saved_queries.share');
+    const currentUserId = user?.id ?? null;
     const { dataSources, selectedDataSourceId } = useDataSource();
     const {
         savedQueries,
@@ -46,6 +52,8 @@ export const SavedQueries = () => {
         duplicateSavedQuery,
         deleteSavedQuery,
     } = useSavedQueries();
+
+    const [sharingQuery, setSharingQuery] = useState<SavedQuery | null>(null);
 
     const [searchText, setSearchText] = useState('');
     const [filterMode, setFilterMode] = useState<FilterMode>('all');
@@ -297,16 +305,30 @@ export const SavedQueries = () => {
                                                         <span className="font-mono text-[9px] font-bold text-on-primary-fixed">SQL</span>
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <button
-                                                            type="button"
-                                                            onClick={(event) => {
-                                                                event.stopPropagation();
-                                                                openInWorkspace(entry.id);
-                                                            }}
-                                                            className="truncate text-left text-[13px] font-semibold leading-tight text-on-surface hover:text-oxblood"
-                                                        >
-                                                            {entry.name}
-                                                        </button>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    openInWorkspace(entry.id);
+                                                                }}
+                                                                className="truncate text-left text-[13px] font-semibold leading-tight text-on-surface hover:text-oxblood"
+                                                            >
+                                                                {entry.name}
+                                                            </button>
+                                                            <span
+                                                                className={[
+                                                                    'inline-flex items-center gap-0.5 rounded-sm border px-1 py-0.5 text-[9px] font-medium uppercase',
+                                                                    entry.visibility === 'shared'
+                                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                        : 'border-slate-200 bg-slate-100 text-slate-600',
+                                                                ].join(' ')}
+                                                                title={entry.visibility === 'shared' ? 'Shared with the organization' : 'Private to owner and explicit grants'}
+                                                            >
+                                                                {entry.visibility === 'shared' ? <Globe size={9} /> : <Lock size={9} />}
+                                                                {entry.visibility}
+                                                            </span>
+                                                        </div>
                                                         <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
                                                             <Database size={10} />
                                                             <span className="truncate">
@@ -376,6 +398,16 @@ export const SavedQueries = () => {
                                         >
                                             {pendingId === selectedQuery.id ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
                                         </button>
+                                        {canShareSavedQueries && currentUserId === selectedQuery.owner_id && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSharingQuery(selectedQuery)}
+                                                className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface"
+                                                title="Share"
+                                            >
+                                                <Share2 size={16} />
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() => setEditing(selectedQuery)}
@@ -512,6 +544,15 @@ export const SavedQueries = () => {
                 onClose={() => setEditing(null)}
                 onSave={handleSaveEdit}
             />
+
+            {sharingQuery && (
+                <ShareSavedQueryDialog
+                    savedQuery={sharingQuery}
+                    isOpen
+                    onClose={() => setSharingQuery(null)}
+                    onUpdated={() => { void refresh(); }}
+                />
+            )}
 
             {confirmDeleteId && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

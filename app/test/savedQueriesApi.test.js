@@ -16,6 +16,7 @@ const MISSING_SOURCE_ID = "00000000-0000-4000-8000-000000009999";
 let server;
 let baseUrl;
 let savedQueries;
+let savedQueryShares;
 let savedQueryCounter;
 let originalQuery;
 let originalCreateDatabaseAdapter;
@@ -23,6 +24,10 @@ let originalIsSupportedDbType;
 let adapterCalls;
 let authStub;
 const testUsers = {};
+
+function shareKey(savedQueryId, userId) {
+  return `${savedQueryId}::${userId}`;
+}
 
 function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
@@ -97,6 +102,7 @@ before(async () => {
   originalCreateDatabaseAdapter = dbAdapterFactory.createDatabaseAdapter;
   originalIsSupportedDbType = dbAdapterFactory.isSupportedDbType;
   savedQueries = new Map();
+  savedQueryShares = new Map();
   savedQueryCounter = 0;
   adapterCalls = [];
   authStub = createAuthTestStub();
@@ -144,7 +150,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("insert into saved_queries")) {
-      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags] = params;
+      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params;
       const duplicate = [...savedQueries.values()].find((entry) => (
         entry.owner_id === ownerId
         && entry.data_source_id === dataSourceId
@@ -165,6 +171,7 @@ before(async () => {
         default_run_params: JSON.parse(defaultRunParamsJson),
         parameter_schema: JSON.parse(parameterSchemaJson),
         tags: Array.isArray(tags) ? tags : [],
+        visibility: visibility || "private",
         created_at: now,
         updated_at: now
       };
@@ -172,7 +179,24 @@ before(async () => {
       return { rowCount: 1, rows: [row] };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
+    // Caller-aware list (the new QUERY-006 variant) — restricts to
+    // owner + visibility='shared' + explicit grant.
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries sq where ($1::uuid is null or sq.data_source_id = $1::uuid)")) {
+      const [dataSourceId, tagFilter, callerUserId] = params;
+      const rows = sortSavedQueries(
+        [...savedQueries.values()].filter((entry) => {
+          if (dataSourceId && entry.data_source_id !== dataSourceId) return false;
+          if (tagFilter && !(entry.tags || []).includes(tagFilter)) return false;
+          if (entry.owner_id === callerUserId) return true;
+          if (entry.visibility === "shared") return true;
+          if (savedQueryShares.has(shareKey(entry.id, callerUserId))) return true;
+          return false;
+        })
+      );
+      return { rowCount: rows.length, rows };
+    }
+
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
       const [dataSourceId, tagFilter] = params;
       const rows = sortSavedQueries(
         [...savedQueries.values()].filter((entry) => {
@@ -188,13 +212,13 @@ before(async () => {
       return { rowCount: rows.length, rows };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at from saved_queries where id = $1")) {
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries where id = $1")) {
       const [id] = params;
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
-    if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.tags, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
+    if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.tags, sq.visibility, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
       const [id] = params;
       const row = savedQueries.get(id);
       if (!row) {
@@ -215,7 +239,18 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_queries set")) {
-      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags] = params;
+      // Two callers: the full update flow (9 params) and the visibility-only
+      // toggle from shareSavedQuery (2 params: id + visibility).
+      if (params.length === 2) {
+        const [id, visibility] = params;
+        const existing = savedQueries.get(id);
+        if (!existing) return { rowCount: 0, rows: [] };
+        const updated = { ...existing, visibility, updated_at: new Date().toISOString() };
+        savedQueries.set(id, updated);
+        return { rowCount: 1, rows: [updated] };
+      }
+
+      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params;
       const existing = savedQueries.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -240,6 +275,7 @@ before(async () => {
         default_run_params: JSON.parse(defaultRunParamsJson),
         parameter_schema: JSON.parse(parameterSchemaJson),
         tags: Array.isArray(tags) ? tags : (existing.tags || []),
+        visibility: visibility || existing.visibility || "private",
         updated_at: new Date().toISOString()
       };
       savedQueries.set(id, updated);
@@ -254,7 +290,50 @@ before(async () => {
       }
 
       savedQueries.delete(id);
+      // Cascade clean-up of shares (matches the FK ON DELETE CASCADE).
+      for (const key of [...savedQueryShares.keys()]) {
+        if (key.startsWith(`${id}::`)) savedQueryShares.delete(key);
+      }
       return { rowCount: 1, rows: [{ id }] };
+    }
+
+    if (normalized.startsWith("select permission from saved_query_shares where saved_query_id = $1 and user_id = $2")) {
+      const [savedQueryId, userId2] = params;
+      const row = savedQueryShares.get(shareKey(savedQueryId, userId2));
+      return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
+    }
+
+    if (normalized.startsWith("select saved_query_id, user_id, permission, granted_by_user_id, created_at from saved_query_shares where saved_query_id = $1")) {
+      const [savedQueryId] = params;
+      const rows = [...savedQueryShares.values()]
+        .filter((row) => row.saved_query_id === savedQueryId)
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      return { rowCount: rows.length, rows };
+    }
+
+    if (normalized.startsWith("delete from saved_query_shares where saved_query_id = $1 and user_id = any($2::uuid[])")) {
+      const [savedQueryId, userIds] = params;
+      for (const uid of userIds || []) savedQueryShares.delete(shareKey(savedQueryId, uid));
+      return { rowCount: (userIds || []).length, rows: [] };
+    }
+
+    if (normalized.startsWith("insert into saved_query_shares")) {
+      const [savedQueryId, userId2, permission, grantedBy] = params;
+      const now = new Date().toISOString();
+      const existing = savedQueryShares.get(shareKey(savedQueryId, userId2));
+      const row = {
+        saved_query_id: savedQueryId,
+        user_id: userId2,
+        permission,
+        granted_by_user_id: grantedBy,
+        created_at: existing ? existing.created_at : now
+      };
+      savedQueryShares.set(shareKey(savedQueryId, userId2), row);
+      return { rowCount: 1, rows: [row] };
+    }
+
+    if (normalized.startsWith("insert into auth_audit_log")) {
+      return { rowCount: 1, rows: [] };
     }
 
     throw new Error(`Unexpected SQL in test stub: ${normalized}`);
@@ -268,6 +347,7 @@ before(async () => {
 
 beforeEach(() => {
   savedQueries.clear();
+  savedQueryShares.clear();
   savedQueryCounter = 0;
   adapterCalls = [];
 });
@@ -313,12 +393,12 @@ test("saved queries create/list/get/update/delete happy path", async () => {
 
   const savedQueryId = create.payload.id;
 
-  const list = await api("GET", "/v1/saved-queries", undefined, "bob");
+  const list = await api("GET", "/v1/saved-queries", undefined, "alice");
   assert.equal(list.status, 200);
   assert.equal(list.payload.items.length, 1);
   assert.equal(list.payload.items[0].id, savedQueryId);
 
-  const getById = await api("GET", `/v1/saved-queries/${savedQueryId}`, undefined, "bob");
+  const getById = await api("GET", `/v1/saved-queries/${savedQueryId}`, undefined, "alice");
   assert.equal(getById.status, 200);
   assert.equal(getById.payload.id, savedQueryId);
   assert.equal(getById.payload.owner_id, userId("alice"));
@@ -332,7 +412,7 @@ test("saved queries create/list/get/update/delete happy path", async () => {
       model: "gpt-4.1-mini",
       no_execute: true
     }
-  }, "bob");
+  }, "alice");
   assert.equal(update.status, 200);
   assert.equal(update.payload.owner_id, userId("alice"));
   assert.equal(update.payload.data_source_id, OTHER_SOURCE_ID);
@@ -342,12 +422,12 @@ test("saved queries create/list/get/update/delete happy path", async () => {
   });
   assert.deepEqual(update.payload.parameter_schema, []);
 
-  const filteredList = await api("GET", `/v1/saved-queries?data_source_id=${OTHER_SOURCE_ID}`, undefined, "carol");
+  const filteredList = await api("GET", `/v1/saved-queries?data_source_id=${OTHER_SOURCE_ID}`, undefined, "alice");
   assert.equal(filteredList.status, 200);
   assert.equal(filteredList.payload.items.length, 1);
   assert.equal(filteredList.payload.items[0].id, savedQueryId);
 
-  const del = await api("DELETE", `/v1/saved-queries/${savedQueryId}`, undefined, "dave");
+  const del = await api("DELETE", `/v1/saved-queries/${savedQueryId}`, undefined, "alice");
   assert.equal(del.status, 200);
   assert.deepEqual(del.payload, { ok: true, id: savedQueryId });
 
@@ -356,30 +436,33 @@ test("saved queries create/list/get/update/delete happy path", async () => {
   assert.equal(listAfterDelete.payload.items.length, 0);
 });
 
-test("saved queries are publicly readable and openly writable", async () => {
+test("QUERY-006 private saved queries are hidden from non-owners and write-protected", async () => {
   const created = await api("POST", "/v1/saved-queries", {
     name: "Store Revenue",
     data_source_id: DATA_SOURCE_ID,
     sql: "SELECT * FROM store_revenue"
   }, "owner-a");
+  assert.equal(created.status, 201);
+  assert.equal(created.payload.visibility, "private");
 
   const savedQueryId = created.payload.id;
 
   const fetchedByOtherUser = await api("GET", `/v1/saved-queries/${savedQueryId}`, undefined, "owner-b");
-  assert.equal(fetchedByOtherUser.status, 200);
-  assert.equal(fetchedByOtherUser.payload.owner_id, userId("owner-a"));
+  assert.equal(fetchedByOtherUser.status, 403);
 
-  const updatedByOtherUser = await api("PUT", `/v1/saved-queries/${savedQueryId}`, {
-    name: "Store Revenue Updated",
+  const listFromStranger = await api("GET", "/v1/saved-queries", undefined, "owner-b");
+  assert.equal(listFromStranger.status, 200);
+  assert.equal(listFromStranger.payload.items.length, 0);
+
+  const updateByOther = await api("PUT", `/v1/saved-queries/${savedQueryId}`, {
+    name: "Stolen",
     data_source_id: DATA_SOURCE_ID,
-    sql: "SELECT store_id, revenue FROM store_revenue",
-    description: "updated by another user"
+    sql: "SELECT 1"
   }, "owner-b");
-  assert.equal(updatedByOtherUser.status, 200);
-  assert.equal(updatedByOtherUser.payload.owner_id, userId("owner-a"));
+  assert.equal(updateByOther.status, 403);
 
-  const deletedByOtherUser = await api("DELETE", `/v1/saved-queries/${savedQueryId}`, undefined, "owner-c");
-  assert.equal(deletedByOtherUser.status, 200);
+  const deletedByOther = await api("DELETE", `/v1/saved-queries/${savedQueryId}`, undefined, "owner-b");
+  assert.equal(deletedByOther.status, 403);
 });
 
 test("saved queries auto-extract placeholders and preserve schema customizations on update", async () => {
@@ -672,4 +755,167 @@ test("saved query tags are normalized, deduplicated, and filterable", async () =
     tags: "finance"
   });
   assert.equal(wrongShape.status, 400);
+});
+
+test("QUERY-006 visibility='shared' surfaces queries to other authenticated users (read-only)", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Org Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT * FROM revenue",
+    visibility: "shared"
+  }, "owner-x");
+  assert.equal(created.status, 201);
+  assert.equal(created.payload.visibility, "shared");
+
+  const id = created.payload.id;
+
+  // Other user can list + GET it.
+  const listForOther = await api("GET", "/v1/saved-queries", undefined, "viewer-y");
+  assert.equal(listForOther.status, 200);
+  assert.equal(listForOther.payload.items.length, 1);
+  assert.equal(listForOther.payload.items[0].id, id);
+
+  const getForOther = await api("GET", `/v1/saved-queries/${id}`, undefined, "viewer-y");
+  assert.equal(getForOther.status, 200);
+
+  // But cannot edit, delete, or share.
+  const updateByOther = await api("PUT", `/v1/saved-queries/${id}`, {
+    name: "Hijacked",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 0"
+  }, "viewer-y");
+  assert.equal(updateByOther.status, 403);
+
+  const deleteByOther = await api("DELETE", `/v1/saved-queries/${id}`, undefined, "viewer-y");
+  assert.equal(deleteByOther.status, 403);
+
+  const shareByOther = await api("POST", `/v1/saved-queries/${id}/share`, {
+    visibility: "private"
+  }, "viewer-y");
+  assert.equal(shareByOther.status, 403);
+});
+
+test("QUERY-006 explicit per-user share with 'view' permission cannot run", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Limited Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "owner-share");
+  const id = created.payload.id;
+  const recipient = ensureTestUser("viewer-recipient");
+
+  const share = await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: [{ user_id: recipient.id, permission: "view" }]
+  }, "owner-share");
+  assert.equal(share.status, 200);
+  assert.equal(share.payload.shares.length, 1);
+  assert.equal(share.payload.shares[0].user_id, recipient.id);
+  assert.equal(share.payload.shares[0].permission, "view");
+
+  const recipientSees = await api("GET", `/v1/saved-queries/${id}`, undefined, "viewer-recipient");
+  assert.equal(recipientSees.status, 200);
+
+  const recipientRuns = await api("POST", `/v1/saved-queries/${id}/run`, {
+    params: {}
+  }, "viewer-recipient");
+  assert.equal(recipientRuns.status, 403);
+
+  const strangerSees = await api("GET", `/v1/saved-queries/${id}`, undefined, "stranger");
+  assert.equal(strangerSees.status, 403);
+});
+
+test("QUERY-006 explicit 'run' share lets recipient execute; revoke removes both rights", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Runnable Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "owner-run");
+  const id = created.payload.id;
+  const recipient = ensureTestUser("runner-recipient");
+
+  const grant = await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: [{ user_id: recipient.id, permission: "run" }]
+  }, "owner-run");
+  assert.equal(grant.status, 200);
+
+  const recipientRuns = await api("POST", `/v1/saved-queries/${id}/run`, {
+    params: {}
+  }, "runner-recipient");
+  assert.equal(recipientRuns.status, 200);
+  assert.equal(recipientRuns.payload.row_count, 1);
+
+  // Now revoke by sending an empty shares list.
+  const revoke = await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: []
+  }, "owner-run");
+  assert.equal(revoke.status, 200);
+  assert.equal(revoke.payload.shares.length, 0);
+  assert.equal(revoke.payload.diff.removed.length, 1);
+
+  const recipientGets = await api("GET", `/v1/saved-queries/${id}`, undefined, "runner-recipient");
+  assert.equal(recipientGets.status, 403);
+});
+
+test("QUERY-006 access endpoint exposes visibility + grants to owner; non-owners are forbidden", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Access Test",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "access-owner");
+  const id = created.payload.id;
+  const recipient = ensureTestUser("access-recipient");
+
+  await api("POST", `/v1/saved-queries/${id}/share`, {
+    visibility: "private",
+    shares: [{ user_id: recipient.id, permission: "view" }]
+  }, "access-owner");
+
+  const ownerAccess = await api("GET", `/v1/saved-queries/${id}/access`, undefined, "access-owner");
+  assert.equal(ownerAccess.status, 200);
+  assert.equal(ownerAccess.payload.visibility, "private");
+  assert.equal(ownerAccess.payload.owner_id, userId("access-owner"));
+  assert.equal(ownerAccess.payload.shares.length, 1);
+  assert.equal(ownerAccess.payload.shares[0].permission, "view");
+
+  // Granted user can see the access summary (read access implies it).
+  const recipientAccess = await api("GET", `/v1/saved-queries/${id}/access`, undefined, "access-recipient");
+  assert.equal(recipientAccess.status, 200);
+
+  // Stranger can't.
+  const strangerAccess = await api("GET", `/v1/saved-queries/${id}/access`, undefined, "stranger-a");
+  assert.equal(strangerAccess.status, 403);
+});
+
+test("QUERY-006 share endpoint validates the grant payload", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Validate Share",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "share-owner");
+  const id = created.payload.id;
+
+  const badVisibility = await api("POST", `/v1/saved-queries/${id}/share`, {
+    visibility: "public"
+  }, "share-owner");
+  assert.equal(badVisibility.status, 400);
+
+  const badPermission = await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: [{ user_id: "00000000-0000-4000-8000-aaaa00000099", permission: "admin" }]
+  }, "share-owner");
+  assert.equal(badPermission.status, 400);
+
+  const badUserId = await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: [{ user_id: "not-a-uuid", permission: "view" }]
+  }, "share-owner");
+  assert.equal(badUserId.status, 400);
+});
+
+test("QUERY-006 viewer role is denied by the share permission policy", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Viewer Share",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "viewer-share-owner", { role: "viewer" });
+  // Viewers can't write saved queries, so creation itself is denied.
+  assert.equal(created.status, 403);
 });

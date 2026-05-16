@@ -2337,6 +2337,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/saved-queries/{savedQueryId}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace the share grants for a saved query (owner-only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ShareSavedQueryRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated visibility + share grants, with diff */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryShareResponse"];
+                    };
+                };
+                /** @description Invalid visibility or share grant payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get visibility + share grants for a saved query */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current access summary */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryAccessResponse"];
+                    };
+                };
+                /** @description Caller does not have access to this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/query/sessions": {
         parameters: {
             query?: never;
@@ -4023,6 +4138,8 @@ export interface components {
             };
             parameter_schema: components["schemas"]["QueryParameter"][];
             tags: string[];
+            /** @enum {string} */
+            visibility: "private" | "shared";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -4049,6 +4166,8 @@ export interface components {
             };
             parameter_schema?: components["schemas"]["QueryParameter"][];
             tags?: string[];
+            /** @enum {string} */
+            visibility?: "private" | "shared";
         };
         UpdateSavedQueryRequest: {
             name: string;
@@ -4064,6 +4183,60 @@ export interface components {
             };
             parameter_schema?: components["schemas"]["QueryParameter"][];
             tags?: string[];
+            /** @enum {string} */
+            visibility?: "private" | "shared";
+        };
+        /** @description Owner-only. Replace-semantics: the `shares` array fully replaces the existing per-user grants for this query. Omit `shares` to leave grants unchanged; pass `shares: []` to revoke everyone. */
+        ShareSavedQueryRequest: {
+            /** @enum {string} */
+            visibility?: "private" | "shared";
+            shares?: {
+                user_id: string;
+                /** @enum {string} */
+                permission: "view" | "run";
+            }[];
+        };
+        SavedQueryShareRecord: {
+            saved_query_id: string;
+            user_id: string;
+            /** @enum {string} */
+            permission: "view" | "run";
+            granted_by_user_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SavedQueryAccessResponse: {
+            saved_query_id: string;
+            owner_id: string;
+            /** @enum {string} */
+            visibility: "private" | "shared";
+            shares: components["schemas"]["SavedQueryShareRecord"][];
+        };
+        SavedQueryShareResponse: {
+            /** @enum {string} */
+            visibility: "private" | "shared";
+            /** @enum {string} */
+            previous_visibility: "private" | "shared";
+            shares: components["schemas"]["SavedQueryShareRecord"][];
+            diff: {
+                added: {
+                    user_id: string;
+                    /** @enum {string} */
+                    permission: "view" | "run";
+                }[];
+                updated: {
+                    user_id: string;
+                    /** @enum {string} */
+                    permission: "view" | "run";
+                    /** @enum {string} */
+                    previous_permission: "view" | "run";
+                }[];
+                removed: {
+                    user_id: string;
+                    /** @enum {string} */
+                    permission: "view" | "run";
+                }[];
+            };
         };
         ValidateParamsRequest: {
             params: {
