@@ -16,6 +16,7 @@ import { Settings } from './pages/Settings';
 import { LLMProviders } from './pages/LLMProviders';
 import { AuthProviders } from './pages/AuthProviders';
 import { AuditLog } from './pages/AuditLog';
+import { PromptPresets } from './pages/PromptPresets';
 
 function App() {
   return (
@@ -79,6 +80,7 @@ function App() {
               )}
             />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/prompts" element={<PromptPresets />} />
             <Route
               path="/admin/auth-providers"
               element={(
