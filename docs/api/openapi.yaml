@@ -140,6 +140,115 @@ paths:
           description: Unauthenticated
         "403":
           description: Forbidden
+  /v1/users/me/prompt-presets:
+    get:
+      tags: [Auth]
+      summary: List the current user's prompt presets, plus any presets shared by others
+      description: AUTH-007. Returns the union of the caller's own presets (any visibility) and other users' presets with `visibility = 'shared'`, newest first.
+      responses:
+        "200":
+          description: Presets visible to the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PromptPreset"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+    post:
+      tags: [Auth]
+      summary: Create a prompt preset owned by the current user
+      description: AUTH-007.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptPresetUpsertRequest"
+      responses:
+        "201":
+          description: Preset created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptPreset"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserConfigErrorResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+  /v1/users/me/prompt-presets/{id}:
+    put:
+      tags: [Auth]
+      summary: Update an owned prompt preset
+      description: AUTH-007. Partial update — only the supplied fields are changed. Only the owner can edit.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptPresetUpsertRequest"
+      responses:
+        "200":
+          description: Updated preset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptPreset"
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Caller is not the owner
+        "404":
+          description: Preset not found
+    delete:
+      tags: [Auth]
+      summary: Delete an owned prompt preset
+      description: AUTH-007. Only the owner can delete.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  id:
+                    type: string
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Caller is not the owner
+        "404":
+          description: Preset not found
   /v1/admin/users:
     get:
       tags: [Admin]
@@ -2123,6 +2232,59 @@ components:
         table_preferences:
           type: object
           additionalProperties: true
+    PromptPreset:
+      type: object
+      description: AUTH-007. A saved prompt template owned by a single user.
+      required: [id, owner_user_id, title, prompt_text, tags, visibility, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        prompt_text:
+          type: string
+          maxLength: 8192
+        data_source_id:
+          type: string
+          format: uuid
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        visibility:
+          type: string
+          enum: [private, shared]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PromptPresetUpsertRequest:
+      type: object
+      description: AUTH-007. Body for create / update. On update, omitted fields keep their existing value.
+      properties:
+        title:
+          type: string
+        prompt_text:
+          type: string
+        data_source_id:
+          type: string
+          format: uuid
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        visibility:
+          type: string
+          enum: [private, shared]
     UserConfigErrorResponse:
       type: object
       required: [error, code, message]

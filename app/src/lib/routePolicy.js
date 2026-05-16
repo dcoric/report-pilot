@@ -28,6 +28,12 @@ const POLICIES = [
   { method: "GET", pattern: /^\/v1\/users\/me\/config$/, permission: "users.read_self" },
   { method: "PUT", pattern: /^\/v1\/users\/me\/config$/, permission: "users.write_self" },
 
+  // AUTH-007 — per-user prompt presets (any authenticated role)
+  { method: "GET", pattern: /^\/v1\/users\/me\/prompt-presets$/, permission: "users.read_self" },
+  { method: "POST", pattern: /^\/v1\/users\/me\/prompt-presets$/, permission: "users.write_self" },
+  { method: "PUT", pattern: /^\/v1\/users\/me\/prompt-presets\/[^/]+$/, permission: "users.write_self" },
+  { method: "DELETE", pattern: /^\/v1\/users\/me\/prompt-presets\/[^/]+$/, permission: "users.write_self" },
+
   // Admin
   { method: "GET", pattern: /^\/v1\/admin\/users$/, role: "admin" },
   { method: "POST", pattern: /^\/v1\/admin\/users$/, role: "admin" },

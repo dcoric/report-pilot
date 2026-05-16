@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
     Bell,
     BookOpen,
+    Bookmark,
     ChevronDown,
     ChevronRight,
     Database,
@@ -35,6 +36,7 @@ type NavEntry = {
 const PRIMARY_NAV: NavEntry[] = [
     { path: '/dashboard', label: 'Home', icon: Home },
     { path: '/queries', label: 'Queries', icon: Terminal, permission: 'saved_queries.read' },
+    { path: '/prompts', label: 'Prompts', icon: Bookmark, permission: 'users.read_self' },
     { path: '/data-sources', label: 'Datasets', icon: Database, permission: 'data_sources.read' },
     { path: '/folders', label: 'Folders', icon: FolderClosed, stub: true },
     { path: '/favorites', label: 'Favorites', icon: Star, stub: true },
@@ -66,6 +68,7 @@ const PATH_LABELS: Record<string, string> = {
     '/docs': 'Documentation',
     '/admin/auth-providers': 'Auth Providers',
     '/admin/audit-log': 'Audit Log',
+    '/prompts': 'Prompt Presets',
 };
 
 function NavItem({ to, label, Icon, stub }: { to: string; label: string; Icon: typeof Home; stub?: boolean }) {

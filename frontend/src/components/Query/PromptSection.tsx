@@ -1,8 +1,12 @@
-import { useState, type RefObject } from 'react';
-import { History, Loader2, Settings2, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { Bookmark, History, Loader2, Settings2, Sparkles } from 'lucide-react';
 import { PromptHistoryPanel } from './PromptHistoryPanel';
 import { RunSettingsPopover } from './RunSettingsPopover';
 import type { LlmProvider, PromptHistoryItem, PromptHistoryPosition } from './types';
+import { client } from '../../lib/api/client';
+import type { components } from '../../lib/api/types';
+
+type PromptPreset = components['schemas']['PromptPreset'];
 
 interface PromptSectionProps {
     isDryRun: boolean;
@@ -66,6 +70,35 @@ export function PromptSection({
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const canGenerate = !isGenerating && question.trim().length > 0 && Boolean(selectedDataSourceId);
 
+    // AUTH-007: per-user prompt presets. We lazy-load them the first time the
+    // picker opens so the page doesn't issue an extra request on mount.
+    const [isPresetsOpen, setIsPresetsOpen] = useState(false);
+    const [presets, setPresets] = useState<PromptPreset[] | null>(null);
+    const [presetsLoading, setPresetsLoading] = useState(false);
+    const presetsPanelRef = useRef<HTMLDivElement | null>(null);
+    const loadPresets = useCallback(async () => {
+        setPresetsLoading(true);
+        try {
+            const { data } = await client.GET('/v1/users/me/prompt-presets');
+            setPresets(data?.items ?? []);
+        } finally {
+            setPresetsLoading(false);
+        }
+    }, []);
+    useEffect(() => {
+        if (isPresetsOpen && presets === null) void loadPresets();
+    }, [isPresetsOpen, presets, loadPresets]);
+    useEffect(() => {
+        if (!isPresetsOpen) return;
+        const onDocClick = (event: MouseEvent) => {
+            if (presetsPanelRef.current && !presetsPanelRef.current.contains(event.target as Node)) {
+                setIsPresetsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, [isPresetsOpen]);
+
     return (
         <div className="flex-shrink-0 border-b border-outline-variant bg-surface-container-low p-4">
             {isDryRun && (
@@ -92,6 +125,61 @@ export function PromptSection({
                 />
 
                 <div className="absolute right-2 flex items-center gap-1">
+                    <div ref={presetsPanelRef} className="relative">
+                        <button
+                            type="button"
+                            onClick={() => setIsPresetsOpen((open) => !open)}
+                            className="rounded p-1.5 text-slate-500 hover:bg-slate-100"
+                            title="Prompt presets"
+                            aria-label="Prompt presets"
+                        >
+                            <Bookmark size={14} />
+                        </button>
+                        {isPresetsOpen && (
+                            <div className="absolute right-0 top-9 z-30 w-80 overflow-hidden rounded-lg border border-outline-variant bg-white shadow-lg">
+                                <div className="flex items-center justify-between border-b border-outline-variant px-3 py-2 text-xs font-medium text-slate-600">
+                                    <span>Saved prompts</span>
+                                    <span className="text-[10px] text-slate-400">{presets?.length ?? 0}</span>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto">
+                                    {presetsLoading ? (
+                                        <div className="px-3 py-4 text-xs text-slate-500">Loading…</div>
+                                    ) : !presets || presets.length === 0 ? (
+                                        <div className="px-3 py-4 text-xs text-slate-500">
+                                            No saved prompts yet. Create one from the <strong>Prompts</strong> page.
+                                        </div>
+                                    ) : (
+                                        presets.map((preset) => {
+                                            const matchesDataSource = !preset.data_source_id || preset.data_source_id === selectedDataSourceId;
+                                            return (
+                                                <button
+                                                    key={preset.id}
+                                                    type="button"
+                                                    onClick={() => { onQuestionChange(preset.prompt_text); setIsPresetsOpen(false); }}
+                                                    className="block w-full border-b border-outline-variant px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
+                                                >
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="truncate text-xs font-medium text-slate-800">{preset.title}</span>
+                                                        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                                                            preset.visibility === 'shared' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'
+                                                        }`}>
+                                                            {preset.visibility}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">{preset.prompt_text}</div>
+                                                    {!matchesDataSource && preset.data_source_id && (
+                                                        <div className="mt-0.5 text-[10px] text-amber-700">
+                                                            Saved for a different data source
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                     <div ref={promptHistoryRef} className="relative">
                         <button
                             ref={promptHistoryButtonRef}

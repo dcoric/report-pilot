@@ -105,6 +105,12 @@ const {
   handlePutConfig: handlePutUserConfig
 } = require("./routes/userConfig");
 const {
+  handleList: handleListPromptPresets,
+  handleCreate: handleCreatePromptPreset,
+  handleUpdate: handleUpdatePromptPreset,
+  handleDelete: handleDeletePromptPreset
+} = require("./routes/promptPresets");
+const {
   handleServiceProviderConfig,
   handleResourceTypes,
   handleSchemas,
@@ -257,6 +263,19 @@ async function routeRequest(req, res) {
   }
   if (req.method === "PUT" && pathname === "/v1/users/me/config") {
     return handlePutUserConfig(req, res);
+  }
+
+  // AUTH-007: per-user prompt presets
+  if (req.method === "GET" && pathname === "/v1/users/me/prompt-presets") {
+    return handleListPromptPresets(req, res);
+  }
+  if (req.method === "POST" && pathname === "/v1/users/me/prompt-presets") {
+    return handleCreatePromptPreset(req, res);
+  }
+  const promptPresetIdMatch = pathname.match(/^\/v1\/users\/me\/prompt-presets\/([^/]+)$/);
+  if (promptPresetIdMatch) {
+    if (req.method === "PUT") return handleUpdatePromptPreset(req, res, promptPresetIdMatch[1]);
+    if (req.method === "DELETE") return handleDeletePromptPreset(req, res, promptPresetIdMatch[1]);
   }
 
   if (req.method === "GET" && pathname === "/v1/admin/users") {
