@@ -82,6 +82,64 @@ paths:
                 $ref: "#/components/schemas/AuthMeResponse"
         "401":
           description: No active session
+  /v1/users/me/config:
+    get:
+      tags: [Auth]
+      summary: Get the current user's configuration profile
+      description: |
+        Returns the authenticated user's saved preferences (default data
+        source, default LLM provider/model, max rows, timeout, theme, table
+        preferences). Falls back to baseline defaults when no row has been
+        saved yet. AUTH-006.
+      responses:
+        "200":
+          description: User configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [config]
+                properties:
+                  config:
+                    $ref: "#/components/schemas/UserConfig"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
+    put:
+      tags: [Auth]
+      summary: Replace the current user's configuration profile
+      description: |
+        Replaces the saved configuration with the supplied body. All known
+        fields are validated server-side; unknown fields return 400.
+        AUTH-006.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserConfig"
+      responses:
+        "200":
+          description: Saved configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [config]
+                properties:
+                  config:
+                    $ref: "#/components/schemas/UserConfig"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserConfigErrorResponse"
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Forbidden
   /v1/admin/users:
     get:
       tags: [Admin]
@@ -2034,6 +2092,49 @@ components:
           description: AUTH-013. Plaintext bearer token. Shown exactly once.
         record:
           $ref: "#/components/schemas/ScimTokenRecord"
+    UserConfig:
+      type: object
+      description: AUTH-006. Per-user configuration profile.
+      properties:
+        default_data_source_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Preferred data source preselected on the query page.
+        default_llm_provider_id:
+          type: string
+          format: uuid
+          nullable: true
+        default_model:
+          type: string
+          nullable: true
+          maxLength: 120
+        max_rows:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+        theme:
+          type: string
+          enum: [light, dark, system]
+        table_preferences:
+          type: object
+          additionalProperties: true
+    UserConfigErrorResponse:
+      type: object
+      required: [error, code, message]
+      properties:
+        error:
+          type: string
+          enum: [bad_request]
+        code:
+          type: string
+          description: Stable error code (e.g. `invalid_default_data_source_id`, `invalid_theme`).
+        message:
+          type: string
     ScimGroupMappingsResponse:
       type: object
       required: [provider_id, group_mappings]

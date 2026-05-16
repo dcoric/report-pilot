@@ -162,6 +162,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/me/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current user's configuration profile
+         * @description Returns the authenticated user's saved preferences (default data
+         *     source, default LLM provider/model, max rows, timeout, theme, table
+         *     preferences). Falls back to baseline defaults when no row has been
+         *     saved yet. AUTH-006.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description User configuration */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            config: components["schemas"]["UserConfig"];
+                        };
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Replace the current user's configuration profile
+         * @description Replaces the saved configuration with the supplied body. All known
+         *     fields are validated server-side; unknown fields return 400.
+         *     AUTH-006.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UserConfig"];
+                };
+            };
+            responses: {
+                /** @description Saved configuration */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            config: components["schemas"]["UserConfig"];
+                        };
+                    };
+                };
+                /** @description Invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserConfigErrorResponse"];
+                    };
+                };
+                /** @description Unauthenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/users": {
         parameters: {
             query?: never;
@@ -3475,6 +3587,31 @@ export interface components {
             /** @description AUTH-013. Plaintext bearer token. Shown exactly once. */
             token: string;
             record: components["schemas"]["ScimTokenRecord"];
+        };
+        /** @description AUTH-006. Per-user configuration profile. */
+        UserConfig: {
+            /**
+             * Format: uuid
+             * @description Preferred data source preselected on the query page.
+             */
+            default_data_source_id?: string | null;
+            /** Format: uuid */
+            default_llm_provider_id?: string | null;
+            default_model?: string | null;
+            max_rows?: number;
+            timeout_seconds?: number;
+            /** @enum {string} */
+            theme?: "light" | "dark" | "system";
+            table_preferences?: {
+                [key: string]: unknown;
+            };
+        };
+        UserConfigErrorResponse: {
+            /** @enum {string} */
+            error: "bad_request";
+            /** @description Stable error code (e.g. `invalid_default_data_source_id`, `invalid_theme`). */
+            code: string;
+            message: string;
         };
         ScimGroupMappingsResponse: {
             /** Format: uuid */

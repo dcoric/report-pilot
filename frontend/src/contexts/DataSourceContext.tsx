@@ -17,13 +17,23 @@ export function DataSourceProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const fetchDataSources = async () => {
-            const { data } = await client.GET('/v1/data-sources');
-            if (!data?.items) return;
-            setDataSources(data.items);
+            // AUTH-006: when nothing is in sessionStorage yet, prefer the
+            // user's saved default before falling back to "first available".
+            const [dsResult, configResult] = await Promise.all([
+                client.GET('/v1/data-sources'),
+                client.GET('/v1/users/me/config'),
+            ]);
+            if (!dsResult.data?.items) return;
+            setDataSources(dsResult.data.items);
             const stored = sessionStorage.getItem(SESSION_KEY);
-            const valid = stored && data.items.some((ds) => ds.id === stored);
-            if (!valid && data.items.length > 0) {
-                setSelectedDataSourceId(data.items[0].id);
+            const validStored = stored && dsResult.data.items.some((ds) => ds.id === stored);
+            if (validStored) return;
+            const preferred = configResult.data?.config?.default_data_source_id;
+            const validPreferred = preferred && dsResult.data.items.some((ds) => ds.id === preferred);
+            if (validPreferred) {
+                setSelectedDataSourceId(preferred as string);
+            } else if (dsResult.data.items.length > 0) {
+                setSelectedDataSourceId(dsResult.data.items[0].id);
             }
         };
         void fetchDataSources();

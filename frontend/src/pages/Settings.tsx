@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Network, Save, AlertCircle } from 'lucide-rea
 import { toast } from 'sonner';
 import { client } from '../lib/api/client';
 import type { components } from '../lib/api/types';
+import { UserPreferences } from '../components/Settings/UserPreferences';
 
 type RoutingStrategy = 'ordered_fallback' | 'cost_optimized' | 'latency_optimized';
 type ProviderType = components['schemas']['RoutingRuleRequest']['primary_provider'];
@@ -109,12 +110,19 @@ export const Settings: React.FC = () => {
             <div className="flex items-center gap-3 mb-8">
                 <SettingsIcon className="w-8 h-8 text-gray-700" />
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Routing Rules</h1>
-                    <p className="text-gray-500 mt-1">Configure provider routing policies per data source.</p>
+                    <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+                    <p className="text-gray-500 mt-1">Personal preferences and provider routing policies.</p>
                 </div>
             </div>
 
             <div className="space-y-6">
+                <UserPreferences dataSources={dataSources} />
+
+                <div className="border-t border-gray-200 pt-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-1">Routing Rules</h2>
+                    <p className="text-sm text-gray-500 mb-4">Configure provider routing policies per data source.</p>
+                </div>
+
                 {dataSources.map(ds => {
                     const rule = routingRules[ds.id];
                     if (!rule) return null;

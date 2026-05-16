@@ -101,6 +101,10 @@ const {
   handleCallback
 } = require("./routes/oidc");
 const {
+  handleGetConfig: handleGetUserConfig,
+  handlePutConfig: handlePutUserConfig
+} = require("./routes/userConfig");
+const {
   handleServiceProviderConfig,
   handleResourceTypes,
   handleSchemas,
@@ -245,6 +249,14 @@ async function routeRequest(req, res) {
 
   if (req.method === "GET" && pathname === "/v1/auth/oidc/callback") {
     return handleCallback(req, res, requestUrl);
+  }
+
+  // AUTH-006: per-user configuration profile
+  if (req.method === "GET" && pathname === "/v1/users/me/config") {
+    return handleGetUserConfig(req, res);
+  }
+  if (req.method === "PUT" && pathname === "/v1/users/me/config") {
+    return handlePutUserConfig(req, res);
   }
 
   if (req.method === "GET" && pathname === "/v1/admin/users") {
