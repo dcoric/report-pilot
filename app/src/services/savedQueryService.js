@@ -1,4 +1,5 @@
 const appDb = require("../lib/appDb");
+const versionService = require("./savedQueryVersionService");
 const {
   SAVED_QUERY_NAME_MAX_LENGTH,
   SAVED_QUERY_DESCRIPTION_MAX_LENGTH,
@@ -352,7 +353,13 @@ async function createSavedQuery({
       ]
     );
 
-    return success(insertResult.rows[0], 201);
+    const created = insertResult.rows[0];
+    await versionService.recordVersion(
+      created.id,
+      versionService.snapshotFromSavedQuery(created),
+      { actorUserId: isUuid(trimmedOwnerId) ? trimmedOwnerId : null, changeSummary: "created" }
+    );
+    return success(created, 201);
   } catch (err) {
     if (isPgUniqueViolation(err)) {
       return failure(409, {
@@ -463,7 +470,13 @@ async function updateSavedQuery(savedQueryId, {
       ]
     );
 
-    return success(updateResult.rows[0]);
+    const updated = updateResult.rows[0];
+    await versionService.recordVersion(
+      updated.id,
+      versionService.snapshotFromSavedQuery(updated),
+      { actorUserId: callerUserId || null, changeSummary: "updated" }
+    );
+    return success(updated);
   } catch (err) {
     if (isPgUniqueViolation(err)) {
       return failure(409, {
@@ -798,6 +811,93 @@ async function getSavedQueryAccess(savedQueryId, { callerUserId } = {}) {
   });
 }
 
+async function listSavedQueryVersions(savedQueryId, { callerUserId } = {}) {
+  if (!isUuid(savedQueryId)) {
+    return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
+  }
+  const savedQuery = await loadSavedQuery(savedQueryId);
+  if (!savedQuery) {
+    return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId) {
+    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    if (!access) {
+      return failure(403, { error: "forbidden", message: "You do not have access to this saved query" });
+    }
+  }
+  const versions = await versionService.listVersions(savedQueryId);
+  return success({ items: versions });
+}
+
+async function restoreSavedQueryVersion(savedQueryId, versionId, { callerUserId } = {}) {
+  if (!isUuid(savedQueryId)) {
+    return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
+  }
+  if (!isUuid(versionId)) {
+    return failure(400, { error: "bad_request", message: "versionId must be a valid UUID" });
+  }
+  const existing = await loadSavedQuery(savedQueryId);
+  if (!existing) {
+    return failure(404, { error: "not_found", message: "Saved query not found" });
+  }
+  if (callerUserId && existing.owner_id !== callerUserId) {
+    return failure(403, { error: "forbidden", message: "Only the owner can restore versions of this saved query" });
+  }
+  const version = await versionService.getVersionById(versionId);
+  if (!version || version.saved_query_id !== savedQueryId) {
+    return failure(404, { error: "not_found", message: "Version not found" });
+  }
+
+  // Apply the version's snapshot to the live row. We re-use the standard
+  // UPDATE shape so visibility/tags/parameter_schema all flow through the
+  // existing column list. The restore itself becomes a new version row so
+  // the timeline reads top-to-bottom.
+  const updateResult = await appDb.query(
+    `
+      UPDATE saved_queries
+      SET
+        name = $2,
+        description = $3,
+        data_source_id = $4,
+        sql = $5,
+        default_run_params = $6::jsonb,
+        parameter_schema = $7::jsonb,
+        tags = $8::text[],
+        visibility = $9,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${SAVED_QUERY_COLUMNS}
+    `,
+    [
+      savedQueryId,
+      version.name,
+      version.description,
+      version.data_source_id,
+      version.sql,
+      JSON.stringify(version.default_run_params || {}),
+      JSON.stringify(version.parameter_schema || []),
+      version.tags || [],
+      version.visibility || "private"
+    ]
+  );
+  const restored = updateResult.rows[0];
+
+  const newVersion = await versionService.recordVersion(
+    savedQueryId,
+    versionService.snapshotFromSavedQuery(restored),
+    {
+      actorUserId: callerUserId || null,
+      changeSummary: `restored from version ${version.version_number}`
+    }
+  );
+
+  return success({
+    saved_query: restored,
+    restored_from_version_number: version.version_number,
+    new_version: newVersion
+  });
+}
+
 module.exports = {
   getSavedQuery,
   listSavedQueries,
@@ -808,5 +908,7 @@ module.exports = {
   executeSavedQuery,
   shareSavedQuery,
   getSavedQueryAccess,
+  listSavedQueryVersions,
+  restoreSavedQueryVersion,
   resolveCallerAccess
 };

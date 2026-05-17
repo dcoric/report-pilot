@@ -1226,6 +1226,45 @@ paths:
           description: Caller does not have access to this saved query
         "404":
           description: Saved query not found
+  /v1/saved-queries/{savedQueryId}/versions:
+    get:
+      tags: [Query]
+      summary: List revisions of a saved query (newest first)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      responses:
+        "200":
+          description: Version list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryVersionListResponse"
+        "403":
+          description: Caller does not have access to this saved query
+        "404":
+          description: Saved query not found
+  /v1/saved-queries/{savedQueryId}/versions/{versionId}/restore:
+    post:
+      tags: [Query]
+      summary: Restore a saved query to a previous version (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+        - in: path
+          name: versionId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Restored. Body includes the new live row plus the version that was just appended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryRestoreResponse"
+        "403":
+          description: Caller is not the owner
+        "404":
+          description: Saved query or version not found
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -2847,6 +2886,66 @@ components:
           items:
             $ref: "#/components/schemas/SavedQueryShareRecord"
       required: [saved_query_id, owner_id, visibility, shares]
+    SavedQueryVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        saved_query_id:
+          type: string
+        version_number:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        data_source_id:
+          type: string
+        sql:
+          type: string
+        default_run_params:
+          type: object
+          additionalProperties: true
+        parameter_schema:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryParameter"
+        tags:
+          type: array
+          items:
+            type: string
+        visibility:
+          type: string
+          enum: [private, shared]
+        change_summary:
+          type: string
+          nullable: true
+        created_by_user_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, saved_query_id, version_number, name, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at]
+    SavedQueryVersionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQueryVersion"
+      required: [items]
+    SavedQueryRestoreResponse:
+      type: object
+      properties:
+        saved_query:
+          $ref: "#/components/schemas/SavedQuery"
+        restored_from_version_number:
+          type: integer
+        new_version:
+          $ref: "#/components/schemas/SavedQueryVersion"
+      required: [saved_query, restored_from_version_number, new_version]
     SavedQueryShareResponse:
       type: object
       properties:

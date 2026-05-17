@@ -89,6 +89,8 @@ const POLICIES = [
   { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/run$/, permission: "query.run" },
   { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/share$/, permission: "saved_queries.share" },
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+\/access$/, permission: "saved_queries.read" },
+  { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+\/versions$/, permission: "saved_queries.read" },
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/versions\/[^/]+\/restore$/, permission: "saved_queries.write" },
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.read" },
   { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
   { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
