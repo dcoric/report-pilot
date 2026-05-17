@@ -1184,6 +1184,48 @@ paths:
                   message:
                     type: string
                 required: [error, message]
+  /v1/saved-queries/{savedQueryId}/share:
+    post:
+      tags: [Query]
+      summary: Replace the share grants for a saved query (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShareSavedQueryRequest"
+      responses:
+        "200":
+          description: Updated visibility + share grants, with diff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryShareResponse"
+        "400":
+          description: Invalid visibility or share grant payload
+        "403":
+          description: Caller is not the owner
+        "404":
+          description: Saved query not found
+  /v1/saved-queries/{savedQueryId}/access:
+    get:
+      tags: [Query]
+      summary: Get visibility + share grants for a saved query
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      responses:
+        "200":
+          description: Current access summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryAccessResponse"
+        "403":
+          description: Caller does not have access to this saved query
+        "404":
+          description: Saved query not found
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -2636,13 +2678,16 @@ components:
           type: array
           items:
             type: string
+        visibility:
+          type: string
+          enum: [private, shared]
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
-      required: [id, owner_id, name, data_source_id, sql, default_run_params, parameter_schema, tags, created_at, updated_at]
+      required: [id, owner_id, name, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at]
     SavedQueryListResponse:
       type: object
       properties:
@@ -2700,6 +2745,9 @@ components:
             type: string
             maxLength: 40
           maxItems: 20
+        visibility:
+          type: string
+          enum: [private, shared]
       required: [name, data_source_id, sql]
     UpdateSavedQueryRequest:
       type: object
@@ -2742,7 +2790,117 @@ components:
             type: string
             maxLength: 40
           maxItems: 20
+        visibility:
+          type: string
+          enum: [private, shared]
       required: [name, data_source_id, sql]
+    ShareSavedQueryRequest:
+      type: object
+      description: >
+        Owner-only. Replace-semantics: the `shares` array fully replaces the
+        existing per-user grants for this query. Omit `shares` to leave grants
+        unchanged; pass `shares: []` to revoke everyone.
+      properties:
+        visibility:
+          type: string
+          enum: [private, shared]
+        shares:
+          type: array
+          items:
+            type: object
+            properties:
+              user_id:
+                type: string
+              permission:
+                type: string
+                enum: [view, run]
+            required: [user_id, permission]
+    SavedQueryShareRecord:
+      type: object
+      properties:
+        saved_query_id:
+          type: string
+        user_id:
+          type: string
+        permission:
+          type: string
+          enum: [view, run]
+        granted_by_user_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [saved_query_id, user_id, permission, created_at]
+    SavedQueryAccessResponse:
+      type: object
+      properties:
+        saved_query_id:
+          type: string
+        owner_id:
+          type: string
+        visibility:
+          type: string
+          enum: [private, shared]
+        shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQueryShareRecord"
+      required: [saved_query_id, owner_id, visibility, shares]
+    SavedQueryShareResponse:
+      type: object
+      properties:
+        visibility:
+          type: string
+          enum: [private, shared]
+        previous_visibility:
+          type: string
+          enum: [private, shared]
+        shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQueryShareRecord"
+        diff:
+          type: object
+          properties:
+            added:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  permission:
+                    type: string
+                    enum: [view, run]
+                required: [user_id, permission]
+            updated:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  permission:
+                    type: string
+                    enum: [view, run]
+                  previous_permission:
+                    type: string
+                    enum: [view, run]
+                required: [user_id, permission, previous_permission]
+            removed:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  permission:
+                    type: string
+                    enum: [view, run]
+                required: [user_id, permission]
+          required: [added, updated, removed]
+      required: [visibility, previous_visibility, shares, diff]
     ValidateParamsRequest:
       type: object
       properties:

@@ -51,7 +51,9 @@ const {
   handleUpdateSavedQuery,
   handleDeleteSavedQuery,
   handleValidateParams,
-  handleRunSavedQuery
+  handleRunSavedQuery,
+  handleShareSavedQuery,
+  handleGetSavedQueryAccess
 } = require("./routes/savedQueries");
 const {
   handleExportSession,
@@ -438,6 +440,16 @@ async function routeRequest(req, res) {
   const savedQueryRunMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/run$/);
   if (req.method === "POST" && savedQueryRunMatch) {
     return handleRunSavedQuery(req, res, savedQueryRunMatch[1]);
+  }
+
+  const savedQueryShareMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/share$/);
+  if (req.method === "POST" && savedQueryShareMatch) {
+    return handleShareSavedQuery(req, res, savedQueryShareMatch[1]);
+  }
+
+  const savedQueryAccessMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/access$/);
+  if (req.method === "GET" && savedQueryAccessMatch) {
+    return handleGetSavedQueryAccess(req, res, savedQueryAccessMatch[1]);
   }
 
   const savedQueryMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)$/);
