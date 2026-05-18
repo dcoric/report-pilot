@@ -23,12 +23,20 @@ import { toast } from 'sonner';
 import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../hooks/useDataSource';
 import { useSavedQueries } from '../hooks/useSavedQueries';
+import { useSavedQueryFolders, type SavedQueryFolder } from '../hooks/useSavedQueryFolders';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
 import { ShareSavedQueryDialog } from '../components/Query/ShareSavedQueryDialog';
 import { VersionHistoryDialog } from '../components/Query/VersionHistoryDialog';
+import { SavedQueryTree, type FolderSelection } from '../components/Query/SavedQueryTree';
+import { FolderEditDialog } from '../components/Query/FolderEditDialog';
+import { MoveToFolderDialog } from '../components/Query/MoveToFolderDialog';
 import type { SavedQuery } from '../components/Query/types';
 
 type FilterMode = 'current' | 'all';
+
+type FolderEditState =
+    | { mode: 'create'; parentId: string | null }
+    | { mode: 'rename'; folder: SavedQueryFolder };
 
 function formatDate(value: string) {
     try {
@@ -55,17 +63,36 @@ export const SavedQueries = () => {
         deleteSavedQuery,
     } = useSavedQueries();
 
+    const {
+        folders,
+        tree,
+        foldersById,
+        isLoading: isFoldersLoading,
+        refresh: refreshFolders,
+        createFolder,
+        renameFolder,
+        deleteFolder,
+        moveSavedQuery,
+    } = useSavedQueryFolders();
+
     const [sharingQuery, setSharingQuery] = useState<SavedQuery | null>(null);
     const [historyQuery, setHistoryQuery] = useState<SavedQuery | null>(null);
 
     const [searchText, setSearchText] = useState('');
     const [filterMode, setFilterMode] = useState<FilterMode>('all');
+    const [folderSelection, setFolderSelection] = useState<FolderSelection>({ kind: 'all' });
     const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [editing, setEditing] = useState<SavedQuery | null>(null);
     const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
     const [pendingId, setPendingId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const [folderEdit, setFolderEdit] = useState<FolderEditState | null>(null);
+    const [isFolderEditSubmitting, setIsFolderEditSubmitting] = useState(false);
+    const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<SavedQueryFolder | null>(null);
+    const [isDeletingFolder, setIsDeletingFolder] = useState(false);
+    const [movingQuery, setMovingQuery] = useState<SavedQuery | null>(null);
+    const [isMoveSubmitting, setIsMoveSubmitting] = useState(false);
 
     const dataSourceNameById = useMemo(
         () => Object.fromEntries(dataSources.map((ds) => [ds.id, ds.name])),
@@ -83,6 +110,12 @@ export const SavedQueries = () => {
             if (filterMode === 'current' && selectedDataSourceId && entry.data_source_id !== selectedDataSourceId) {
                 return false;
             }
+            if (folderSelection.kind === 'folder' && entry.folder_id !== folderSelection.folderId) {
+                return false;
+            }
+            if (folderSelection.kind === 'unfiled' && entry.folder_id) {
+                return false;
+            }
             if (activeTagFilter && !(entry.tags || []).includes(activeTagFilter)) {
                 return false;
             }
@@ -96,7 +129,17 @@ export const SavedQueries = () => {
             ].join(' ').toLowerCase();
             return haystack.includes(search);
         });
-    }, [savedQueries, searchText, filterMode, selectedDataSourceId, activeTagFilter]);
+    }, [savedQueries, searchText, filterMode, selectedDataSourceId, folderSelection, activeTagFilter]);
+
+    const selectedFolderName = useMemo(() => {
+        if (folderSelection.kind === 'folder') {
+            return foldersById[folderSelection.folderId]?.name ?? null;
+        }
+        if (folderSelection.kind === 'unfiled') {
+            return 'Unfiled';
+        }
+        return null;
+    }, [folderSelection, foldersById]);
 
     useEffect(() => {
         if (selectedId && !filtered.some((entry) => entry.id === selectedId)) {
@@ -169,14 +212,100 @@ export const SavedQueries = () => {
         }
     };
 
+    const handleFolderEditSubmit = async (name: string) => {
+        if (!folderEdit) return;
+        setIsFolderEditSubmitting(true);
+        try {
+            if (folderEdit.mode === 'create') {
+                const result = await createFolder({ name, parentId: folderEdit.parentId });
+                if (result) {
+                    setFolderEdit(null);
+                    toast.success(`Folder "${result.name}" created.`);
+                }
+            } else {
+                const result = await renameFolder(folderEdit.folder.id, name);
+                if (result) {
+                    setFolderEdit(null);
+                    toast.success('Folder renamed.');
+                }
+            }
+        } finally {
+            setIsFolderEditSubmitting(false);
+        }
+    };
+
+    const handleFolderDelete = async () => {
+        if (!confirmDeleteFolder) return;
+        setIsDeletingFolder(true);
+        try {
+            const ok = await deleteFolder(confirmDeleteFolder.id);
+            if (ok) {
+                toast.success(
+                    `Folder "${confirmDeleteFolder.name}" deleted. Its contents were moved to the parent folder.`,
+                );
+                if (folderSelection.kind === 'folder' && folderSelection.folderId === confirmDeleteFolder.id) {
+                    setFolderSelection({ kind: 'all' });
+                }
+                setConfirmDeleteFolder(null);
+                // refresh saved queries so folder_id changes from REASSIGN are reflected
+                await refresh();
+            }
+        } finally {
+            setIsDeletingFolder(false);
+        }
+    };
+
+    const handleMoveSubmit = async (folderId: string | null) => {
+        if (!movingQuery) return;
+        setIsMoveSubmitting(true);
+        try {
+            const result = await moveSavedQuery(movingQuery.id, folderId);
+            if (result) {
+                toast.success(
+                    folderId
+                        ? `Moved to "${foldersById[folderId]?.name ?? 'folder'}".`
+                        : 'Moved to root.',
+                );
+                setMovingQuery(null);
+                await refresh();
+            }
+        } finally {
+            setIsMoveSubmitting(false);
+        }
+    };
+
     return (
         <main className="flex h-full overflow-hidden">
+            <aside className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-outline-variant bg-white">
+                <SavedQueryTree
+                    tree={tree}
+                    folders={folders}
+                    savedQueries={savedQueries}
+                    selection={folderSelection}
+                    onSelect={setFolderSelection}
+                    onOpenSavedQuery={openInWorkspace}
+                    onCreateFolder={(parentId) => setFolderEdit({ mode: 'create', parentId })}
+                    onRenameFolder={(folder) => setFolderEdit({ mode: 'rename', folder })}
+                    onDeleteFolder={(folder) => setConfirmDeleteFolder(folder)}
+                    onMoveSavedQuery={(savedQuery) => setMovingQuery(savedQuery)}
+                    onRefresh={() => {
+                        void refreshFolders();
+                        void refresh();
+                    }}
+                    isLoading={isFoldersLoading}
+                    canWrite={canWriteSavedQueries}
+                />
+            </aside>
             <div className="flex flex-1 flex-col overflow-hidden border-r border-outline-variant bg-white">
                 <div className="shrink-0 border-b border-outline-variant bg-white px-6 pb-4 pt-6">
                     <div className="mb-6 flex items-end justify-between">
                         <div>
                             <h1 className="text-2xl font-semibold tracking-tight text-on-surface">Saved Queries</h1>
-                            <p className="mt-1 text-xs text-slate-500">Manage and execute your analytical library.</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                                {selectedFolderName
+                                    ? `Showing queries in "${selectedFolderName}".`
+                                    : 'Manage and execute your analytical library.'}
+                            </p>
                         </div>
                         <div className="flex gap-2">
                             <button
@@ -603,6 +732,66 @@ export const SavedQueries = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {folderEdit && (
+                <FolderEditDialog
+                    key={folderEdit.mode === 'rename' ? `rename-${folderEdit.folder.id}` : `create-${folderEdit.parentId ?? 'root'}`}
+                    mode={folderEdit.mode}
+                    initialName={folderEdit.mode === 'rename' ? folderEdit.folder.name : ''}
+                    parentLabel={
+                        folderEdit.mode === 'create' && folderEdit.parentId
+                            ? foldersById[folderEdit.parentId]?.name ?? null
+                            : null
+                    }
+                    isSubmitting={isFolderEditSubmitting}
+                    onSubmit={handleFolderEditSubmit}
+                    onCancel={() => setFolderEdit(null)}
+                />
+            )}
+
+            {confirmDeleteFolder && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-sm rounded-lg bg-white shadow-xl">
+                        <div className="border-b border-outline-variant px-4 py-3">
+                            <h3 className="text-sm font-semibold text-on-surface">Delete folder?</h3>
+                        </div>
+                        <div className="px-4 py-3 text-xs text-slate-600">
+                            <p className="font-medium text-on-surface">{confirmDeleteFolder.name}</p>
+                            <p className="mt-2">
+                                Sub-folders and saved queries inside this folder will be moved up to its parent folder. Saved queries themselves are not deleted.
+                            </p>
+                        </div>
+                        <div className="flex justify-end gap-2 border-t border-outline-variant px-4 py-3">
+                            <button
+                                type="button"
+                                onClick={() => setConfirmDeleteFolder(null)}
+                                disabled={isDeletingFolder}
+                                className="rounded-md border border-outline-variant bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void handleFolderDelete()}
+                                disabled={isDeletingFolder}
+                                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {isDeletingFolder ? 'Deleting…' : 'Delete folder'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {movingQuery && (
+                <MoveToFolderDialog
+                    savedQuery={movingQuery}
+                    tree={tree}
+                    isSubmitting={isMoveSubmitting}
+                    onSubmit={handleMoveSubmit}
+                    onCancel={() => setMovingQuery(null)}
+                />
             )}
         </main>
     );
