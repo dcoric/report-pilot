@@ -65,6 +65,13 @@ const {
   handleMoveSavedQuery
 } = require("./routes/savedQueryFolders");
 const {
+  handleCreateSchedule,
+  handleListSchedules,
+  handleUpdateSchedule,
+  handleDeleteSchedule,
+  handleRetrySchedule
+} = require("./routes/savedQuerySchedules");
+const {
   handleExportSession,
   handleExportDeliver,
   handleExportStatus
@@ -469,6 +476,32 @@ async function routeRequest(req, res) {
   const savedQueryRestoreMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/versions\/([^/]+)\/restore$/);
   if (req.method === "POST" && savedQueryRestoreMatch) {
     return handleRestoreSavedQueryVersion(req, res, savedQueryRestoreMatch[1], savedQueryRestoreMatch[2]);
+  }
+
+  // QUERY-007: scheduled delivery — matched before the generic /:id catch-all.
+  const savedQueryScheduleRetryMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/schedules\/([^/]+)\/retry$/);
+  if (req.method === "POST" && savedQueryScheduleRetryMatch) {
+    return handleRetrySchedule(req, res, savedQueryScheduleRetryMatch[1], savedQueryScheduleRetryMatch[2]);
+  }
+
+  const savedQueryScheduleIdMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/schedules\/([^/]+)$/);
+  if (savedQueryScheduleIdMatch) {
+    if (req.method === "PUT") {
+      return handleUpdateSchedule(req, res, savedQueryScheduleIdMatch[1], savedQueryScheduleIdMatch[2]);
+    }
+    if (req.method === "DELETE") {
+      return handleDeleteSchedule(req, res, savedQueryScheduleIdMatch[1], savedQueryScheduleIdMatch[2]);
+    }
+  }
+
+  const savedQuerySchedulesMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/schedules$/);
+  if (savedQuerySchedulesMatch) {
+    if (req.method === "POST") {
+      return handleCreateSchedule(req, res, savedQuerySchedulesMatch[1]);
+    }
+    if (req.method === "GET") {
+      return handleListSchedules(req, res, savedQuerySchedulesMatch[1]);
+    }
   }
 
   // QUERY-008: saved-query foldering. The /move route on a saved-query id
