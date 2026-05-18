@@ -17,7 +17,9 @@ let server;
 let baseUrl;
 let savedQueries;
 let savedQueryShares;
+let savedQueryVersions;
 let savedQueryCounter;
+let savedQueryVersionCounter;
 let originalQuery;
 let originalCreateDatabaseAdapter;
 let originalIsSupportedDbType;
@@ -27,6 +29,11 @@ const testUsers = {};
 
 function shareKey(savedQueryId, userId) {
   return `${savedQueryId}::${userId}`;
+}
+
+function nextVersionId() {
+  savedQueryVersionCounter += 1;
+  return `00000000-0000-4000-8000-cccc${String(savedQueryVersionCounter).padStart(8, "0")}`;
 }
 
 function normalizeSql(sql) {
@@ -103,7 +110,9 @@ before(async () => {
   originalIsSupportedDbType = dbAdapterFactory.isSupportedDbType;
   savedQueries = new Map();
   savedQueryShares = new Map();
+  savedQueryVersions = new Map();
   savedQueryCounter = 0;
+  savedQueryVersionCounter = 0;
   adapterCalls = [];
   authStub = createAuthTestStub();
 
@@ -336,6 +345,71 @@ before(async () => {
       return { rowCount: 1, rows: [] };
     }
 
+    if (normalized.startsWith("select coalesce(max(version_number), 0) as max_version from saved_query_versions where saved_query_id = $1")) {
+      const [savedQueryId] = params;
+      const maxVersion = [...savedQueryVersions.values()]
+        .filter((row) => row.saved_query_id === savedQueryId)
+        .reduce((max, row) => Math.max(max, row.version_number), 0);
+      return { rowCount: 1, rows: [{ max_version: maxVersion }] };
+    }
+
+    if (normalized.startsWith("insert into saved_query_versions")) {
+      const [
+        savedQueryId,
+        versionNumber,
+        name,
+        description,
+        dataSourceId,
+        sqlText,
+        defaultRunParamsJson,
+        parameterSchemaJson,
+        tags,
+        visibility,
+        changeSummary,
+        createdByUserId
+      ] = params;
+      // Mirror the UNIQUE (saved_query_id, version_number) constraint.
+      const duplicate = [...savedQueryVersions.values()].some(
+        (row) => row.saved_query_id === savedQueryId && row.version_number === versionNumber
+      );
+      if (duplicate) {
+        throw duplicateError();
+      }
+      const now = new Date().toISOString();
+      const row = {
+        id: nextVersionId(),
+        saved_query_id: savedQueryId,
+        version_number: versionNumber,
+        name,
+        description,
+        data_source_id: dataSourceId,
+        sql: sqlText,
+        default_run_params: JSON.parse(defaultRunParamsJson),
+        parameter_schema: JSON.parse(parameterSchemaJson),
+        tags: Array.isArray(tags) ? tags : [],
+        visibility: visibility || "private",
+        change_summary: changeSummary,
+        created_by_user_id: createdByUserId,
+        created_at: now
+      };
+      savedQueryVersions.set(row.id, row);
+      return { rowCount: 1, rows: [row] };
+    }
+
+    if (normalized.startsWith("select id, saved_query_id, version_number, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, change_summary, created_by_user_id, created_at from saved_query_versions where saved_query_id = $1")) {
+      const [savedQueryId] = params;
+      const rows = [...savedQueryVersions.values()]
+        .filter((row) => row.saved_query_id === savedQueryId)
+        .sort((a, b) => b.version_number - a.version_number);
+      return { rowCount: rows.length, rows };
+    }
+
+    if (normalized.startsWith("select id, saved_query_id, version_number, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, change_summary, created_by_user_id, created_at from saved_query_versions where id = $1")) {
+      const [id] = params;
+      const row = savedQueryVersions.get(id);
+      return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
+    }
+
     throw new Error(`Unexpected SQL in test stub: ${normalized}`);
   };
 
@@ -348,7 +422,9 @@ before(async () => {
 beforeEach(() => {
   savedQueries.clear();
   savedQueryShares.clear();
+  savedQueryVersions.clear();
   savedQueryCounter = 0;
+  savedQueryVersionCounter = 0;
   adapterCalls = [];
 });
 
@@ -908,6 +984,133 @@ test("QUERY-006 share endpoint validates the grant payload", async () => {
     shares: [{ user_id: "not-a-uuid", permission: "view" }]
   }, "share-owner");
   assert.equal(badUserId.status, 400);
+});
+
+test("QUERY-005 create records version 1 and update appends a new version", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Versioned Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "version-owner");
+  assert.equal(created.status, 201);
+  const id = created.payload.id;
+
+  const initialList = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "version-owner");
+  assert.equal(initialList.status, 200);
+  assert.equal(initialList.payload.items.length, 1);
+  assert.equal(initialList.payload.items[0].version_number, 1);
+  assert.equal(initialList.payload.items[0].change_summary, "created");
+  assert.equal(initialList.payload.items[0].sql, "SELECT 1");
+
+  const updated = await api("PUT", `/v1/saved-queries/${id}`, {
+    name: "Versioned Revenue",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 2"
+  }, "version-owner");
+  assert.equal(updated.status, 200);
+
+  const afterUpdate = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "version-owner");
+  assert.equal(afterUpdate.status, 200);
+  assert.equal(afterUpdate.payload.items.length, 2);
+  // Listed newest-first.
+  assert.equal(afterUpdate.payload.items[0].version_number, 2);
+  assert.equal(afterUpdate.payload.items[0].sql, "SELECT 2");
+  assert.equal(afterUpdate.payload.items[0].change_summary, "updated");
+  assert.equal(afterUpdate.payload.items[1].version_number, 1);
+  assert.equal(afterUpdate.payload.items[1].sql, "SELECT 1");
+});
+
+test("QUERY-005 owner can restore a previous version; restore itself is recorded", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Restore Target",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 'v1'"
+  }, "restore-owner");
+  const id = created.payload.id;
+
+  await api("PUT", `/v1/saved-queries/${id}`, {
+    name: "Restore Target",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 'v2'"
+  }, "restore-owner");
+
+  const listBefore = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "restore-owner");
+  assert.equal(listBefore.payload.items.length, 2);
+  const v1 = listBefore.payload.items.find((row) => row.version_number === 1);
+  assert.ok(v1, "expected version 1 to exist");
+
+  const restore = await api("POST", `/v1/saved-queries/${id}/versions/${v1.id}/restore`, {}, "restore-owner");
+  assert.equal(restore.status, 200);
+  assert.equal(restore.payload.restored_from_version_number, 1);
+  assert.equal(restore.payload.new_version.version_number, 3);
+  assert.equal(restore.payload.saved_query.sql, "SELECT 'v1'");
+
+  const finalGet = await api("GET", `/v1/saved-queries/${id}`, undefined, "restore-owner");
+  assert.equal(finalGet.payload.sql, "SELECT 'v1'");
+
+  const listAfter = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "restore-owner");
+  assert.equal(listAfter.payload.items.length, 3);
+  assert.equal(listAfter.payload.items[0].version_number, 3);
+  assert.match(listAfter.payload.items[0].change_summary, /restored from version 1/);
+});
+
+test("QUERY-005 non-owner cannot restore a version; granted reader can list", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Restricted Restore",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "restore-owner-private");
+  const id = created.payload.id;
+
+  await api("PUT", `/v1/saved-queries/${id}`, {
+    name: "Restricted Restore",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 2"
+  }, "restore-owner-private");
+
+  // Stranger cannot even list.
+  const strangerList = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "stranger-restore");
+  assert.equal(strangerList.status, 403);
+
+  // Grant a view share to a teammate.
+  const teammate = ensureTestUser("restore-teammate");
+  await api("POST", `/v1/saved-queries/${id}/share`, {
+    shares: [{ user_id: teammate.id, permission: "view" }]
+  }, "restore-owner-private");
+
+  const teammateList = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "restore-teammate");
+  assert.equal(teammateList.status, 200);
+  assert.equal(teammateList.payload.items.length, 2);
+
+  // Teammate cannot restore, only the owner can.
+  const target = teammateList.payload.items.find((row) => row.version_number === 1);
+  const teammateRestore = await api("POST", `/v1/saved-queries/${id}/versions/${target.id}/restore`, {}, "restore-teammate");
+  assert.equal(teammateRestore.status, 403);
+});
+
+test("QUERY-005 restoring with a mismatched or missing version returns 404", async () => {
+  const created = await api("POST", "/v1/saved-queries", {
+    name: "Mismatch",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 1"
+  }, "mismatch-owner");
+  const id = created.payload.id;
+
+  const other = await api("POST", "/v1/saved-queries", {
+    name: "Other",
+    data_source_id: DATA_SOURCE_ID,
+    sql: "SELECT 2"
+  }, "mismatch-other-owner");
+  const otherList = await api("GET", `/v1/saved-queries/${other.payload.id}/versions`, undefined, "mismatch-other-owner");
+  const otherVersionId = otherList.payload.items[0].id;
+
+  // Wrong saved_query_id for that version → 404.
+  const crossed = await api("POST", `/v1/saved-queries/${id}/versions/${otherVersionId}/restore`, {}, "mismatch-owner");
+  assert.equal(crossed.status, 404);
+
+  // Unknown version id → 404.
+  const missing = await api("POST", `/v1/saved-queries/${id}/versions/00000000-0000-4000-8000-cccc99999999/restore`, {}, "mismatch-owner");
+  assert.equal(missing.status, 404);
 });
 
 test("QUERY-006 viewer role is denied by the share permission policy", async () => {

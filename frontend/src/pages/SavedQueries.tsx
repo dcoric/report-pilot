@@ -8,6 +8,7 @@ import {
     FileText,
     Filter,
     Globe,
+    History,
     Loader2,
     Lock,
     MoreVertical,
@@ -24,6 +25,7 @@ import { useDataSource } from '../hooks/useDataSource';
 import { useSavedQueries } from '../hooks/useSavedQueries';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
 import { ShareSavedQueryDialog } from '../components/Query/ShareSavedQueryDialog';
+import { VersionHistoryDialog } from '../components/Query/VersionHistoryDialog';
 import type { SavedQuery } from '../components/Query/types';
 
 type FilterMode = 'current' | 'all';
@@ -54,6 +56,7 @@ export const SavedQueries = () => {
     } = useSavedQueries();
 
     const [sharingQuery, setSharingQuery] = useState<SavedQuery | null>(null);
+    const [historyQuery, setHistoryQuery] = useState<SavedQuery | null>(null);
 
     const [searchText, setSearchText] = useState('');
     const [filterMode, setFilterMode] = useState<FilterMode>('all');
@@ -391,6 +394,14 @@ export const SavedQueries = () => {
                                     <div className="flex gap-1">
                                         <button
                                             type="button"
+                                            onClick={() => setHistoryQuery(selectedQuery)}
+                                            className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface"
+                                            title="Version history"
+                                        >
+                                            <History size={16} />
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => void handleDuplicate(selectedQuery)}
                                             disabled={pendingId === selectedQuery.id}
                                             className="rounded border border-transparent p-1.5 text-slate-500 hover:border-outline-variant hover:bg-surface-container-low hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-50"
@@ -551,6 +562,16 @@ export const SavedQueries = () => {
                     isOpen
                     onClose={() => setSharingQuery(null)}
                     onUpdated={() => { void refresh(); }}
+                />
+            )}
+
+            {historyQuery && (
+                <VersionHistoryDialog
+                    savedQuery={historyQuery}
+                    canRestore={currentUserId === historyQuery.owner_id}
+                    isOpen
+                    onClose={() => setHistoryQuery(null)}
+                    onRestored={() => { void refresh(); }}
                 />
             )}
 

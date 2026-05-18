@@ -2452,6 +2452,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/saved-queries/{savedQueryId}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List revisions of a saved query (newest first) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Version list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryVersionListResponse"];
+                    };
+                };
+                /** @description Caller does not have access to this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/versions/{versionId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a saved query to a previous version (owner-only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                    versionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored. Body includes the new live row plus the version that was just appended. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryRestoreResponse"];
+                    };
+                };
+                /** @description Caller is not the owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query or version not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/query/sessions": {
         parameters: {
             query?: never;
@@ -4211,6 +4316,34 @@ export interface components {
             /** @enum {string} */
             visibility: "private" | "shared";
             shares: components["schemas"]["SavedQueryShareRecord"][];
+        };
+        SavedQueryVersion: {
+            id: string;
+            saved_query_id: string;
+            version_number: number;
+            name: string;
+            description?: string | null;
+            data_source_id: string;
+            sql: string;
+            default_run_params: {
+                [key: string]: unknown;
+            };
+            parameter_schema: components["schemas"]["QueryParameter"][];
+            tags: string[];
+            /** @enum {string} */
+            visibility: "private" | "shared";
+            change_summary?: string | null;
+            created_by_user_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SavedQueryVersionListResponse: {
+            items: components["schemas"]["SavedQueryVersion"][];
+        };
+        SavedQueryRestoreResponse: {
+            saved_query: components["schemas"]["SavedQuery"];
+            restored_from_version_number: number;
+            new_version: components["schemas"]["SavedQueryVersion"];
         };
         SavedQueryShareResponse: {
             /** @enum {string} */

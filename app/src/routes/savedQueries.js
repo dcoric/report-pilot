@@ -225,6 +225,43 @@ async function handleGetSavedQueryAccess(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
+async function handleListSavedQueryVersions(req, res, savedQueryId) {
+  const dsId = await loadSavedQueryDataSourceId(savedQueryId);
+  if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
+    return undefined;
+  }
+  const result = await savedQueryService.listSavedQueryVersions(savedQueryId, {
+    callerUserId: callerId(req)
+  });
+  return writeResult(res, result);
+}
+
+async function handleRestoreSavedQueryVersion(req, res, savedQueryId, versionId) {
+  const dsId = await loadSavedQueryDataSourceId(savedQueryId);
+  if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
+    return undefined;
+  }
+  const result = await savedQueryService.restoreSavedQueryVersion(savedQueryId, versionId, {
+    callerUserId: callerId(req)
+  });
+
+  if (result.ok) {
+    auditService.writeEvent({
+      actorUserId: callerId(req),
+      action: "saved_query.version.restored",
+      details: {
+        saved_query_id: savedQueryId,
+        restored_from_version_number: result.body.restored_from_version_number,
+        new_version_number: result.body.new_version.version_number
+      },
+      ipAddress: requestClientIp(req),
+      userAgent: req.headers["user-agent"] || null
+    }).catch(() => {});
+  }
+
+  return writeResult(res, result);
+}
+
 module.exports = {
   handleCreateSavedQuery,
   handleListSavedQueries,
@@ -234,5 +271,7 @@ module.exports = {
   handleValidateParams,
   handleRunSavedQuery,
   handleShareSavedQuery,
-  handleGetSavedQueryAccess
+  handleGetSavedQueryAccess,
+  handleListSavedQueryVersions,
+  handleRestoreSavedQueryVersion
 };
