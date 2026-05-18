@@ -181,6 +181,7 @@ before(async () => {
         parameter_schema: JSON.parse(parameterSchemaJson),
         tags: Array.isArray(tags) ? tags : [],
         visibility: visibility || "private",
+        folder_id: null,
         created_at: now,
         updated_at: now
       };
@@ -190,7 +191,7 @@ before(async () => {
 
     // Caller-aware list (the new QUERY-006 variant) — restricts to
     // owner + visibility='shared' + explicit grant.
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries sq where ($1::uuid is null or sq.data_source_id = $1::uuid)")) {
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries sq where ($1::uuid is null or sq.data_source_id = $1::uuid)")) {
       const [dataSourceId, tagFilter, callerUserId] = params;
       const rows = sortSavedQueries(
         [...savedQueries.values()].filter((entry) => {
@@ -205,7 +206,7 @@ before(async () => {
       return { rowCount: rows.length, rows };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
       const [dataSourceId, tagFilter] = params;
       const rows = sortSavedQueries(
         [...savedQueries.values()].filter((entry) => {
@@ -221,7 +222,7 @@ before(async () => {
       return { rowCount: rows.length, rows };
     }
 
-    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, created_at, updated_at from saved_queries where id = $1")) {
+    if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries where id = $1")) {
       const [id] = params;
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };

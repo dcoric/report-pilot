@@ -1265,6 +1265,117 @@ paths:
           description: Caller is not the owner
         "404":
           description: Saved query or version not found
+  /v1/saved-query-folders:
+    post:
+      tags: [Query]
+      summary: Create a saved-query folder (per-owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSavedQueryFolderRequest"
+      responses:
+        "201":
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryFolder"
+        "400":
+          description: Invalid name or parent_id shape
+        "403":
+          description: parent_id belongs to another owner
+        "404":
+          description: parent_id folder not found
+        "409":
+          description: A sibling folder with that name already exists
+    get:
+      tags: [Query]
+      summary: List the caller's folders, flat plus pre-built tree
+      responses:
+        "200":
+          description: Folder list and tree
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryFolderListResponse"
+  /v1/saved-query-folders/{folderId}:
+    put:
+      tags: [Query]
+      summary: Rename or move a folder (owner-only)
+      parameters:
+        - in: path
+          name: folderId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSavedQueryFolderRequest"
+      responses:
+        "200":
+          description: Updated folder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryFolder"
+        "400":
+          description: Invalid name or self/descendant parent move
+        "403":
+          description: Caller is not the folder owner, or parent_id belongs to another owner
+        "404":
+          description: Folder not found
+        "409":
+          description: Sibling-name collision under the target parent
+    delete:
+      tags: [Query]
+      summary: Delete a folder; direct children are reparented to its parent (REASSIGN policy)
+      parameters:
+        - in: path
+          name: folderId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Folder deleted; response lists what was reparented and the new parent (null for root).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSavedQueryFolderResponse"
+        "403":
+          description: Caller is not the folder owner
+        "404":
+          description: Folder not found
+  /v1/saved-queries/{savedQueryId}/move:
+    post:
+      tags: [Query]
+      summary: "Move a saved query into a folder (owner-only). `folder_id: null` moves to root."
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveSavedQueryRequest"
+      responses:
+        "200":
+          description: Updated saved query plus the resolved folder context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MoveSavedQueryResponse"
+        "400":
+          description: folder_id is not a UUID
+        "403":
+          description: Caller is not the owner, or folder_id belongs to another owner
+        "404":
+          description: Saved query or folder_id not found
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -2720,6 +2831,10 @@ components:
         visibility:
           type: string
           enum: [private, shared]
+        folder_id:
+          type: string
+          nullable: true
+          description: QUERY-008 folder placement. NULL means the saved query lives at the owner's root.
         created_at:
           type: string
           format: date-time
@@ -3000,6 +3115,108 @@ components:
                 required: [user_id, permission]
           required: [added, updated, removed]
       required: [visibility, previous_visibility, shares, diff]
+    SavedQueryFolder:
+      type: object
+      properties:
+        id:
+          type: string
+        owner_id:
+          type: string
+        parent_id:
+          type: string
+          nullable: true
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, owner_id, name, created_at, updated_at]
+    SavedQueryFolderTreeNode:
+      allOf:
+        - $ref: "#/components/schemas/SavedQueryFolder"
+        - type: object
+          properties:
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/SavedQueryFolderTreeNode"
+          required: [children]
+    SavedQueryFolderListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQueryFolder"
+        tree:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQueryFolderTreeNode"
+      required: [items, tree]
+    CreateSavedQueryFolderRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        parent_id:
+          type: string
+          nullable: true
+      required: [name]
+    UpdateSavedQueryFolderRequest:
+      type: object
+      description: >
+        Patch-style: any field omitted is left as-is. `parent_id: null` moves
+        the folder back to the user's root.
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        parent_id:
+          type: string
+          nullable: true
+    DeleteSavedQueryFolderResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        id:
+          type: string
+        reassigned_to:
+          type: string
+          nullable: true
+          description: New parent for the deleted folder's direct children (NULL = root).
+        reassigned_folder_ids:
+          type: array
+          items:
+            type: string
+        reassigned_saved_query_ids:
+          type: array
+          items:
+            type: string
+      required: [ok, id, reassigned_to, reassigned_folder_ids, reassigned_saved_query_ids]
+    MoveSavedQueryRequest:
+      type: object
+      properties:
+        folder_id:
+          type: string
+          nullable: true
+      required: [folder_id]
+    MoveSavedQueryResponse:
+      type: object
+      properties:
+        saved_query:
+          $ref: "#/components/schemas/SavedQuery"
+        previous_folder_id:
+          type: string
+          nullable: true
+        folder_id:
+          type: string
+          nullable: true
+      required: [saved_query, folder_id]
     ValidateParamsRequest:
       type: object
       properties:

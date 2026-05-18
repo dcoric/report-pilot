@@ -44,6 +44,7 @@ const SAVED_QUERY_COLUMNS = `
   parameter_schema,
   tags,
   visibility,
+  folder_id,
   created_at,
   updated_at
 `;
