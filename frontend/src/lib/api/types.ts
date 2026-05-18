@@ -2557,6 +2557,521 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/saved-query-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's folders, flat plus pre-built tree */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Folder list and tree */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryFolderListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a saved-query folder (per-owner) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateSavedQueryFolderRequest"];
+                };
+            };
+            responses: {
+                /** @description Folder created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryFolder"];
+                    };
+                };
+                /** @description Invalid name or parent_id shape */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description parent_id belongs to another owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description parent_id folder not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A sibling folder with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-query-folders/{folderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Rename or move a folder (owner-only) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    folderId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateSavedQueryFolderRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated folder */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryFolder"];
+                    };
+                };
+                /** @description Invalid name or self/descendant parent move */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the folder owner, or parent_id belongs to another owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Folder not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Sibling-name collision under the target parent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete a folder; direct children are reparented to its parent (REASSIGN policy) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    folderId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Folder deleted; response lists what was reparented and the new parent (null for root). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeleteSavedQueryFolderResponse"];
+                    };
+                };
+                /** @description Caller is not the folder owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Folder not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move a saved query into a folder (owner-only). `folder_id: null` moves to root. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MoveSavedQueryRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated saved query plus the resolved folder context */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MoveSavedQueryResponse"];
+                    };
+                };
+                /** @description folder_id is not a UUID */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the owner, or folder_id belongs to another owner */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query or folder_id not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List scheduled deliveries for a saved query (owner-only) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Schedule list with recent run history per row */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryScheduleListResponse"];
+                    };
+                };
+                /** @description Caller is not the owner of this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a scheduled delivery for a saved query (owner-only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SavedQueryScheduleRequest"];
+                };
+            };
+            responses: {
+                /** @description Schedule created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQuerySchedule"];
+                    };
+                };
+                /** @description Invalid schedule payload (cron, timezone, recipients, etc.) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the owner of this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/schedules/{scheduleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a scheduled delivery (owner-only) */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                    scheduleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SavedQueryScheduleRequest"];
+                };
+            };
+            responses: {
+                /** @description Schedule updated. `next_run_at` is recomputed when cron, timezone, or status changes. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQuerySchedule"];
+                    };
+                };
+                /** @description Invalid schedule payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the owner of this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query or schedule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete a scheduled delivery (owner-only) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                    scheduleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Schedule deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Caller is not the owner of this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query or schedule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-queries/{savedQueryId}/schedules/{scheduleId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Manually re-attempt the most recent run of a schedule (owner-only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    savedQueryId: components["parameters"]["SavedQueryId"];
+                    scheduleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Retry attempt completed. Body reports whether delivery succeeded. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SavedQueryScheduleRetryResponse"];
+                    };
+                };
+                /** @description Caller is not the owner of this saved query */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Saved query or schedule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Retry attempt cap reached for this schedule */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/query/sessions": {
         parameters: {
             query?: never;
@@ -4252,46 +4767,6 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        SavedQueryFolder: {
-            id: string;
-            owner_id: string;
-            parent_id?: string | null;
-            name: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        SavedQueryFolderTreeNode: components["schemas"]["SavedQueryFolder"] & {
-            children: components["schemas"]["SavedQueryFolderTreeNode"][];
-        };
-        SavedQueryFolderListResponse: {
-            items: components["schemas"]["SavedQueryFolder"][];
-            tree: components["schemas"]["SavedQueryFolderTreeNode"][];
-        };
-        CreateSavedQueryFolderRequest: {
-            name: string;
-            parent_id?: string | null;
-        };
-        UpdateSavedQueryFolderRequest: {
-            name?: string;
-            parent_id?: string | null;
-        };
-        DeleteSavedQueryFolderResponse: {
-            ok: boolean;
-            id: string;
-            reassigned_to: string | null;
-            reassigned_folder_ids: string[];
-            reassigned_saved_query_ids: string[];
-        };
-        MoveSavedQueryRequest: {
-            folder_id: string | null;
-        };
-        MoveSavedQueryResponse: {
-            saved_query: components["schemas"]["SavedQuery"];
-            previous_folder_id?: string | null;
-            folder_id: string | null;
-        };
         SavedQueryListResponse: {
             items: components["schemas"]["SavedQuery"][];
         };
@@ -4387,6 +4862,104 @@ export interface components {
             restored_from_version_number: number;
             new_version: components["schemas"]["SavedQueryVersion"];
         };
+        /**
+         * @description Request body for POST/PUT /v1/saved-queries/{id}/schedules. On PUT,
+         *     omitted fields fall back to the current schedule values.
+         */
+        SavedQueryScheduleRequest: {
+            /** @description Human-friendly schedule name (max 200 chars). */
+            name: string;
+            /**
+             * @description 5-field cron expression evaluated in `timezone`. Example
+             *     `0 9 * * 1-5` for 09:00 Monday-Friday.
+             */
+            cron_expression: string;
+            /**
+             * @description IANA timezone name. Default `UTC`.
+             * @default UTC
+             */
+            timezone: string;
+            /** @description Email recipients. Required when `delivery_mode` is `email`. */
+            recipients?: string[];
+            /**
+             * @default email
+             * @enum {string}
+             */
+            delivery_mode: "email" | "download_artifact";
+            /**
+             * @default csv
+             * @enum {string}
+             */
+            format: "json" | "csv" | "tsv" | "xlsx" | "parquet";
+            /** @description Per-schedule overrides for the saved query's parameters. */
+            parameter_overrides?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @default active
+             * @enum {string}
+             */
+            status: "active" | "paused";
+        };
+        SavedQuerySchedule: {
+            id: string;
+            saved_query_id: string;
+            owner_user_id?: string | null;
+            name: string;
+            cron_expression: string;
+            timezone: string;
+            recipients: string[];
+            /** @enum {string} */
+            delivery_mode: "email" | "download_artifact";
+            /** @enum {string} */
+            format: "json" | "csv" | "tsv" | "xlsx" | "parquet";
+            parameter_overrides: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "active" | "paused";
+            /** Format: date-time */
+            next_run_at?: string | null;
+            /** Format: date-time */
+            last_run_at?: string | null;
+            /** @enum {string|null} */
+            last_status?: "succeeded" | "failed" | "running" | "pending" | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Up to 10 most recent runs, newest first. Only populated by the list endpoint. */
+            recent_runs?: components["schemas"]["SavedQueryScheduleRun"][];
+        };
+        SavedQueryScheduleRun: {
+            id: string;
+            schedule_id: string;
+            saved_query_id: string;
+            /** Format: date-time */
+            scheduled_for: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            completed_at?: string | null;
+            /** @enum {string} */
+            status: "pending" | "running" | "succeeded" | "failed";
+            attempt: number;
+            recipients: string[];
+            delivery_mode: string;
+            format: string;
+            file_name?: string | null;
+            file_size_bytes?: number | null;
+            row_count?: number | null;
+            error_message?: string | null;
+        };
+        SavedQueryScheduleListResponse: {
+            items: components["schemas"]["SavedQuerySchedule"][];
+        };
+        SavedQueryScheduleRetryResponse: {
+            ok: boolean;
+            run_id: string;
+            error?: string | null;
+        };
         SavedQueryShareResponse: {
             /** @enum {string} */
             visibility: "private" | "shared";
@@ -4412,6 +4985,48 @@ export interface components {
                     permission: "view" | "run";
                 }[];
             };
+        };
+        SavedQueryFolder: {
+            id: string;
+            owner_id: string;
+            parent_id?: string | null;
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedQueryFolderTreeNode: components["schemas"]["SavedQueryFolder"] & {
+            children: components["schemas"]["SavedQueryFolderTreeNode"][];
+        };
+        SavedQueryFolderListResponse: {
+            items: components["schemas"]["SavedQueryFolder"][];
+            tree: components["schemas"]["SavedQueryFolderTreeNode"][];
+        };
+        CreateSavedQueryFolderRequest: {
+            name: string;
+            parent_id?: string | null;
+        };
+        /** @description Patch-style: any field omitted is left as-is. `parent_id: null` moves the folder back to the user's root. */
+        UpdateSavedQueryFolderRequest: {
+            name?: string;
+            parent_id?: string | null;
+        };
+        DeleteSavedQueryFolderResponse: {
+            ok: boolean;
+            id: string;
+            /** @description New parent for the deleted folder's direct children (NULL = root). */
+            reassigned_to: string | null;
+            reassigned_folder_ids: string[];
+            reassigned_saved_query_ids: string[];
+        };
+        MoveSavedQueryRequest: {
+            folder_id: string | null;
+        };
+        MoveSavedQueryResponse: {
+            saved_query: components["schemas"]["SavedQuery"];
+            previous_folder_id?: string | null;
+            folder_id: string | null;
         };
         ValidateParamsRequest: {
             params: {
