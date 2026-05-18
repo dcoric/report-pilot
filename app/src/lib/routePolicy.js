@@ -91,6 +91,14 @@ const POLICIES = [
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+\/access$/, permission: "saved_queries.read" },
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+\/versions$/, permission: "saved_queries.read" },
   { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/versions\/[^/]+\/restore$/, permission: "saved_queries.write" },
+  // QUERY-007: scheduled delivery. Both create / read / update / delete and the
+  // explicit retry endpoint live under saved_queries.schedule (granted to admin
+  // + analyst by default). Service-layer enforcement adds owner-only on top.
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules$/, permission: "saved_queries.schedule" },
+  { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules$/, permission: "saved_queries.schedule" },
+  { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+$/, permission: "saved_queries.schedule" },
+  { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+$/, permission: "saved_queries.schedule" },
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+\/retry$/, permission: "saved_queries.schedule" },
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.read" },
   { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
   { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },

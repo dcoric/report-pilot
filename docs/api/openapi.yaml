@@ -1265,6 +1265,118 @@ paths:
           description: Caller is not the owner
         "404":
           description: Saved query or version not found
+  /v1/saved-queries/{savedQueryId}/schedules:
+    post:
+      tags: [Query]
+      summary: Create a scheduled delivery for a saved query (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedQueryScheduleRequest"
+      responses:
+        "201":
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQuerySchedule"
+        "400":
+          description: Invalid schedule payload (cron, timezone, recipients, etc.)
+        "403":
+          description: Caller is not the owner of this saved query
+        "404":
+          description: Saved query not found
+    get:
+      tags: [Query]
+      summary: List scheduled deliveries for a saved query (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+      responses:
+        "200":
+          description: Schedule list with recent run history per row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryScheduleListResponse"
+        "403":
+          description: Caller is not the owner of this saved query
+        "404":
+          description: Saved query not found
+  /v1/saved-queries/{savedQueryId}/schedules/{scheduleId}:
+    put:
+      tags: [Query]
+      summary: Update a scheduled delivery (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+        - in: path
+          name: scheduleId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedQueryScheduleRequest"
+      responses:
+        "200":
+          description: Schedule updated. `next_run_at` is recomputed when cron, timezone, or status changes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQuerySchedule"
+        "400":
+          description: Invalid schedule payload
+        "403":
+          description: Caller is not the owner of this saved query
+        "404":
+          description: Saved query or schedule not found
+    delete:
+      tags: [Query]
+      summary: Delete a scheduled delivery (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+        - in: path
+          name: scheduleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schedule deleted
+        "403":
+          description: Caller is not the owner of this saved query
+        "404":
+          description: Saved query or schedule not found
+  /v1/saved-queries/{savedQueryId}/schedules/{scheduleId}/retry:
+    post:
+      tags: [Query]
+      summary: Manually re-attempt the most recent run of a schedule (owner-only)
+      parameters:
+        - $ref: "#/components/parameters/SavedQueryId"
+        - in: path
+          name: scheduleId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Retry attempt completed. Body reports whether delivery succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedQueryScheduleRetryResponse"
+        "403":
+          description: Caller is not the owner of this saved query
+        "404":
+          description: Saved query or schedule not found
+        "429":
+          description: Retry attempt cap reached for this schedule
   /v1/query/sessions:
     post:
       tags: [Query]
@@ -2946,6 +3058,168 @@ components:
         new_version:
           $ref: "#/components/schemas/SavedQueryVersion"
       required: [saved_query, restored_from_version_number, new_version]
+    SavedQueryScheduleRequest:
+      type: object
+      description: |
+        Request body for POST/PUT /v1/saved-queries/{id}/schedules. On PUT,
+        omitted fields fall back to the current schedule values.
+      properties:
+        name:
+          type: string
+          description: Human-friendly schedule name (max 200 chars).
+        cron_expression:
+          type: string
+          description: |
+            5-field cron expression evaluated in `timezone`. Example
+            `0 9 * * 1-5` for 09:00 Monday-Friday.
+        timezone:
+          type: string
+          description: IANA timezone name. Default `UTC`.
+          default: UTC
+        recipients:
+          type: array
+          items:
+            type: string
+            format: email
+          description: Email recipients. Required when `delivery_mode` is `email`.
+        delivery_mode:
+          type: string
+          enum: [email, download_artifact]
+          default: email
+        format:
+          type: string
+          enum: [json, csv, tsv, xlsx, parquet]
+          default: csv
+        parameter_overrides:
+          type: object
+          additionalProperties: true
+          description: Per-schedule overrides for the saved query's parameters.
+        status:
+          type: string
+          enum: [active, paused]
+          default: active
+      required: [name, cron_expression]
+    SavedQuerySchedule:
+      type: object
+      properties:
+        id:
+          type: string
+        saved_query_id:
+          type: string
+        owner_user_id:
+          type: string
+          nullable: true
+        name:
+          type: string
+        cron_expression:
+          type: string
+        timezone:
+          type: string
+        recipients:
+          type: array
+          items:
+            type: string
+        delivery_mode:
+          type: string
+          enum: [email, download_artifact]
+        format:
+          type: string
+          enum: [json, csv, tsv, xlsx, parquet]
+        parameter_overrides:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [active, paused]
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_status:
+          type: string
+          enum: [succeeded, failed, running, pending]
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        recent_runs:
+          type: array
+          description: Up to 10 most recent runs, newest first. Only populated by the list endpoint.
+          items:
+            $ref: "#/components/schemas/SavedQueryScheduleRun"
+      required: [id, saved_query_id, name, cron_expression, timezone, recipients, delivery_mode, format, parameter_overrides, status, created_at, updated_at]
+    SavedQueryScheduleRun:
+      type: object
+      properties:
+        id:
+          type: string
+        schedule_id:
+          type: string
+        saved_query_id:
+          type: string
+        scheduled_for:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        attempt:
+          type: integer
+        recipients:
+          type: array
+          items:
+            type: string
+        delivery_mode:
+          type: string
+        format:
+          type: string
+        file_name:
+          type: string
+          nullable: true
+        file_size_bytes:
+          type: integer
+          nullable: true
+        row_count:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+      required: [id, schedule_id, saved_query_id, scheduled_for, status, attempt, recipients, delivery_mode, format]
+    SavedQueryScheduleListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedQuerySchedule"
+      required: [items]
+    SavedQueryScheduleRetryResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        run_id:
+          type: string
+        error:
+          type: string
+          nullable: true
+      required: [ok, run_id]
     SavedQueryShareResponse:
       type: object
       properties:
