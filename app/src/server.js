@@ -58,6 +58,13 @@ const {
   handleRestoreSavedQueryVersion
 } = require("./routes/savedQueries");
 const {
+  handleCreateSavedQueryFolder,
+  handleListSavedQueryFolders,
+  handleUpdateSavedQueryFolder,
+  handleDeleteSavedQueryFolder,
+  handleMoveSavedQuery
+} = require("./routes/savedQueryFolders");
+const {
   handleCreateSchedule,
   handleListSchedules,
   handleUpdateSchedule,
@@ -495,6 +502,30 @@ async function routeRequest(req, res) {
     if (req.method === "GET") {
       return handleListSchedules(req, res, savedQuerySchedulesMatch[1]);
     }
+  }
+
+  // QUERY-008: saved-query foldering. The /move route on a saved-query id
+  // lives here so it's matched before the generic /v1/saved-queries/:id
+  // catch-all below. Folder CRUD is a sibling resource.
+  const savedQueryMoveMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)\/move$/);
+  if (req.method === "POST" && savedQueryMoveMatch) {
+    return handleMoveSavedQuery(req, res, savedQueryMoveMatch[1]);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/saved-query-folders") {
+    return handleCreateSavedQueryFolder(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/saved-query-folders") {
+    return handleListSavedQueryFolders(req, res);
+  }
+
+  const savedQueryFolderMatch = pathname.match(/^\/v1\/saved-query-folders\/([^/]+)$/);
+  if (req.method === "PUT" && savedQueryFolderMatch) {
+    return handleUpdateSavedQueryFolder(req, res, savedQueryFolderMatch[1]);
+  }
+  if (req.method === "DELETE" && savedQueryFolderMatch) {
+    return handleDeleteSavedQueryFolder(req, res, savedQueryFolderMatch[1]);
   }
 
   const savedQueryMatch = pathname.match(/^\/v1\/saved-queries\/([^/]+)$/);

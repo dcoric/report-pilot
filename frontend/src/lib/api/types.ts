@@ -4245,10 +4245,52 @@ export interface components {
             tags: string[];
             /** @enum {string} */
             visibility: "private" | "shared";
+            /** @description QUERY-008 folder placement. NULL means the saved query lives at the owner's root. */
+            folder_id?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        SavedQueryFolder: {
+            id: string;
+            owner_id: string;
+            parent_id?: string | null;
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SavedQueryFolderTreeNode: components["schemas"]["SavedQueryFolder"] & {
+            children: components["schemas"]["SavedQueryFolderTreeNode"][];
+        };
+        SavedQueryFolderListResponse: {
+            items: components["schemas"]["SavedQueryFolder"][];
+            tree: components["schemas"]["SavedQueryFolderTreeNode"][];
+        };
+        CreateSavedQueryFolderRequest: {
+            name: string;
+            parent_id?: string | null;
+        };
+        UpdateSavedQueryFolderRequest: {
+            name?: string;
+            parent_id?: string | null;
+        };
+        DeleteSavedQueryFolderResponse: {
+            ok: boolean;
+            id: string;
+            reassigned_to: string | null;
+            reassigned_folder_ids: string[];
+            reassigned_saved_query_ids: string[];
+        };
+        MoveSavedQueryRequest: {
+            folder_id: string | null;
+        };
+        MoveSavedQueryResponse: {
+            saved_query: components["schemas"]["SavedQuery"];
+            previous_folder_id?: string | null;
+            folder_id: string | null;
         };
         SavedQueryListResponse: {
             items: components["schemas"]["SavedQuery"][];

@@ -99,6 +99,15 @@ const POLICIES = [
   { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+$/, permission: "saved_queries.schedule" },
   { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+$/, permission: "saved_queries.schedule" },
   { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/schedules\/[^/]+\/retry$/, permission: "saved_queries.schedule" },
+  // QUERY-008: foldering. CRUD on folders + the move endpoint share the
+  // saved_queries.write permission with create/update/delete on saved queries
+  // — there's no point being able to author a query but not file it. List is
+  // a read so viewers still see the tree shape if they have read access.
+  { method: "POST", pattern: /^\/v1\/saved-query-folders$/, permission: "saved_queries.write" },
+  { method: "GET", pattern: /^\/v1\/saved-query-folders$/, permission: "saved_queries.read" },
+  { method: "PUT", pattern: /^\/v1\/saved-query-folders\/[^/]+$/, permission: "saved_queries.write" },
+  { method: "DELETE", pattern: /^\/v1\/saved-query-folders\/[^/]+$/, permission: "saved_queries.write" },
+  { method: "POST", pattern: /^\/v1\/saved-queries\/[^/]+\/move$/, permission: "saved_queries.write" },
   { method: "GET", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.read" },
   { method: "PUT", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
   { method: "DELETE", pattern: /^\/v1\/saved-queries\/[^/]+$/, permission: "saved_queries.write" },
