@@ -1,21 +1,39 @@
-const sql = require("mssql");
-const { validateAstReadOnly } = require("../services/sqlAstValidator");
-const { extractPlaceholders, replaceNamedPlaceholders } = require("../services/queryParameterParser");
+import * as sql from "mssql";
+import type { ConnectionPool, IResult, IRecordSet, config as MssqlConfig, Request as MssqlRequest } from "mssql";
+import type {
+  DbAdapter,
+  DbDialect,
+  ExecuteOptions,
+  ParameterSchemaEntry,
+  QueryResult,
+  QueryResultRow,
+  SchemaIntrospection,
+  SqlValidationResult
+} from "./types";
 
-class MssqlAdapter {
-  constructor(connectionString) {
+const { validateAstReadOnly } = require("../services/sqlAstValidator");
+const {
+  extractPlaceholders,
+  replaceNamedPlaceholders
+} = require("../services/queryParameterParser");
+
+class MssqlAdapter implements DbAdapter {
+  public readonly type: "mssql" = "mssql";
+  public readonly connectionString: string;
+  public readonly pool: ConnectionPool;
+  public readonly poolConnect: Promise<ConnectionPool>;
+
+  constructor(connectionString: string) {
     this.connectionString = connectionString;
     this.pool = new sql.ConnectionPool(buildMssqlConfig(connectionString));
     this.poolConnect = this.pool.connect();
   }
 
-  type = "mssql";
-
-  dialect() {
+  dialect(): DbDialect {
     return "mssql";
   }
 
-  async close() {
+  async close(): Promise<void> {
     try {
       await this.pool.close();
     } catch {
@@ -23,11 +41,11 @@ class MssqlAdapter {
     }
   }
 
-  async testConnection() {
+  async testConnection(): Promise<void> {
     await this.query("SELECT 1 AS one");
   }
 
-  async introspectSchema() {
+  async introspectSchema(): Promise<SchemaIntrospection> {
     const tablesSql = `
       SELECT
         t.TABLE_SCHEMA AS schema_name,
@@ -126,48 +144,50 @@ class MssqlAdapter {
     ]);
 
     const pkSet = new Set(
-      (tables(pkResult)).map((row) => `${row.schema_name}.${row.object_name}.${row.column_name}`)
+      tablesRows(pkResult).map(
+        (row: any) => `${row.schema_name}.${row.object_name}.${row.column_name}`
+      )
     );
 
-    const objects = tables(tablesResult).map((row) => ({
-      schemaName: row.schema_name,
-      objectName: row.object_name,
-      objectType: row.table_type === "VIEW" ? "view" : "table"
+    const objects = tablesRows(tablesResult).map((row: any) => ({
+      schemaName: row.schema_name as string,
+      objectName: row.object_name as string,
+      objectType: (row.table_type === "VIEW" ? "view" : "table") as "table" | "view"
     }));
 
-    const columns = tables(columnsResult).map((row) => ({
-      schemaName: row.schema_name,
-      objectName: row.object_name,
-      columnName: row.column_name,
-      dataType: row.data_type,
+    const columns = tablesRows(columnsResult).map((row: any) => ({
+      schemaName: row.schema_name as string,
+      objectName: row.object_name as string,
+      columnName: row.column_name as string,
+      dataType: row.data_type as string,
       nullable: String(row.is_nullable).toUpperCase() === "YES",
       isPk: pkSet.has(`${row.schema_name}.${row.object_name}.${row.column_name}`),
-      ordinalPosition: row.ordinal_position
+      ordinalPosition: row.ordinal_position as number
     }));
 
-    const relationships = tables(fkResult).map((row) => ({
-      fromSchema: row.from_schema,
-      fromObject: row.from_table,
-      fromColumn: row.from_column,
-      toSchema: row.to_schema,
-      toObject: row.to_table,
-      toColumn: row.to_column,
-      relationshipType: "fk"
+    const relationships = tablesRows(fkResult).map((row: any) => ({
+      fromSchema: row.from_schema as string,
+      fromObject: row.from_table as string,
+      fromColumn: row.from_column as string,
+      toSchema: row.to_schema as string,
+      toObject: row.to_table as string,
+      toColumn: row.to_column as string,
+      relationshipType: "fk" as const
     }));
 
-    const indexes = tables(indexesResult).map((row) => ({
-      schemaName: row.schema_name,
-      objectName: row.object_name,
-      indexName: row.index_name,
-      columns: parseIndexColumns(row.index_columns),
+    const indexes = tablesRows(indexesResult).map((row: any) => ({
+      schemaName: row.schema_name as string,
+      objectName: row.object_name as string,
+      indexName: row.index_name as string,
+      columns: parseIndexColumns(row.index_columns as string),
       isUnique: Boolean(row.is_unique)
     }));
 
     return { objects, columns, relationships, indexes };
   }
 
-  async validateSql(sqlText) {
-    const readOnlyCheck = validateAstReadOnly(sqlText, [], this.dialect());
+  async validateSql(sqlText: string): Promise<SqlValidationResult> {
+    const readOnlyCheck: SqlValidationResult = validateAstReadOnly(sqlText, [], this.dialect());
     if (!readOnlyCheck.ok) {
       return readOnlyCheck;
     }
@@ -187,47 +207,75 @@ class MssqlAdapter {
     }
   }
 
-  async explain(sqlText) {
+  async explain(sqlText: string): Promise<unknown[]> {
     const normalizedSql = String(sqlText || "").replace(/;\s*$/, "");
     const planResult = await this.query(`
       SET SHOWPLAN_JSON ON;
       ${normalizedSql};
       SET SHOWPLAN_JSON OFF;
     `);
-    return Array.isArray(planResult.recordsets) ? planResult.recordsets.flat() : tables(planResult);
+    return Array.isArray((planResult as any).recordsets)
+      ? ((planResult as any).recordsets as unknown[][]).flat()
+      : tablesRows(planResult);
   }
 
-  async executeReadOnly(sqlText, opts = {}) {
+  async execute(sqlText: string, params: unknown[] = []): Promise<QueryResult> {
+    return this.executeWithRequest((request) => {
+      params.forEach((value, index) => {
+        request.input(`p${index}`, value as any);
+      });
+      return request.query(sqlText);
+    }, {});
+  }
+
+  async executeReadOnly(sqlText: string, opts: ExecuteOptions = {}): Promise<QueryResult> {
     return this.executeWithRequest((request) => request.query(sqlText), opts);
   }
 
-  async executeParameterizedReadOnly(sqlText, paramValues, paramSchema, opts = {}) {
-    const placeholders = extractPlaceholders(sqlText);
-    const schemaByName = new Map(
-      (Array.isArray(paramSchema) ? paramSchema : []).map((entry) => [entry.name, entry])
+  async executeParameterizedReadOnly(
+    sqlText: string,
+    paramValues: Record<string, unknown>,
+    paramSchema?: ParameterSchemaEntry[],
+    opts: ExecuteOptions = {}
+  ): Promise<QueryResult> {
+    const placeholders: string[] = extractPlaceholders(sqlText);
+    const schemaByName = new Map<string, ParameterSchemaEntry>(
+      (Array.isArray(paramSchema) ? paramSchema : []).map(
+        (entry: ParameterSchemaEntry) => [entry.name, entry]
+      )
     );
-    const usedNames = new Set();
-    const transformedSql = replaceNamedPlaceholders(sqlText, (name) => {
+    const usedNames = new Set<string>();
+    const transformedSql: string = replaceNamedPlaceholders(sqlText, (name: string) => {
       usedNames.add(name);
       return `@${name}`;
     });
 
     return this.executeWithRequest((request) => {
       for (const name of placeholders) {
-        if (usedNames.has(name) && !Object.prototype.hasOwnProperty.call(paramValues || {}, name)) {
+        if (
+          usedNames.has(name) &&
+          !Object.prototype.hasOwnProperty.call(paramValues || {}, name)
+        ) {
           throw new Error(`Missing parameter value for :${name}`);
         }
         if (!usedNames.has(name)) {
           continue;
         }
         const type = schemaByName.get(name)?.type || "text";
-        request.input(name, getMssqlParameterType(type), convertMssqlParameterValue(type, paramValues[name]));
+        request.input(
+          name,
+          getMssqlParameterType(type),
+          convertMssqlParameterValue(type, paramValues[name])
+        );
       }
       return request.query(transformedSql);
     }, opts);
   }
 
-  async executeWithRequest(runQuery, opts = {}) {
+  async executeWithRequest(
+    runQuery: (request: MssqlRequest) => Promise<IResult<unknown>>,
+    opts: ExecuteOptions = {}
+  ): Promise<QueryResult> {
     const timeoutMs = Number(opts.timeoutMs || 20000);
     const maxRows = Number(opts.maxRows || 1000);
     const startedAt = Date.now();
@@ -235,15 +283,15 @@ class MssqlAdapter {
     await this.poolConnect;
     const request = this.pool.request();
     if (Number.isFinite(timeoutMs)) {
-      request.timeout = timeoutMs;
+      (request as any).timeout = timeoutMs;
     }
 
     const result = await runQuery(request);
-    const rows = tables(result);
+    const rows = tablesRows(result);
     const columns = extractColumns(result, rows);
     const truncated = rows.length > maxRows;
     const slicedRows = truncated ? rows.slice(0, maxRows) : rows;
-    const safeRows = slicedRows.map((row) => sanitizeRow(row));
+    const safeRows: QueryResultRow[] = slicedRows.map((row) => sanitizeRow(row));
 
     return {
       columns,
@@ -255,14 +303,14 @@ class MssqlAdapter {
     };
   }
 
-  quoteIdentifier(identifier) {
+  quoteIdentifier(identifier: string): string {
     return `[${String(identifier).replace(/]/g, "]]")}]`;
   }
 
-  async describeFirstResultSet(sqlText) {
+  async describeFirstResultSet(sqlText: string): Promise<IResult<unknown>> {
     await this.poolConnect;
     const request = this.pool.request();
-    request.input("tsql", sql.NVarChar(sql.MAX), String(sqlText || "").trim());
+    request.input("tsql", (sql as any).NVarChar((sql as any).MAX), String(sqlText || "").trim());
     return request.query(`
       EXEC sys.sp_describe_first_result_set
         @tsql = @tsql,
@@ -271,17 +319,17 @@ class MssqlAdapter {
     `);
   }
 
-  async query(sqlText, timeoutMs) {
+  async query(sqlText: string, timeoutMs?: number): Promise<IResult<unknown>> {
     await this.poolConnect;
     const request = this.pool.request();
     if (Number.isFinite(timeoutMs)) {
-      request.timeout = timeoutMs;
+      (request as any).timeout = timeoutMs;
     }
     return request.query(sqlText);
   }
 }
 
-function buildMssqlConfig(connectionString) {
+function buildMssqlConfig(connectionString: string): MssqlConfig {
   const raw = String(connectionString || "").trim();
   if (!raw) {
     throw new Error("MSSQL connection string is empty");
@@ -289,12 +337,17 @@ function buildMssqlConfig(connectionString) {
 
   if (/^server=/i.test(raw) || raw.includes(";")) {
     const parts = parseKvConnectionString(raw);
-    const trusted = parseBoolean(parts.trusted_connection || parts.integrated_security || parts.integratedsecurity);
+    const trusted = parseBoolean(
+      parts.trusted_connection || parts.integrated_security || parts.integratedsecurity
+    );
     if (trusted) {
-      throw new Error("Trusted_Connection is not supported by this runtime. Use User Id + Password.");
+      throw new Error(
+        "Trusted_Connection is not supported by this runtime. Use User Id + Password."
+      );
     }
 
-    const serverField = parts.server || parts.data_source || parts.address || parts.addr || parts.network_address;
+    const serverField =
+      parts.server || parts.data_source || parts.address || parts.addr || parts.network_address;
     const { host, port, instanceName } = splitServerHostAndPort(serverField);
     const encrypt = parseBoolean(parts.encrypt, true);
     const trustServerCertificate = parseBoolean(
@@ -331,7 +384,7 @@ function buildMssqlConfig(connectionString) {
         min: 0,
         idleTimeoutMillis: 30000
       }
-    };
+    } as MssqlConfig;
   }
 
   return {
@@ -340,15 +393,15 @@ function buildMssqlConfig(connectionString) {
       encrypt: true,
       trustServerCertificate: true
     }
-  };
+  } as unknown as MssqlConfig;
 }
 
-function parseKvConnectionString(raw) {
+function parseKvConnectionString(raw: string): Record<string, string> {
   return raw
     .split(";")
     .map((part) => part.trim())
     .filter(Boolean)
-    .reduce((acc, item) => {
+    .reduce<Record<string, string>>((acc, item) => {
       const idx = item.indexOf("=");
       if (idx <= 0) {
         return acc;
@@ -360,7 +413,13 @@ function parseKvConnectionString(raw) {
     }, {});
 }
 
-function splitServerHostAndPort(serverField) {
+interface SplitServer {
+  host: string;
+  port: number;
+  instanceName: string | null;
+}
+
+function splitServerHostAndPort(serverField: string | undefined): SplitServer {
   const value = String(serverField || "").trim();
   if (!value) {
     return { host: "", port: 1433, instanceName: null };
@@ -368,7 +427,11 @@ function splitServerHostAndPort(serverField) {
   if (value.includes(",")) {
     const [host, portRaw] = value.split(",", 2);
     const port = Number(portRaw);
-    return { host: host.trim(), port: Number.isFinite(port) ? port : 1433, instanceName: null };
+    return {
+      host: host.trim(),
+      port: Number.isFinite(port) ? port : 1433,
+      instanceName: null
+    };
   }
   if (value.includes("\\")) {
     const [host, instance] = value.split("\\", 2);
@@ -377,7 +440,7 @@ function splitServerHostAndPort(serverField) {
   return { host: value, port: 1433, instanceName: null };
 }
 
-function parseBoolean(value, fallback = false) {
+function parseBoolean(value: unknown, fallback: boolean = false): boolean {
   if (value === undefined || value === null || value === "") {
     return fallback;
   }
@@ -385,36 +448,36 @@ function parseBoolean(value, fallback = false) {
   return ["true", "1", "yes", "y"].includes(normalized);
 }
 
-function tables(result) {
-  return Array.isArray(result?.recordset) ? result.recordset : [];
+function tablesRows(result: any): QueryResultRow[] {
+  return Array.isArray(result?.recordset) ? (result.recordset as QueryResultRow[]) : [];
 }
 
-function extractColumns(result, rows) {
+function extractColumns(result: any, rows: QueryResultRow[]): string[] {
   if (rows.length > 0) {
     return Object.keys(rows[0]);
   }
 
-  const colMeta = result?.recordset?.columns;
+  const colMeta = (result?.recordset as IRecordSet<unknown> | undefined)?.columns;
   if (colMeta && typeof colMeta === "object") {
     return Object.keys(colMeta);
   }
   return [];
 }
 
-function sanitizeRow(row) {
-  const out = {};
+function sanitizeRow(row: QueryResultRow | null | undefined): QueryResultRow {
+  const out: QueryResultRow = {};
   for (const key of Object.keys(row || {})) {
-    out[key] = sanitizeValue(row[key]);
+    out[key] = sanitizeValue((row as Record<string, unknown>)[key]);
   }
   return out;
 }
 
-function sanitizeValue(value) {
+function sanitizeValue(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
   }
   if (Buffer.isBuffer(value)) {
-    return value.toString("base64");
+    return (value as Buffer).toString("base64");
   }
   if (typeof value === "bigint") {
     return value.toString();
@@ -431,38 +494,39 @@ function sanitizeValue(value) {
   return value;
 }
 
-function parseIndexColumns(rawColumns) {
+function parseIndexColumns(rawColumns: string): string[] {
   return String(rawColumns || "")
     .split(",")
     .map((part) => part.trim().replace(/[\[\]]/g, ""))
     .filter(Boolean);
 }
 
-function getMssqlParameterType(type) {
+function getMssqlParameterType(type: string): any {
+  const s: any = sql;
   if (type === "integer") {
-    return sql.Int;
+    return s.Int;
   }
   if (type === "decimal") {
-    return sql.Decimal(18, 6);
+    return s.Decimal(18, 6);
   }
   if (type === "date") {
-    return sql.Date;
+    return s.Date;
   }
   if (type === "boolean") {
-    return sql.Bit;
+    return s.Bit;
   }
   if (type === "timestamp") {
-    return sql.DateTime2;
+    return s.DateTime2;
   }
-  return sql.NVarChar(sql.MAX);
+  return s.NVarChar(s.MAX);
 }
 
-function convertMssqlParameterValue(type, value) {
+function convertMssqlParameterValue(type: string, value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
   }
   if (type === "timestamp") {
-    return new Date(value);
+    return new Date(value as string | number | Date);
   }
   if (type === "date") {
     return new Date(`${value}T00:00:00.000Z`);
@@ -470,24 +534,25 @@ function convertMssqlParameterValue(type, value) {
   return value;
 }
 
-function normalizeMssqlValidationError(err) {
+function normalizeMssqlValidationError(err: any): string {
   const candidates = [
     err?.originalError?.info?.message,
     Array.isArray(err?.precedingErrors) ? err.precedingErrors[0]?.message : null,
     err?.message
   ];
 
-  const message = candidates
-    .map((item) => String(item || "").trim())
-    .find(Boolean) || "SQL validation failed";
+  const message =
+    candidates.map((item) => String(item || "").trim()).find(Boolean) || "SQL validation failed";
 
-  return message
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean) || message;
+  return (
+    message
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .find(Boolean) || message
+  );
 }
 
-function isDescribeFirstResultUnavailable(err) {
+function isDescribeFirstResultUnavailable(err: any): boolean {
   const message = String(err?.message || "").toLowerCase();
   return (
     message.includes("sp_describe_first_result_set") &&
@@ -495,6 +560,7 @@ function isDescribeFirstResultUnavailable(err) {
   );
 }
 
+export { MssqlAdapter };
 module.exports = {
   MssqlAdapter
 };
