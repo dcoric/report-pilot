@@ -6,7 +6,8 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 
 - `npm run setup`
 - `npm run dev`
-- `npm test`
+- `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.{js,ts}`, so `.js` and `.ts` test files are both picked up
+- `npm run typecheck`
 - `npm run migrate`
 - `npm --prefix frontend run lint`
 

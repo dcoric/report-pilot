@@ -15,7 +15,7 @@
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",
     "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
-    "test": "node --test app/test/**/*.test.js",
+    "test": "node --import tsx --test app/test/**/*.test.{js,ts}",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
