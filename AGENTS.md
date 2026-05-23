@@ -5,7 +5,9 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 ## Commands
 
 - `npm run setup`
-- `npm run dev`
+- `npm run dev` — concurrently runs `dev:fe` and `dev:be`; `dev:be` uses `tsx watch app/src/start.js` so edits to both `.js` and `.ts` files trigger a restart
+- `npm run build` — builds frontend (`npm run build:fe`) and backend (`npm run build:be`); backend output goes to `dist/` (compiled by `tsc`)
+- `npm start` — runs the compiled backend via `node dist/src/start.js` (used by the Docker image)
 - `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.{js,ts}`, so `.js` and `.ts` test files are both picked up
 - `npm run typecheck`
 - `npm run migrate`
