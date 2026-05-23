@@ -1,7 +1,11 @@
-const { SESSION_COOKIE_NAME } = require("../services/authService");
+import type { IncomingMessage } from "http";
 
-function parseCookieHeader(header) {
-  const cookies = {};
+const { SESSION_COOKIE_NAME } = require("../services/authService") as { SESSION_COOKIE_NAME: string };
+
+export type CookieMap = Record<string, string>;
+
+export function parseCookieHeader(header: string | undefined | null): CookieMap {
+  const cookies: CookieMap = {};
   if (typeof header !== "string" || !header) {
     return cookies;
   }
@@ -24,12 +28,12 @@ function parseCookieHeader(header) {
   return cookies;
 }
 
-function readSessionToken(req) {
+export function readSessionToken(req: IncomingMessage): string | null {
   const cookies = parseCookieHeader(req.headers.cookie);
   return cookies[SESSION_COOKIE_NAME] || null;
 }
 
-function isSecureCookie() {
+function isSecureCookie(): boolean {
   if (process.env.AUTH_COOKIE_SECURE === "true") {
     return true;
   }
@@ -39,8 +43,8 @@ function isSecureCookie() {
   return process.env.NODE_ENV === "production";
 }
 
-function buildSessionCookie(token, expiresAt) {
-  const parts = [
+export function buildSessionCookie(token: string, expiresAt?: Date | string | number | null): string {
+  const parts: string[] = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
     "HttpOnly",
     "Path=/",
@@ -61,8 +65,8 @@ function buildSessionCookie(token, expiresAt) {
   return parts.join("; ");
 }
 
-function buildClearSessionCookie() {
-  const parts = [
+export function buildClearSessionCookie(): string {
+  const parts: string[] = [
     `${SESSION_COOKIE_NAME}=`,
     "HttpOnly",
     "Path=/",
@@ -75,10 +79,3 @@ function buildClearSessionCookie() {
   }
   return parts.join("; ");
 }
-
-module.exports = {
-  parseCookieHeader,
-  readSessionToken,
-  buildSessionCookie,
-  buildClearSessionCookie
-};

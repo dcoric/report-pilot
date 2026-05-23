@@ -4,14 +4,28 @@
 // signature prevents tampering; the cookie is HttpOnly + SameSite=Lax + Secure
 // when appropriate.
 
-const crypto = require("crypto");
+import * as crypto from "crypto";
+import type { IncomingMessage } from "http";
 
-const COOKIE_NAME = "rp_oidc_flow";
-const FLOW_MAX_AGE_SECONDS = 10 * 60; // 10 minutes is plenty for the user to log in
+export const COOKIE_NAME = "rp_oidc_flow" as const;
+export const FLOW_MAX_AGE_SECONDS = 10 * 60; // 10 minutes is plenty for the user to log in
 
-let cachedSecret = null;
+export interface OidcFlowPayload {
+  provider_id?: string;
+  code_verifier?: string;
+  state?: string;
+  nonce?: string;
+  redirect_uri?: string;
+  [key: string]: unknown;
+}
 
-function getFlowSecret() {
+interface SignedOidcFlowPayload extends OidcFlowPayload {
+  exp: number;
+}
+
+let cachedSecret: Buffer | null = null;
+
+function getFlowSecret(): Buffer {
   if (cachedSecret) return cachedSecret;
   const fromEnv = process.env.AUTH_FLOW_SECRET;
   if (fromEnv && fromEnv.length >= 32) {
@@ -31,22 +45,22 @@ function getFlowSecret() {
   return cachedSecret;
 }
 
-function isSecureCookie() {
+function isSecureCookie(): boolean {
   if (process.env.AUTH_COOKIE_SECURE === "true") return true;
   if (process.env.AUTH_COOKIE_SECURE === "false") return false;
   return process.env.NODE_ENV === "production";
 }
 
-function base64UrlEncode(buf) {
+function base64UrlEncode(buf: Buffer | string): string {
   return Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlDecode(value) {
+function base64UrlDecode(value: string): Buffer {
   const pad = value.length % 4 === 0 ? "" : "=".repeat(4 - (value.length % 4));
   return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
 }
 
-function sign(payload) {
+function sign(payload: OidcFlowPayload): string {
   const expiresAt = Math.floor(Date.now() / 1000) + FLOW_MAX_AGE_SECONDS;
   const body = JSON.stringify({ ...payload, exp: expiresAt });
   const bodyB64 = base64UrlEncode(body);
@@ -54,12 +68,12 @@ function sign(payload) {
   return `${bodyB64}.${base64UrlEncode(mac)}`;
 }
 
-function verify(value) {
+function verify(value: unknown): SignedOidcFlowPayload | null {
   if (typeof value !== "string" || !value.includes(".")) return null;
   const [bodyB64, sigB64] = value.split(".");
   if (!bodyB64 || !sigB64) return null;
   const expected = crypto.createHmac("sha256", getFlowSecret()).update(bodyB64).digest();
-  let provided;
+  let provided: Buffer;
   try {
     provided = base64UrlDecode(sigB64);
   } catch {
@@ -67,7 +81,7 @@ function verify(value) {
   }
   if (provided.length !== expected.length) return null;
   if (!crypto.timingSafeEqual(provided, expected)) return null;
-  let payload;
+  let payload: SignedOidcFlowPayload;
   try {
     payload = JSON.parse(base64UrlDecode(bodyB64).toString("utf8"));
   } catch {
@@ -79,9 +93,9 @@ function verify(value) {
   return payload;
 }
 
-function buildFlowCookie(payload) {
+export function buildFlowCookie(payload: OidcFlowPayload): string {
   const value = sign(payload);
-  const parts = [
+  const parts: string[] = [
     `${COOKIE_NAME}=${encodeURIComponent(value)}`,
     "HttpOnly",
     "Path=/",
@@ -92,8 +106,8 @@ function buildFlowCookie(payload) {
   return parts.join("; ");
 }
 
-function buildClearFlowCookie() {
-  const parts = [
+export function buildClearFlowCookie(): string {
+  const parts: string[] = [
     `${COOKIE_NAME}=`,
     "HttpOnly",
     "Path=/",
@@ -105,7 +119,7 @@ function buildClearFlowCookie() {
   return parts.join("; ");
 }
 
-function readFlowCookie(req) {
+export function readFlowCookie(req: IncomingMessage): SignedOidcFlowPayload | null {
   const header = req.headers.cookie;
   if (typeof header !== "string" || !header) return null;
   for (const segment of header.split(";")) {
@@ -124,13 +138,6 @@ function readFlowCookie(req) {
   return null;
 }
 
-module.exports = {
-  COOKIE_NAME,
-  FLOW_MAX_AGE_SECONDS,
-  buildFlowCookie,
-  buildClearFlowCookie,
-  readFlowCookie,
-  // exposed for tests
-  __sign: sign,
-  __verify: verify
-};
+// exposed for tests
+export const __sign = sign;
+export const __verify = verify;
