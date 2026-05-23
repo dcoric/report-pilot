@@ -7,8 +7,14 @@
  * can treat them uniformly.
  */
 
-/** Provider identifier surfaced on each adapter instance. */
-export type LlmProvider = "openai" | "gemini" | "deepseek" | "openrouter" | string;
+import type { LlmProviderName } from "../../types/domain";
+
+/**
+ * Provider identifier surfaced on each adapter instance. Built-in providers
+ * use `LlmProviderName`; custom providers carry any non-empty string (matching
+ * the storage-layer contract on `LlmProviderConfig.provider`).
+ */
+export type LlmProvider = LlmProviderName | string;
 
 /** Options accepted by every adapter constructor. */
 export interface LlmAdapterOptions {
