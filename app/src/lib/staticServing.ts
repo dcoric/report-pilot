@@ -1,24 +1,25 @@
-const fs = require("fs");
-const path = require("path");
-const appDb = require("./appDb");
-const {
+import * as fs from "fs";
+import * as path from "path";
+import type { IncomingMessage, ServerResponse } from "http";
+import appDb = require("./appDb");
+import {
   OPENAPI_SPEC_PATH,
   FRONTEND_DIST_PATH,
   FRONTEND_INDEX_PATH,
   STATIC_CONTENT_TYPES
-} = require("./constants");
+} from "./constants";
 
-let cachedOpenApiSpec = null;
-let cachedFrontendIndex = null;
+let cachedOpenApiSpec: string | null = null;
+let cachedFrontendIndex: Buffer | null = null;
 
-function loadOpenApiSpec() {
+function loadOpenApiSpec(): string {
   if (cachedOpenApiSpec === null) {
     cachedOpenApiSpec = fs.readFileSync(OPENAPI_SPEC_PATH, "utf8");
   }
   return cachedOpenApiSpec;
 }
 
-function swaggerUiHtml() {
+function swaggerUiHtml(): string {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -40,32 +41,32 @@ function swaggerUiHtml() {
 </html>`;
 }
 
-function serveSwaggerDocs(res) {
+export function serveSwaggerDocs(res: ServerResponse): void {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(swaggerUiHtml());
 }
 
-function serveOpenApiSpec(res) {
+export function serveOpenApiSpec(res: ServerResponse): void {
   const spec = loadOpenApiSpec();
   res.writeHead(200, { "Content-Type": "application/yaml; charset=utf-8" });
   res.end(spec);
 }
 
-function frontendIsAvailable() {
+function frontendIsAvailable(): boolean {
   return fs.existsSync(FRONTEND_INDEX_PATH);
 }
 
-function getStaticContentType(filePath) {
+function getStaticContentType(filePath: string): string {
   const extname = path.extname(filePath).toLowerCase();
   return STATIC_CONTENT_TYPES[extname] || "application/octet-stream";
 }
 
-function isPathWithin(parentPath, candidatePath) {
+function isPathWithin(parentPath: string, candidatePath: string): boolean {
   const relativePath = path.relative(parentPath, candidatePath);
   return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
-function serveFrontendIndex(res) {
+export function serveFrontendIndex(res: ServerResponse): boolean {
   if (!frontendIsAvailable()) {
     return false;
   }
@@ -79,7 +80,7 @@ function serveFrontendIndex(res) {
   return true;
 }
 
-function serveFrontendAsset(res, pathname) {
+export function serveFrontendAsset(res: ServerResponse, pathname: string): boolean {
   if (!frontendIsAvailable()) {
     return false;
   }
@@ -104,7 +105,7 @@ function serveFrontendAsset(res, pathname) {
   return true;
 }
 
-function shouldServeFrontendApp(req, pathname) {
+export function shouldServeFrontendApp(req: IncomingMessage, pathname: string): boolean {
   if (req.method !== "GET" || !frontendIsAvailable()) {
     return false;
   }
@@ -128,20 +129,16 @@ function shouldServeFrontendApp(req, pathname) {
   return accept.includes("text/html");
 }
 
-async function checkDatabase() {
+export interface DatabaseCheckResult {
+  ok: boolean;
+  error?: string;
+}
+
+export async function checkDatabase(): Promise<DatabaseCheckResult> {
   try {
     await appDb.query("SELECT 1");
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: (err as Error).message };
   }
 }
-
-module.exports = {
-  serveSwaggerDocs,
-  serveOpenApiSpec,
-  serveFrontendIndex,
-  serveFrontendAsset,
-  shouldServeFrontendApp,
-  checkDatabase
-};

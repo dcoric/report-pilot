@@ -1,13 +1,19 @@
-const crypto = require("crypto");
+import * as crypto from "crypto";
 
-function createRequestId() {
+export type LogLevel = "info" | "warn" | "error";
+
+export interface LogEventPayload {
+  [key: string]: unknown;
+}
+
+export function createRequestId(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function logEvent(event, data = {}, level = "info") {
+export function logEvent(event: string, data: LogEventPayload = {}, level: LogLevel = "info"): void {
   const payload = {
     ts: new Date().toISOString(),
     level,
@@ -22,8 +28,3 @@ function logEvent(event, data = {}, level = "info") {
   }
   console.log(line);
 }
-
-module.exports = {
-  createRequestId,
-  logEvent
-};

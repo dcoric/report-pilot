@@ -6,9 +6,30 @@
 // request is unauthenticated; otherwise returns the matched token record
 // so the route can attribute SCIM activity to the bound provider.
 
-const scimTokenService = require("../services/scimTokenService");
+import type { IncomingMessage, ServerResponse } from "http";
 
-function buildScimErrorBody(status, detail) {
+export interface ScimTokenRecord {
+  id: string;
+  provider_id: string;
+  label: string | null;
+  created_at: string | Date;
+  last_used_at: string | Date | null;
+  revoked_at: string | Date | null;
+}
+
+interface ScimTokenService {
+  verifyToken(presented: string): Promise<ScimTokenRecord | null>;
+}
+
+const scimTokenService = require("../services/scimTokenService") as ScimTokenService;
+
+export interface ScimErrorBody {
+  schemas: string[];
+  status: string;
+  detail: string;
+}
+
+function buildScimErrorBody(status: number, detail: string): ScimErrorBody {
   return {
     schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
     status: String(status),
@@ -16,19 +37,19 @@ function buildScimErrorBody(status, detail) {
   };
 }
 
-function writeScimError(res, status, detail) {
+export function writeScimError(res: ServerResponse, status: number, detail: string): void {
   res.writeHead(status, { "Content-Type": "application/scim+json" });
   res.end(JSON.stringify(buildScimErrorBody(status, detail)));
 }
 
-function parseBearer(req) {
+export function parseBearer(req: IncomingMessage): string | null {
   const header = req.headers && req.headers.authorization;
   if (typeof header !== "string") return null;
   const match = header.match(/^\s*Bearer\s+([A-Za-z0-9_\-.~+=/]+)\s*$/);
   return match ? match[1] : null;
 }
 
-async function authenticateScim(req, res) {
+export async function authenticateScim(req: IncomingMessage, res: ServerResponse): Promise<ScimTokenRecord | null> {
   const token = parseBearer(req);
   if (!token) {
     writeScimError(res, 401, "Bearer token required");
@@ -41,9 +62,3 @@ async function authenticateScim(req, res) {
   }
   return record;
 }
-
-module.exports = {
-  authenticateScim,
-  parseBearer,
-  writeScimError
-};

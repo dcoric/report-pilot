@@ -8,7 +8,17 @@
 // the first match. Any /v1/* path without a matching policy is treated as an
 // unknown endpoint and returns 404 — there is no implicit "open" policy.
 
-const POLICIES = [
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+
+export interface RoutePolicy {
+  method: HttpMethod;
+  pattern: RegExp;
+  public?: boolean;
+  role?: string;
+  permission?: string;
+}
+
+export const POLICIES: ReadonlyArray<RoutePolicy> = [
   // Service / docs
   { method: "GET", pattern: /^\/health$/, public: true },
   { method: "GET", pattern: /^\/ready$/, public: true },
@@ -131,7 +141,7 @@ const POLICIES = [
   { method: "POST", pattern: /^\/v1\/rag\/reindex$/, permission: "rag.write" }
 ];
 
-function findPolicy(method, pathname) {
+export function findPolicy(method: string, pathname: string): RoutePolicy | null {
   for (const policy of POLICIES) {
     if (policy.method !== method) continue;
     if (!policy.pattern.test(pathname)) continue;
@@ -140,16 +150,10 @@ function findPolicy(method, pathname) {
   return null;
 }
 
-function describePolicy(policy) {
+export function describePolicy(policy: RoutePolicy | null | undefined): string {
   if (!policy) return "unmapped";
   if (policy.public) return "public";
   if (policy.role) return `role:${policy.role}`;
   if (policy.permission) return `permission:${policy.permission}`;
   return "unmapped";
 }
-
-module.exports = {
-  POLICIES,
-  findPolicy,
-  describePolicy
-};

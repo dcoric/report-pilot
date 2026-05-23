@@ -1,11 +1,65 @@
-const { json } = require("./http");
-const { logEvent } = require("./observability");
-const { readSessionToken, buildClearSessionCookie } = require("./sessionCookie");
-const authService = require("../services/authService");
-const roleService = require("../services/roleService");
-const dataSourceAccessService = require("../services/dataSourceAccessService");
+import type { IncomingMessage, ServerResponse } from "http";
+import { json } from "./http";
+import { logEvent } from "./observability";
+import { readSessionToken, buildClearSessionCookie } from "./sessionCookie";
+import type { RoutePolicy } from "./routePolicy";
 
-async function loadCurrentUser(req) {
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: string | Date | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+export interface ActiveSession {
+  sessionId: string;
+  expiresAt: string | Date;
+  user: AuthUser;
+}
+
+interface AuthService {
+  findActiveSession(token: string): Promise<ActiveSession | null>;
+}
+
+interface RoleService {
+  listRoleNamesForUser(userId: string): Promise<string[]>;
+  listPermissionNamesForUser(userId: string): Promise<string[]>;
+}
+
+interface DataSourceAccessService {
+  hasAccess(userId: string, dataSourceId: string): Promise<boolean>;
+  listAccessibleDataSourceIds(userId: string): Promise<string[]>;
+}
+
+const authService = require("../services/authService") as AuthService;
+const roleService = require("../services/roleService") as RoleService;
+const dataSourceAccessService = require("../services/dataSourceAccessService") as DataSourceAccessService;
+
+export interface AuthedRequest extends IncomingMessage {
+  requestId?: string;
+  user?: AuthUser;
+  userRoles?: string[];
+  userPermissions?: string[];
+}
+
+export interface CurrentUserExpired {
+  expired: true;
+}
+
+export interface CurrentUserActive {
+  user: AuthUser;
+  roles: string[];
+  sessionId: string;
+  expiresAt: string | Date;
+  expired?: false;
+}
+
+export type CurrentUser = CurrentUserActive | CurrentUserExpired;
+
+export async function loadCurrentUser(req: AuthedRequest): Promise<CurrentUser | null> {
   const token = readSessionToken(req);
   if (!token) {
     return null;
@@ -23,7 +77,14 @@ async function loadCurrentUser(req) {
   };
 }
 
-function logDecision({ req, decision, userId, policy }) {
+interface LogDecisionArgs {
+  req: AuthedRequest;
+  decision: string;
+  userId: string | null;
+  policy: RoutePolicy | null;
+}
+
+function logDecision({ req, decision, userId, policy }: LogDecisionArgs): void {
   logEvent("authorization", {
     request_id: req.requestId || null,
     user_id: userId || null,
@@ -36,21 +97,21 @@ function logDecision({ req, decision, userId, policy }) {
   });
 }
 
-async function requireAuthenticated(req, res) {
+export async function requireAuthenticated(req: AuthedRequest, res: ServerResponse): Promise<CurrentUserActive | null> {
   const current = await loadCurrentUser(req);
   if (!current) {
     json(res, 401, { error: "unauthenticated" });
     return null;
   }
-  if (current.expired) {
+  if ((current as CurrentUserExpired).expired) {
     res.setHeader("Set-Cookie", buildClearSessionCookie());
     json(res, 401, { error: "unauthenticated" });
     return null;
   }
-  return current;
+  return current as CurrentUserActive;
 }
 
-async function requireRole(req, res, roleName) {
+export async function requireRole(req: AuthedRequest, res: ServerResponse, roleName: string): Promise<CurrentUserActive | null> {
   const current = await requireAuthenticated(req, res);
   if (!current) {
     return null;
@@ -62,9 +123,16 @@ async function requireRole(req, res, roleName) {
   return current;
 }
 
+export interface EnforcePolicyResult {
+  allowed: boolean;
+  user?: AuthUser;
+  roles?: string[];
+  permissions?: string[] | null;
+}
+
 // Central enforcement used by the HTTP dispatcher. Returns { allowed: bool }.
 // On deny, the response has already been written.
-async function enforcePolicy(req, res, policy) {
+export async function enforcePolicy(req: AuthedRequest, res: ServerResponse, policy: RoutePolicy | null): Promise<EnforcePolicyResult> {
   if (!policy) {
     // The dispatcher should only call enforcePolicy for paths it expects to
     // handle. A null policy here means the caller decided no enforcement is
@@ -84,45 +152,47 @@ async function enforcePolicy(req, res, policy) {
     json(res, 401, { error: "unauthenticated" });
     return { allowed: false };
   }
-  if (current.expired) {
+  if ((current as CurrentUserExpired).expired) {
     res.setHeader("Set-Cookie", buildClearSessionCookie());
     logDecision({ req, decision: "deny_expired_session", userId: null, policy });
     json(res, 401, { error: "unauthenticated" });
     return { allowed: false };
   }
 
-  if (policy.role && !current.roles.includes(policy.role)) {
-    logDecision({ req, decision: "deny_role", userId: current.user.id, policy });
+  const active = current as CurrentUserActive;
+
+  if (policy.role && !active.roles.includes(policy.role)) {
+    logDecision({ req, decision: "deny_role", userId: active.user.id, policy });
     json(res, 403, { error: "forbidden", message: `requires role: ${policy.role}` });
     return { allowed: false };
   }
 
-  let permissions = null;
+  let permissions: string[] | null = null;
   if (policy.permission) {
-    permissions = await roleService.listPermissionNamesForUser(current.user.id);
+    permissions = await roleService.listPermissionNamesForUser(active.user.id);
     if (!permissions.includes(policy.permission)) {
-      logDecision({ req, decision: "deny_permission", userId: current.user.id, policy });
+      logDecision({ req, decision: "deny_permission", userId: active.user.id, policy });
       json(res, 403, { error: "forbidden", message: `requires permission: ${policy.permission}` });
       return { allowed: false };
     }
   }
 
-  req.user = current.user;
-  req.userRoles = current.roles;
+  req.user = active.user;
+  req.userRoles = active.roles;
   if (permissions !== null) {
     req.userPermissions = permissions;
   }
-  logDecision({ req, decision: "allow", userId: current.user.id, policy });
-  return { allowed: true, user: current.user, roles: current.roles, permissions };
+  logDecision({ req, decision: "allow", userId: active.user.id, policy });
+  return { allowed: true, user: active.user, roles: active.roles, permissions };
 }
 
-function isAdmin(req) {
+export function isAdmin(req: AuthedRequest): boolean {
   return Boolean(req.userRoles && req.userRoles.includes("admin"));
 }
 
 // Returns true and allows the request to continue. On deny the response has
 // already been written (403). The check is skipped for admins.
-async function enforceDataSourceAccess(req, res, dataSourceId) {
+export async function enforceDataSourceAccess(req: AuthedRequest, res: ServerResponse, dataSourceId: string | null | undefined): Promise<boolean> {
   if (isAdmin(req)) {
     return true;
   }
@@ -150,7 +220,7 @@ async function enforceDataSourceAccess(req, res, dataSourceId) {
 // For list endpoints: returns null when the caller is an admin (no filter),
 // or an array of accessible data-source UUIDs otherwise. Callers should
 // short-circuit to an empty list when the array is empty.
-async function listAccessibleDataSourceIds(req) {
+export async function listAccessibleDataSourceIds(req: AuthedRequest): Promise<string[] | null> {
   if (isAdmin(req)) {
     return null;
   }
@@ -159,13 +229,3 @@ async function listAccessibleDataSourceIds(req) {
   }
   return dataSourceAccessService.listAccessibleDataSourceIds(req.user.id);
 }
-
-module.exports = {
-  loadCurrentUser,
-  requireAuthenticated,
-  requireRole,
-  enforcePolicy,
-  enforceDataSourceAccess,
-  listAccessibleDataSourceIds,
-  isAdmin
-};
