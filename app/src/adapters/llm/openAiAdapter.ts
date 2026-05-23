@@ -1,25 +1,40 @@
+import type {
+  LlmAdapter,
+  LlmAdapterOptions,
+  LlmEmbedInput,
+  LlmEmbedResult,
+  LlmGenerateInput,
+  LlmGenerateResult
+} from "./types";
+
 const { postJson, extractJsonObject } = require("./httpClient");
 
-class OpenAiAdapter {
-  constructor(opts = {}) {
+/** Adapter for OpenAI's REST API (chat completions + embeddings). */
+class OpenAiAdapter implements LlmAdapter {
+  readonly provider: string;
+  apiKey: string;
+  defaultModel: string;
+  timeoutMs: number;
+
+  constructor(opts: LlmAdapterOptions = {}) {
     this.provider = "openai";
     this.apiKey = opts.apiKey || "";
     this.defaultModel = opts.defaultModel || "gpt-5.2-mini";
     this.timeoutMs = Number(opts.timeoutMs || 15000);
   }
 
-  async healthCheck() {
+  async healthCheck(): Promise<void> {
     if (!this.apiKey) {
       throw new Error("OpenAI API key is not configured");
     }
   }
 
-  async generate(input) {
+  async generate(input: LlmGenerateInput): Promise<LlmGenerateResult> {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
     const maxTokens = input.maxTokens ?? 800;
-    const payload = {
+    const payload: Record<string, unknown> = {
       model,
       temperature: input.temperature ?? 0,
       messages: [
@@ -58,16 +73,16 @@ class OpenAiAdapter {
     };
   }
 
-  async generateStructured(input) {
+  async generateStructured(input: LlmGenerateInput): Promise<unknown> {
     const output = await this.generate(input);
     return extractJsonObject(output.text);
   }
 
-  async embed(input) {
+  async embed(input?: LlmEmbedInput): Promise<LlmEmbedResult> {
     await this.healthCheck();
 
-    const model = input.model || "text-embedding-3-small";
-    const texts = Array.isArray(input.texts) ? input.texts : [];
+    const model = (input && input.model) || "text-embedding-3-small";
+    const texts = Array.isArray(input?.texts) ? input!.texts : [];
     if (texts.length === 0) {
       throw new Error("embed input texts are required");
     }
@@ -84,10 +99,10 @@ class OpenAiAdapter {
       }
     });
 
-    const vectors = Array.isArray(response?.data)
+    const vectors: number[][] = Array.isArray(response?.data)
       ? response.data
-        .sort((a, b) => a.index - b.index)
-        .map((item) => item.embedding)
+        .sort((a: any, b: any) => a.index - b.index)
+        .map((item: any) => item.embedding)
       : [];
 
     if (vectors.length !== texts.length) {
@@ -101,7 +116,7 @@ class OpenAiAdapter {
   }
 }
 
-function usesCompletionTokenParam(model) {
+function usesCompletionTokenParam(model: string): boolean {
   return /^gpt-5(?:[.-]|$)/i.test(String(model || ""));
 }
 

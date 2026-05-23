@@ -1,7 +1,27 @@
+import type {
+  LlmAdapter,
+  LlmAdapterOptions,
+  LlmEmbedResult,
+  LlmGenerateInput,
+  LlmGenerateResult
+} from "./types";
+
 const { postJson, extractJsonObject } = require("./httpClient");
 
-class CustomAdapter {
-  constructor(opts = {}) {
+/**
+ * Adapter for self-hosted / OpenAI-compatible providers (e.g. Ollama running
+ * with the OpenAI-compatible frontend). The caller supplies `baseUrl` and
+ * `provider` so this adapter can stand in for any OpenAI-shaped REST endpoint.
+ * Embeddings are not assumed to be supported and `embed()` throws.
+ */
+class CustomAdapter implements LlmAdapter {
+  provider: string;
+  apiKey: string;
+  defaultModel: string;
+  timeoutMs: number;
+  baseUrl: string;
+
+  constructor(opts: LlmAdapterOptions = {}) {
     this.provider = opts.provider || "custom";
     this.apiKey = opts.apiKey || "";
     this.defaultModel = opts.defaultModel || "";
@@ -9,7 +29,7 @@ class CustomAdapter {
     this.baseUrl = String(opts.baseUrl || "").replace(/\/+$/, "");
   }
 
-  async healthCheck() {
+  async healthCheck(): Promise<void> {
     if (!this.baseUrl) {
       throw new Error("Custom provider base_url is not configured");
     }
@@ -18,7 +38,7 @@ class CustomAdapter {
     }
   }
 
-  async generate(input) {
+  async generate(input: LlmGenerateInput): Promise<LlmGenerateResult> {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
@@ -57,12 +77,12 @@ class CustomAdapter {
     };
   }
 
-  async generateStructured(input) {
+  async generateStructured(input: LlmGenerateInput): Promise<unknown> {
     const output = await this.generate(input);
     return extractJsonObject(output.text);
   }
 
-  async embed() {
+  async embed(): Promise<LlmEmbedResult> {
     throw new Error("embed() is not supported for the custom adapter");
   }
 }

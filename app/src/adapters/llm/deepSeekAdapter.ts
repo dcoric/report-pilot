@@ -1,7 +1,25 @@
+import type {
+  LlmAdapter,
+  LlmAdapterOptions,
+  LlmEmbedResult,
+  LlmGenerateInput,
+  LlmGenerateResult
+} from "./types";
+
 const { postJson, extractJsonObject } = require("./httpClient");
 
-class DeepSeekAdapter {
-  constructor(opts = {}) {
+/**
+ * Adapter for DeepSeek's OpenAI-compatible chat-completions endpoint.
+ * Embeddings are not yet implemented upstream, so `embed()` throws.
+ */
+class DeepSeekAdapter implements LlmAdapter {
+  readonly provider: string;
+  apiKey: string;
+  defaultModel: string;
+  timeoutMs: number;
+  baseUrl: string;
+
+  constructor(opts: LlmAdapterOptions = {}) {
     this.provider = "deepseek";
     this.apiKey = opts.apiKey || "";
     this.defaultModel = opts.defaultModel || "deepseek-chat";
@@ -9,13 +27,13 @@ class DeepSeekAdapter {
     this.baseUrl = opts.baseUrl || "https://api.deepseek.com";
   }
 
-  async healthCheck() {
+  async healthCheck(): Promise<void> {
     if (!this.apiKey) {
       throw new Error("DeepSeek API key is not configured");
     }
   }
 
-  async generate(input) {
+  async generate(input: LlmGenerateInput): Promise<LlmGenerateResult> {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
@@ -54,12 +72,12 @@ class DeepSeekAdapter {
     };
   }
 
-  async generateStructured(input) {
+  async generateStructured(input: LlmGenerateInput): Promise<unknown> {
     const output = await this.generate(input);
     return extractJsonObject(output.text);
   }
 
-  async embed() {
+  async embed(): Promise<LlmEmbedResult> {
     throw new Error("embed() is not implemented yet for DeepSeek adapter");
   }
 }
