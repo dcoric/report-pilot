@@ -1,6 +1,28 @@
-async function postJson(url, body, opts = {}) {
+import type { LlmAdapterError } from "./types";
+
+export interface PostJsonOptions {
+  /** Request timeout in milliseconds (defaults to 15000). */
+  timeoutMs?: number;
+  /** Extra headers merged on top of `Content-Type: application/json`. */
+  headers?: Record<string, string>;
+}
+
+/** Provider response payloads are unknown JSON; callers downcast as needed. */
+export type ProviderResponse = any;
+
+/**
+ * POST a JSON body to `url` and return the parsed JSON response.
+ *
+ * On non-2xx status codes throws an `Error` with a `statusCode` field attached,
+ * matching the `LlmAdapterError` shape so callers can react to HTTP errors.
+ */
+async function postJson(
+  url: string,
+  body: unknown,
+  opts: PostJsonOptions = {}
+): Promise<ProviderResponse> {
   const timeoutMs = Number(opts.timeoutMs || 15000);
-  const headers = Object.assign(
+  const headers: Record<string, string> = Object.assign(
     {
       "Content-Type": "application/json"
     },
@@ -18,7 +40,7 @@ async function postJson(url, body, opts = {}) {
     });
 
     const text = await response.text();
-    let parsed = null;
+    let parsed: ProviderResponse = null;
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
@@ -26,7 +48,7 @@ async function postJson(url, body, opts = {}) {
     }
 
     if (!response.ok) {
-      const error = new Error(
+      const error: LlmAdapterError = new Error(
         `HTTP ${response.status} from provider: ${parsed?.error?.message || text || "unknown error"}`
       );
       error.statusCode = response.status;
@@ -39,7 +61,12 @@ async function postJson(url, body, opts = {}) {
   }
 }
 
-function extractJsonObject(text) {
+/**
+ * Parse a JSON object out of a model's free-form text response. Handles
+ * fenced code blocks (```json ... ```) and trims to the first/last brace as a
+ * last resort. Throws when nothing parseable is found.
+ */
+function extractJsonObject(text: unknown): unknown {
   const raw = String(text || "").trim();
   if (!raw) {
     throw new Error("Model response is empty");
@@ -62,8 +89,18 @@ function extractJsonObject(text) {
   }
 }
 
-function resolveApiKey(ref, defaultEnvKey) {
-  const candidates = [];
+/**
+ * Resolve an API key from a provider configuration reference.
+ *
+ * Supported reference forms:
+ * - `env:NAME` — read from `process.env.NAME`
+ * - `plain:value` — use `value` literally
+ * - `NAME` — look up `process.env.NAME`, otherwise treat as a literal value
+ *
+ * If `ref` is empty/missing, falls back to `process.env[defaultEnvKey]`.
+ */
+function resolveApiKey(ref?: string | null, defaultEnvKey?: string | null): string {
+  const candidates: string[] = [];
   if (ref) {
     candidates.push(ref);
   }
@@ -78,7 +115,7 @@ function resolveApiKey(ref, defaultEnvKey) {
     if (candidate.startsWith("env:")) {
       const envName = candidate.slice(4).trim();
       if (envName && process.env[envName]) {
-        return process.env[envName];
+        return process.env[envName] as string;
       }
       continue;
     }
@@ -86,7 +123,7 @@ function resolveApiKey(ref, defaultEnvKey) {
       return candidate.slice(6);
     }
     if (process.env[candidate]) {
-      return process.env[candidate];
+      return process.env[candidate] as string;
     }
     return candidate;
   }

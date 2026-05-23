@@ -1,26 +1,46 @@
+import type {
+  LlmAdapter,
+  LlmAdapterOptions,
+  LlmEmbedInput,
+  LlmEmbedResult,
+  LlmGenerateInput,
+  LlmGenerateResult,
+  LlmTokenUsage
+} from "./types";
+
 const { postJson, extractJsonObject } = require("./httpClient");
 
-class GeminiAdapter {
-  constructor(opts = {}) {
+/**
+ * Adapter for Google's Gemini generative-language REST API. Note that
+ * embeddings use a separate `:embedContent` endpoint and must be requested
+ * per-text (unlike OpenAI which batches).
+ */
+class GeminiAdapter implements LlmAdapter {
+  readonly provider: string;
+  apiKey: string;
+  defaultModel: string;
+  timeoutMs: number;
+
+  constructor(opts: LlmAdapterOptions = {}) {
     this.provider = "gemini";
     this.apiKey = opts.apiKey || "";
     this.defaultModel = opts.defaultModel || "gemini-2.0-flash";
     this.timeoutMs = Number(opts.timeoutMs || 15000);
   }
 
-  async healthCheck() {
+  async healthCheck(): Promise<void> {
     if (!this.apiKey) {
       throw new Error("Gemini API key is not configured");
     }
   }
 
-  async generate(input) {
+  async generate(input: LlmGenerateInput): Promise<LlmGenerateResult> {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       contents: [
         {
           role: "user",
@@ -50,13 +70,13 @@ class GeminiAdapter {
 
     const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs });
     const parts = response?.candidates?.[0]?.content?.parts || [];
-    const text = parts.map((p) => p.text || "").join("\n").trim();
+    const text = parts.map((p: any) => p.text || "").join("\n").trim();
 
     if (!text) {
       throw new Error("Gemini returned an empty completion");
     }
 
-    const usage = response?.usageMetadata
+    const usage: LlmTokenUsage | null = response?.usageMetadata
       ? {
           prompt_tokens: Number(response.usageMetadata.promptTokenCount || 0),
           completion_tokens: Number(response.usageMetadata.candidatesTokenCount || 0),
@@ -71,22 +91,22 @@ class GeminiAdapter {
     };
   }
 
-  async generateStructured(input) {
+  async generateStructured(input: LlmGenerateInput): Promise<unknown> {
     const output = await this.generate(input);
     return extractJsonObject(output.text);
   }
 
-  async embed(input) {
+  async embed(input?: LlmEmbedInput): Promise<LlmEmbedResult> {
     await this.healthCheck();
 
-    const model = input.model || "text-embedding-004";
-    const texts = Array.isArray(input.texts) ? input.texts : [];
+    const model = (input && input.model) || "text-embedding-004";
+    const texts = Array.isArray(input?.texts) ? input!.texts : [];
     if (texts.length === 0) {
       throw new Error("embed input texts are required");
     }
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(this.apiKey)}`;
-    const vectors = [];
+    const vectors: number[][] = [];
 
     for (const text of texts) {
       const payload = {

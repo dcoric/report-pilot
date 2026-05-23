@@ -1,7 +1,27 @@
+import type {
+  LlmAdapter,
+  LlmAdapterOptions,
+  LlmEmbedResult,
+  LlmGenerateInput,
+  LlmGenerateResult
+} from "./types";
+
 const { postJson, extractJsonObject } = require("./httpClient");
 
-class OpenRouterAdapter {
-  constructor(opts = {}) {
+/**
+ * Adapter for OpenRouter's OpenAI-compatible chat completions endpoint.
+ * Optional `HTTP-Referer` / `X-Title` headers are forwarded from environment
+ * variables to satisfy OpenRouter's attribution guidelines. Embeddings are not
+ * exposed by this provider, so `embed()` throws.
+ */
+class OpenRouterAdapter implements LlmAdapter {
+  readonly provider: string;
+  apiKey: string;
+  defaultModel: string;
+  timeoutMs: number;
+  baseUrl: string;
+
+  constructor(opts: LlmAdapterOptions = {}) {
     this.provider = "openrouter";
     this.apiKey = opts.apiKey || "";
     this.defaultModel = opts.defaultModel || "google/gemma-4-31b-it";
@@ -9,13 +29,13 @@ class OpenRouterAdapter {
     this.baseUrl = "https://openrouter.ai/api/v1";
   }
 
-  async healthCheck() {
+  async healthCheck(): Promise<void> {
     if (!this.apiKey) {
       throw new Error("OpenRouter API key is not configured");
     }
   }
 
-  async generate(input) {
+  async generate(input: LlmGenerateInput): Promise<LlmGenerateResult> {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
@@ -35,7 +55,7 @@ class OpenRouterAdapter {
       ]
     };
 
-    const headers = {
+    const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`
     };
     if (process.env.OPENROUTER_SITE_URL) {
@@ -62,12 +82,12 @@ class OpenRouterAdapter {
     };
   }
 
-  async generateStructured(input) {
+  async generateStructured(input: LlmGenerateInput): Promise<unknown> {
     const output = await this.generate(input);
     return extractJsonObject(output.text);
   }
 
-  async embed() {
+  async embed(): Promise<LlmEmbedResult> {
     throw new Error("embed() is not supported for the OpenRouter adapter");
   }
 }
