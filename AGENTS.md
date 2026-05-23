@@ -11,6 +11,7 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 - `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.{js,ts}`, so `.js` and `.ts` test files are both picked up
 - `npm run typecheck`
 - `npm run migrate`
+- `npm run types:openapi` — regenerate `app/src/types/openapi.ts` from `docs/api/openapi.yaml`
 - `npm --prefix frontend run lint`
 
 ## Code Map
@@ -18,6 +19,7 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 - `app/src/services`: orchestration, policy, SQL safety, provider routing, RAG workflows. Prefer business logic here.
 - `app/src/adapters`: DB-specific introspection, quoting, validation, and execution.
 - `app/src/adapters/llm`: provider-specific calls, health checks, and embeddings.
+- `app/src/types`: shared TypeScript types. `openapi.ts` is generated from `docs/api/openapi.yaml` via `npm run types:openapi` (do not edit by hand); `domain.ts` holds hand-written shapes for DB rows and provider/config blobs; `index.ts` re-exports the common names. Add new generated bindings by updating the spec and regenerating; add new domain types to `domain.ts` and surface them through `index.ts`.
 - `db/migrations`: metadata schema. Add new numbered migrations; never edit applied migrations.
 - `docs/api/openapi.yaml`: update when API request or response shapes change.
 - `frontend/src/lib/api/types.ts`: keep frontend API types aligned with backend shape changes.
