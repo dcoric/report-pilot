@@ -16,7 +16,8 @@
     "migrate": "node app/src/migrate.js",
     "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
     "test": "node --import tsx --test app/test/**/*.test.{js,ts}",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "types:openapi": "openapi-typescript docs/api/openapi.yaml -o app/src/types/openapi.ts"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -37,6 +38,7 @@
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "concurrently": "^9.2.1",
+    "openapi-typescript": "^7.13.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
