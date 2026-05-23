@@ -9,13 +9,14 @@
     "dev:be": "nodemon --watch app/src --ext js --exec \"node app/src/start.js\"",
     "setup": "npm ci && npm --prefix frontend ci",
     "build:fe": "npm --prefix frontend run build",
-    "build:be": "npm run build",
+    "build:be": "tsc",
     "dev": "concurrently \"npm run dev:fe\" \"npm run dev:be\"",
     "build": "npm run build:fe && npm run build:be",
     "start": "node app/src/start.js",
     "migrate": "node app/src/migrate.js",
     "benchmark:mvp": "node app/src/benchmark/runMvpBenchmark.js",
-    "test": "node --test app/test/**/*.test.js"
+    "test": "node --test app/test/**/*.test.js",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -31,6 +32,12 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@types/mssql": "^12.3.0",
+    "@types/node": "^25.9.1",
+    "@types/nodemailer": "^8.0.0",
+    "@types/pg": "^8.20.0",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
   }
 }
