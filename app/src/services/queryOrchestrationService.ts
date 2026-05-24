@@ -1,37 +1,59 @@
-const {
+import {
   EXPLAIN_BUDGET_ENABLED,
   EXPLAIN_MAX_TOTAL_COST,
   EXPLAIN_MAX_PLAN_ROWS
-} = require("../lib/constants");
-const { createDatabaseAdapter, isSupportedDbType } = require("../adapters/dbAdapterFactory");
-const { generateSqlWithRouting } = require("./llmSqlService");
-const { validateAndNormalizeSql } = require("./sqlSafety");
-const {
-  extractForbiddenColumnsFromRagNotes,
-  validateSqlAgainstForbiddenColumns
-} = require("./columnPolicyService");
-const { evaluateExplainBudget } = require("./queryBudget");
-const { buildCitations, computeConfidence } = require("./queryResponse");
-const { retrieveRagContext } = require("./ragRetrieval");
-const { isLikelyInvalidSqlExecutionError } = require("../lib/validation");
-const {
+} from "../lib/constants";
+import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
+import { generateSqlWithRouting } from "./llmSqlService";
+import { validateAndNormalizeSql } from "./sqlSafety";
+import columnPolicyService = require("./columnPolicyService");
+import { evaluateExplainBudget } from "./queryBudget";
+import { buildCitations, computeConfidence, type Citations } from "./queryResponse";
+import ragRetrieval = require("./ragRetrieval");
+import { isLikelyInvalidSqlExecutionError } from "../lib/validation";
+import {
   insertQueryAttempt,
   insertQueryResultMeta,
   loadQueryContext,
   markSessionStatus,
   resolveSession,
   validateRequestedProvider
-} = require("./queryOrchestrationStore");
+} from "./queryOrchestrationStore";
+import type { DbAdapter } from "../adapters/types";
 
-function success(body, statusCode = 200) {
+const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
+const { retrieveRagContext } = ragRetrieval;
+
+export interface OrchestrateInput {
+  sessionId: string;
+  question?: string;
+  dataSourceId?: string;
+  connectionRef?: string;
+  dbType?: string;
+  requestId?: string | null;
+  requestedProvider?: string | null;
+  requestedModel?: string | null;
+  sqlOverride?: string | null;
+  maxRows: number;
+  timeoutMs?: number;
+  noExecute?: boolean;
+}
+
+export interface OrchestrateResult<T = unknown> {
+  ok: boolean;
+  statusCode: number;
+  body: T;
+}
+
+function success<T>(body: T, statusCode = 200): OrchestrateResult<T> {
   return { ok: true, statusCode, body };
 }
 
-function failure(statusCode, body) {
+function failure<T>(statusCode: number, body: T): OrchestrateResult<T> {
   return { ok: false, statusCode, body };
 }
 
-async function orchestrateQueryRun({
+export async function orchestrateQueryRun({
   sessionId,
   question,
   dataSourceId,
@@ -44,7 +66,7 @@ async function orchestrateQueryRun({
   maxRows,
   timeoutMs,
   noExecute
-}) {
+}: OrchestrateInput): Promise<OrchestrateResult> {
   const providerIsValid = await validateRequestedProvider(requestedProvider);
   if (!providerIsValid) {
     return failure(400, { error: "bad_request", message: "Unsupported llm_provider" });
@@ -69,16 +91,16 @@ async function orchestrateQueryRun({
     });
   }
 
-  const sqlDialect = session.db_type === "mssql" ? "mssql" : "postgres";
+  const sqlDialect: "postgres" | "mssql" = session.db_type === "mssql" ? "mssql" : "postgres";
   const context = await loadQueryContext(session.data_source_id);
   const ragDocuments = await retrieveRagContext(session.data_source_id, session.question, { limit: 12 });
   const forbiddenColumns = extractForbiddenColumnsFromRagNotes(context.ragNotes, context.columns);
 
-  let generatedSql;
+  let generatedSql: string;
   let usedProvider = "unknown";
-  let usedModel = requestedModel || "unknown";
-  let generationAttempts = [];
-  let generationTokenUsage = null;
+  let usedModel: string = requestedModel || "unknown";
+  let generationAttempts: Array<{ status: string }> = [];
+  let generationTokenUsage: unknown = null;
   let promptVersion = "v2-llm-router";
 
   if (sqlOverride) {
@@ -114,13 +136,13 @@ async function orchestrateQueryRun({
       await markSessionStatus(sessionId, "failed");
       return failure(502, {
         error: "llm_generation_failed",
-        message: err.message
+        message: (err as Error).message
       });
     }
   }
 
   const generationStartedAt = Date.now();
-  let adapter = null;
+  let adapter: DbAdapter | null = null;
 
   try {
     const safety = validateAndNormalizeSql(generatedSql, {
@@ -129,7 +151,7 @@ async function orchestrateQueryRun({
       dialect: sqlDialect
     });
 
-    let validationErrors = [];
+    let validationErrors: string[] = [];
     let safeSql = generatedSql;
 
     if (!safety.ok) {
@@ -150,17 +172,17 @@ async function orchestrateQueryRun({
         try {
           adapter = createDatabaseAdapter(session.db_type, session.connection_ref);
         } catch (err) {
-          return failure(400, { error: "bad_request", message: err.message });
+          return failure(400, { error: "bad_request", message: (err as Error).message });
         }
 
-        const adapterValidation = await adapter.validateSql(safeSql);
+        const adapterValidation = await adapter!.validateSql(safeSql);
         if (validationErrors.length === 0 && !adapterValidation.ok) {
           validationErrors = adapterValidation.errors;
         }
       }
     }
 
-    const validationJson = {
+    const validationJson: Record<string, unknown> = {
       ok: validationErrors.length === 0,
       errors: validationErrors,
       references: safety.refs || [],
@@ -195,7 +217,7 @@ async function orchestrateQueryRun({
     }
 
     if (!noExecute && EXPLAIN_BUDGET_ENABLED && sqlDialect === "postgres") {
-      const explainRows = await adapter.explain(safeSql);
+      const explainRows = await adapter!.explain(safeSql);
       const budget = evaluateExplainBudget(explainRows, {
         maxTotalCost: EXPLAIN_MAX_TOTAL_COST,
         maxPlanRows: EXPLAIN_MAX_PLAN_ROWS
@@ -232,14 +254,14 @@ async function orchestrateQueryRun({
       semanticEntities: context.semanticEntities,
       metricDefinitions: context.metricDefinitions,
       joinPolicies: context.joinPolicies
-    });
-    citations.rag_documents = ragDocuments.map((doc) => ({
-      id: doc.id,
-      doc_type: doc.doc_type,
-      ref_id: doc.ref_id,
+    }) as Citations;
+    citations.rag_documents = ragDocuments.map((doc: Record<string, unknown>) => ({
+      id: doc.id as string,
+      doc_type: doc.doc_type as string,
+      ref_id: doc.ref_id as string,
       score: Number(doc.score || 0),
       rerank_score: Number(doc.rerank_score || 0),
-      embedding_model: doc.embedding_model || null
+      embedding_model: (doc.embedding_model as string | null) || null
     }));
 
     const confidence = computeConfidence({
@@ -282,9 +304,9 @@ async function orchestrateQueryRun({
       });
     }
 
-    const execution = await adapter.executeReadOnly(safeSql, { timeoutMs, maxRows });
+    const execution = await adapter!.executeReadOnly(safeSql, { timeoutMs, maxRows });
     await insertQueryResultMeta({
-      attemptId,
+      attemptId: attemptId as string,
       rowCount: execution.rowCount,
       durationMs: execution.durationMs,
       truncated: execution.truncated
@@ -313,14 +335,14 @@ async function orchestrateQueryRun({
     if (isLikelyInvalidSqlExecutionError(err, sqlDialect)) {
       return failure(400, {
         error: "invalid_sql",
-        details: [err.message],
+        details: [(err as Error).message],
         sql: generatedSql
       });
     }
 
     return failure(500, {
       error: "query_execution_failed",
-      message: err.message,
+      message: (err as Error).message,
       sql: generatedSql
     });
   } finally {
@@ -329,7 +351,3 @@ async function orchestrateQueryRun({
     }
   }
 }
-
-module.exports = {
-  orchestrateQueryRun
-};

@@ -1,6 +1,16 @@
+export type ParameterType = "text" | "integer" | "decimal" | "date" | "boolean" | "timestamp";
+
+export interface ParameterSchemaEntry {
+  name: string;
+  type: ParameterType | string;
+  required: boolean;
+  default: unknown;
+  allowed_values: unknown[] | null;
+}
+
 const PLACEHOLDER_REGEX = /(?<!:):([a-z][a-z0-9_]*)\b/gi;
 
-function createDefaultParameterSchemaEntry(name) {
+function createDefaultParameterSchemaEntry(name: string): ParameterSchemaEntry {
   return {
     name,
     type: "text",
@@ -10,7 +20,7 @@ function createDefaultParameterSchemaEntry(name) {
   };
 }
 
-function stripSingleQuotedLiterals(sql) {
+export function stripSingleQuotedLiterals(sql: unknown): string {
   const text = String(sql || "");
   let output = "";
   let index = 0;
@@ -46,10 +56,10 @@ function stripSingleQuotedLiterals(sql) {
   return output;
 }
 
-function extractPlaceholders(sql) {
+export function extractPlaceholders(sql: string): string[] {
   const stripped = stripSingleQuotedLiterals(sql);
-  const seen = new Set();
-  const placeholders = [];
+  const seen = new Set<string>();
+  const placeholders: string[] = [];
 
   for (const match of stripped.matchAll(PLACEHOLDER_REGEX)) {
     const name = String(match[1] || "").toLowerCase();
@@ -63,25 +73,29 @@ function extractPlaceholders(sql) {
   return placeholders;
 }
 
-function buildParameterSchemaFromPlaceholders(placeholders, existingSchema = []) {
-  const existingMap = new Map();
+export function buildParameterSchemaFromPlaceholders(
+  placeholders: string[],
+  existingSchema: ParameterSchemaEntry[] | unknown[] = []
+): ParameterSchemaEntry[] {
+  const existingMap = new Map<string, ParameterSchemaEntry>();
   for (const entry of Array.isArray(existingSchema) ? existingSchema : []) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.name !== "string") {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof (entry as Record<string, unknown>).name !== "string") {
       continue;
     }
-    existingMap.set(entry.name, {
-      name: entry.name,
-      type: typeof entry.type === "string" ? entry.type : "text",
-      required: entry.required !== false,
-      default: Object.prototype.hasOwnProperty.call(entry, "default") ? entry.default : null,
-      allowed_values: Object.prototype.hasOwnProperty.call(entry, "allowed_values") ? entry.allowed_values : null
+    const e = entry as Record<string, unknown>;
+    existingMap.set(e.name as string, {
+      name: e.name as string,
+      type: typeof e.type === "string" ? (e.type as string) : "text",
+      required: e.required !== false,
+      default: Object.prototype.hasOwnProperty.call(e, "default") ? e.default : null,
+      allowed_values: Object.prototype.hasOwnProperty.call(e, "allowed_values") ? (e.allowed_values as unknown[] | null) : null
     });
   }
 
   return (Array.isArray(placeholders) ? placeholders : []).map((name) => existingMap.get(name) || createDefaultParameterSchemaEntry(name));
 }
 
-function replaceNamedPlaceholders(sql, replacer) {
+export function replaceNamedPlaceholders(sql: unknown, replacer: (placeholderName: string, match: string) => string | number | boolean | null): string {
   const text = String(sql || "");
   let output = "";
   let index = 0;
@@ -126,10 +140,3 @@ function replaceNamedPlaceholders(sql, replacer) {
 
   return output;
 }
-
-module.exports = {
-  extractPlaceholders,
-  buildParameterSchemaFromPlaceholders,
-  replaceNamedPlaceholders,
-  stripSingleQuotedLiterals
-};

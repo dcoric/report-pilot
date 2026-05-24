@@ -1,15 +1,32 @@
-const {
+import {
   PARAMETER_TYPES,
   PARAMETER_NAME_PATTERN,
   MAX_PARAMETER_COUNT
-} = require("../lib/constants");
-const { replaceNamedPlaceholders } = require("./queryParameterParser");
+} from "../lib/constants";
+import { replaceNamedPlaceholders, type ParameterSchemaEntry, type ParameterType } from "./queryParameterParser";
 
-function isPlainObject(value) {
+export type CoerceResult =
+  | { ok: true; value: string | number | boolean | null }
+  | { ok: false; message: string };
+
+export type ValidateParameterSchemaResult =
+  | { ok: true; value: ParameterSchemaEntry[] }
+  | { ok: false; message: string };
+
+export interface ValidationError {
+  param: string | null;
+  message: string;
+}
+
+export type ValidateParameterValuesResult =
+  | { ok: true; resolvedValues: Record<string, string | number | boolean | null> }
+  | { ok: false; errors: ValidationError[] };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseDateOnly(value) {
+function parseDateOnly(value: unknown): string | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return null;
   }
@@ -27,7 +44,7 @@ function parseDateOnly(value) {
   return value;
 }
 
-function coerceParameterValue(type, value) {
+export function coerceParameterValue(type: ParameterType | string, value: unknown): CoerceResult {
   if (value === null || value === undefined) {
     return { ok: true, value: null };
   }
@@ -108,7 +125,7 @@ function coerceParameterValue(type, value) {
   return { ok: false, message: "has an unsupported type" };
 }
 
-function validateParameterSchema(schema) {
+export function validateParameterSchema(schema: unknown): ValidateParameterSchemaResult {
   if (schema === undefined) {
     return { ok: true, value: [] };
   }
@@ -121,8 +138,8 @@ function validateParameterSchema(schema) {
     return { ok: false, message: `parameter_schema cannot contain more than ${MAX_PARAMETER_COUNT} parameters` };
   }
 
-  const seenNames = new Set();
-  const normalized = [];
+  const seenNames = new Set<string>();
+  const normalized: ParameterSchemaEntry[] = [];
 
   for (const entry of schema) {
     if (!isPlainObject(entry)) {
@@ -139,7 +156,7 @@ function validateParameterSchema(schema) {
     seenNames.add(name);
 
     const type = typeof entry.type === "string" ? entry.type.trim().toLowerCase() : "text";
-    if (!PARAMETER_TYPES.has(type)) {
+    if (!(PARAMETER_TYPES as ReadonlySet<string>).has(type)) {
       return { ok: false, message: `parameter_schema.${name}.type is not supported` };
     }
 
@@ -153,10 +170,10 @@ function validateParameterSchema(schema) {
       return { ok: false, message: `parameter_schema.${name}.allowed_values must be an array or null` };
     }
 
-    let normalizedAllowedValues = null;
+    let normalizedAllowedValues: unknown[] | null = null;
     if (Array.isArray(allowedValues)) {
       normalizedAllowedValues = [];
-      const allowedSet = new Set();
+      const allowedSet = new Set<string>();
       for (const rawAllowedValue of allowedValues) {
         const coercedAllowedValue = coerceParameterValue(type, rawAllowedValue);
         if (!coercedAllowedValue.ok || coercedAllowedValue.value === null) {
@@ -172,11 +189,12 @@ function validateParameterSchema(schema) {
     }
 
     const defaultValue = entry.default === undefined ? null : entry.default;
-    let normalizedDefaultValue = null;
+    let normalizedDefaultValue: string | number | boolean | null = null;
     if (defaultValue !== null) {
       const coercedDefault = coerceParameterValue(type, defaultValue);
-      if (!coercedDefault.ok) {
-        return { ok: false, message: `parameter_schema.${name}.default ${coercedDefault.message}` };
+      if (coercedDefault.ok !== true) {
+        const { message } = coercedDefault;
+        return { ok: false, message: `parameter_schema.${name}.default ${message}` };
       }
       normalizedDefaultValue = coercedDefault.value;
     }
@@ -201,9 +219,9 @@ function validateParameterSchema(schema) {
   return { ok: true, value: normalized };
 }
 
-function validateParameterValues(parameterSchema, suppliedValues) {
+export function validateParameterValues(parameterSchema: unknown, suppliedValues: unknown): ValidateParameterValuesResult {
   const schemaValidation = validateParameterSchema(parameterSchema);
-  if (!schemaValidation.ok) {
+  if (schemaValidation.ok !== true) {
     return {
       ok: false,
       errors: [{ param: null, message: schemaValidation.message }]
@@ -217,9 +235,9 @@ function validateParameterValues(parameterSchema, suppliedValues) {
     };
   }
 
-  const params = suppliedValues || {};
-  const resolvedValues = {};
-  const errors = [];
+  const params = (suppliedValues as Record<string, unknown> | undefined) || {};
+  const resolvedValues: Record<string, string | number | boolean | null> = {};
+  const errors: ValidationError[] = [];
   const knownNames = new Set(schemaValidation.value.map((entry) => entry.name));
 
   for (const entry of schemaValidation.value) {
@@ -228,7 +246,7 @@ function validateParameterValues(parameterSchema, suppliedValues) {
 
     if (rawValue === undefined || rawValue === null) {
       if (entry.default !== null) {
-        resolvedValues[entry.name] = entry.default;
+        resolvedValues[entry.name] = entry.default as string | number | boolean | null;
         continue;
       }
       if (entry.required) {
@@ -240,8 +258,9 @@ function validateParameterValues(parameterSchema, suppliedValues) {
     }
 
     const coerced = coerceParameterValue(entry.type, rawValue);
-    if (!coerced.ok) {
-      errors.push({ param: entry.name, message: coerced.message });
+    if (coerced.ok !== true) {
+      const { message } = coerced;
+      errors.push({ param: entry.name, message });
       continue;
     }
 
@@ -269,7 +288,7 @@ function validateParameterValues(parameterSchema, suppliedValues) {
   return { ok: true, resolvedValues };
 }
 
-function substitutePlaceholdersForValidation(sql, parameterSchema) {
+export function substitutePlaceholdersForValidation(sql: string, parameterSchema: unknown): string {
   const schemaValidation = validateParameterSchema(parameterSchema);
   const schema = schemaValidation.ok ? schemaValidation.value : [];
   const schemaByName = new Map(schema.map((entry) => [entry.name, entry]));
@@ -295,9 +314,3 @@ function substitutePlaceholdersForValidation(sql, parameterSchema) {
     return "'x'";
   });
 }
-
-module.exports = {
-  validateParameterSchema,
-  validateParameterValues,
-  substitutePlaceholdersForValidation
-};

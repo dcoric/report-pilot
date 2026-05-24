@@ -1,7 +1,51 @@
-const appDb = require("../lib/appDb");
-const { LLM_PROVIDERS } = require("../lib/constants");
+import appDb = require("../lib/appDb");
+import { LLM_PROVIDERS } from "../lib/constants";
 
-async function resolveSession({ sessionId, question, dataSourceId, connectionRef, dbType }) {
+export interface SessionRow {
+  session_id: string;
+  question: string;
+  data_source_id: string;
+  connection_ref: string;
+  db_type: string;
+}
+
+export interface QueryContext {
+  schemaObjects: Array<{ id: string; schema_name: string; object_name: string; object_type: string }>;
+  columns: Array<{ schema_name: string; object_name: string; column_name: string; data_type: string }>;
+  semanticEntities: Array<{ id: string; entity_type: string; target_ref: string; business_name: string }>;
+  metricDefinitions: Array<{ id: string; semantic_entity_id: string; sql_expression: string; grain: string | null; business_name: string }>;
+  joinPolicies: Array<{ id: string; left_ref: string; right_ref: string; join_type: string; on_clause: string }>;
+  ragNotes: Array<{ id: string; title: string; content: string }>;
+}
+
+export interface InsertQueryAttemptInput {
+  sessionId: string;
+  usedProvider: string;
+  usedModel: string;
+  promptVersion: string;
+  generatedSql: string;
+  validationJson: Record<string, unknown>;
+  latencyMs: number;
+  generationTokenUsage: unknown;
+  returnId?: boolean;
+}
+
+export interface InsertQueryResultMetaInput {
+  attemptId: string;
+  rowCount: number;
+  durationMs: number;
+  truncated: boolean;
+}
+
+export interface ResolveSessionInput {
+  sessionId: string;
+  question?: string;
+  dataSourceId?: string;
+  connectionRef?: string;
+  dbType?: string;
+}
+
+export async function resolveSession({ sessionId, question, dataSourceId, connectionRef, dbType }: ResolveSessionInput): Promise<SessionRow | null> {
   if (question && dataSourceId && connectionRef && dbType) {
     return {
       session_id: sessionId,
@@ -12,7 +56,7 @@ async function resolveSession({ sessionId, question, dataSourceId, connectionRef
     };
   }
 
-  const sessionResult = await appDb.query(
+  const sessionResult = await appDb.query<SessionRow>(
     `
       SELECT
         qs.id AS session_id,
@@ -30,7 +74,7 @@ async function resolveSession({ sessionId, question, dataSourceId, connectionRef
   return sessionResult.rows[0] || null;
 }
 
-async function loadQueryContext(dataSourceId) {
+export async function loadQueryContext(dataSourceId: string): Promise<QueryContext> {
   const [
     schemaObjectsResult,
     columnsResult,
@@ -39,7 +83,7 @@ async function loadQueryContext(dataSourceId) {
     joinPoliciesResult,
     ragNotesResult
   ] = await Promise.all([
-    appDb.query(
+    appDb.query<{ id: string; schema_name: string; object_name: string; object_type: string }>(
       `
         SELECT id, schema_name, object_name, object_type
         FROM schema_objects
@@ -50,7 +94,7 @@ async function loadQueryContext(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<{ schema_name: string; object_name: string; column_name: string; data_type: string }>(
       `
         SELECT
           so.schema_name,
@@ -65,7 +109,7 @@ async function loadQueryContext(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<{ id: string; entity_type: string; target_ref: string; business_name: string }>(
       `
         SELECT id, entity_type, target_ref, business_name
         FROM semantic_entities
@@ -74,7 +118,7 @@ async function loadQueryContext(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<{ id: string; semantic_entity_id: string; sql_expression: string; grain: string | null; business_name: string }>(
       `
         SELECT
           md.id,
@@ -89,7 +133,7 @@ async function loadQueryContext(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<{ id: string; left_ref: string; right_ref: string; join_type: string; on_clause: string }>(
       `
         SELECT id, left_ref, right_ref, join_type, on_clause
         FROM join_policies
@@ -98,7 +142,7 @@ async function loadQueryContext(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<{ id: string; title: string; content: string }>(
       `
         SELECT id, title, content
         FROM rag_notes
@@ -119,16 +163,16 @@ async function loadQueryContext(dataSourceId) {
   };
 }
 
-async function validateRequestedProvider(requestedProvider) {
-  if (!requestedProvider || LLM_PROVIDERS.has(requestedProvider)) {
+export async function validateRequestedProvider(requestedProvider: string | null | undefined): Promise<boolean> {
+  if (!requestedProvider || (LLM_PROVIDERS as ReadonlySet<string>).has(requestedProvider)) {
     return true;
   }
 
   const providerResult = await appDb.query("SELECT 1 FROM llm_providers WHERE provider = $1", [requestedProvider]);
-  return providerResult.rowCount > 0;
+  return (providerResult.rowCount ?? 0) > 0;
 }
 
-async function insertQueryAttempt({
+export async function insertQueryAttempt({
   sessionId,
   usedProvider,
   usedModel,
@@ -138,8 +182,8 @@ async function insertQueryAttempt({
   latencyMs,
   generationTokenUsage,
   returnId = false
-}) {
-  const result = await appDb.query(
+}: InsertQueryAttemptInput): Promise<string | null> {
+  const result = await appDb.query<{ id: string }>(
     `
       INSERT INTO query_attempts (
         session_id,
@@ -168,11 +212,11 @@ async function insertQueryAttempt({
   return returnId ? result.rows[0]?.id || null : null;
 }
 
-async function markSessionStatus(sessionId, status) {
+export async function markSessionStatus(sessionId: string, status: string): Promise<void> {
   await appDb.query("UPDATE query_sessions SET status = $2 WHERE id = $1", [sessionId, status]);
 }
 
-async function insertQueryResultMeta({ attemptId, rowCount, durationMs, truncated }) {
+export async function insertQueryResultMeta({ attemptId, rowCount, durationMs, truncated }: InsertQueryResultMetaInput): Promise<void> {
   await appDb.query(
     `
       INSERT INTO query_results_meta (
@@ -186,12 +230,3 @@ async function insertQueryResultMeta({ attemptId, rowCount, durationMs, truncate
     [attemptId, rowCount, durationMs, truncated]
   );
 }
-
-module.exports = {
-  insertQueryAttempt,
-  insertQueryResultMeta,
-  loadQueryContext,
-  markSessionStatus,
-  resolveSession,
-  validateRequestedProvider
-};
