@@ -1,35 +1,59 @@
-const appDb = require("../lib/appDb");
-const versionService = require("./savedQueryVersionService");
-const {
+import appDb = require("../lib/appDb");
+import * as versionService from "./savedQueryVersionService";
+import type { SavedQuerySnapshot, SavedQueryVersionRow } from "./savedQueryVersionService";
+import {
   SAVED_QUERY_NAME_MAX_LENGTH,
   SAVED_QUERY_DESCRIPTION_MAX_LENGTH,
   SAVED_QUERY_TAG_MAX_LENGTH,
   SAVED_QUERY_MAX_TAGS
-} = require("../lib/constants");
-const {
+} from "../lib/constants";
+import {
   clamp,
   isUuid,
   isPgUniqueViolation,
   normalizeOptionalTrimmedString,
-  validateSavedQueryDefaultRunParams
-} = require("../lib/validation");
-const { createDatabaseAdapter, isSupportedDbType } = require("../adapters/dbAdapterFactory");
-const { validateAndNormalizeSql, sanitizeGeneratedSql, ensureLimit } = require("./sqlSafety");
-const {
+  validateSavedQueryDefaultRunParams,
+  type SavedQueryDefaultRunParams
+} from "../lib/validation";
+import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
+import { validateAndNormalizeSql, sanitizeGeneratedSql, ensureLimit } from "./sqlSafety";
+import {
   extractPlaceholders,
-  buildParameterSchemaFromPlaceholders
-} = require("./queryParameterParser");
-const {
+  buildParameterSchemaFromPlaceholders,
+  type ParameterSchemaEntry
+} from "./queryParameterParser";
+import {
   validateParameterSchema,
   validateParameterValues,
   substitutePlaceholdersForValidation
-} = require("./queryParameterService");
+} from "./queryParameterService";
+import type { SavedQueryVisibility } from "../types/domain";
 
-function success(body, statusCode = 200) {
+export interface ServiceSuccess<T> {
+  ok: true;
+  statusCode: number;
+  body: T;
+}
+export interface ServiceFailure<T = unknown> {
+  ok: false;
+  statusCode: number;
+  body: T;
+}
+export type ServiceResult<TSuccess, TFailure = unknown> =
+  | ServiceSuccess<TSuccess>
+  | ServiceFailure<TFailure>;
+
+interface ErrorBody {
+  error: string;
+  message?: string;
+  errors?: unknown;
+}
+
+function success<T>(body: T, statusCode = 200): ServiceSuccess<T> {
   return { ok: true, statusCode, body };
 }
 
-function failure(statusCode, body) {
+function failure<T>(statusCode: number, body: T): ServiceFailure<T> {
   return { ok: false, statusCode, body };
 }
 
@@ -49,10 +73,52 @@ const SAVED_QUERY_COLUMNS = `
   updated_at
 `;
 
-const ALLOWED_VISIBILITY = new Set(["private", "shared"]);
-const ALLOWED_SHARE_PERMISSIONS = new Set(["view", "run"]);
+const ALLOWED_VISIBILITY: ReadonlySet<SavedQueryVisibility> = new Set<SavedQueryVisibility>(["private", "shared"]);
+export type SharePermission = "view" | "run";
+const ALLOWED_SHARE_PERMISSIONS: ReadonlySet<SharePermission> = new Set<SharePermission>(["view", "run"]);
 
-function normalizeTags(value) {
+export interface SavedQueryRow {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  data_source_id: string;
+  sql: string;
+  default_run_params: Record<string, unknown>;
+  parameter_schema: ParameterSchemaEntry[];
+  tags: string[];
+  visibility: SavedQueryVisibility;
+  folder_id: string | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+interface ExecutableSavedQueryRow extends Omit<SavedQueryRow, "folder_id"> {
+  connection_ref: string;
+  db_type: string;
+}
+
+interface SchemaObjectMinimal {
+  schema_name: string;
+  object_name: string;
+}
+
+interface ShareRow {
+  saved_query_id: string;
+  user_id: string;
+  permission: SharePermission;
+  granted_by_user_id: string | null;
+  created_at: string | Date;
+}
+
+interface ShareGrant {
+  user_id: string;
+  permission: SharePermission;
+}
+
+type Validation<T> = { ok: true; value: T } | { ok: false; message: string };
+
+function normalizeTags(value: unknown): Validation<string[]> {
   if (value === undefined || value === null) {
     return { ok: true, value: [] };
   }
@@ -60,8 +126,8 @@ function normalizeTags(value) {
     return { ok: false, message: "tags must be an array of strings" };
   }
 
-  const seen = new Set();
-  const tags = [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
   for (const entry of value) {
     if (typeof entry !== "string") {
       return { ok: false, message: "tags must be an array of strings" };
@@ -90,21 +156,21 @@ function normalizeTags(value) {
   return { ok: true, value: tags };
 }
 
-async function ensureDataSourceExists(dataSourceId) {
+async function ensureDataSourceExists(dataSourceId: string): Promise<boolean> {
   const sourceResult = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
-  return sourceResult.rowCount > 0;
+  return (sourceResult.rowCount ?? 0) > 0;
 }
 
-async function loadSavedQuery(savedQueryId) {
-  const result = await appDb.query(
+async function loadSavedQuery(savedQueryId: string): Promise<SavedQueryRow | null> {
+  const result = await appDb.query<SavedQueryRow>(
     `SELECT ${SAVED_QUERY_COLUMNS} FROM saved_queries WHERE id = $1`,
     [savedQueryId]
   );
   return result.rows[0] || null;
 }
 
-async function loadSavedQueryForExecution(savedQueryId) {
-  const result = await appDb.query(
+async function loadSavedQueryForExecution(savedQueryId: string): Promise<ExecutableSavedQueryRow | null> {
+  const result = await appDb.query<ExecutableSavedQueryRow>(
     `
       SELECT
         sq.id,
@@ -131,8 +197,8 @@ async function loadSavedQueryForExecution(savedQueryId) {
   return result.rows[0] || null;
 }
 
-async function loadSchemaObjects(dataSourceId) {
-  const result = await appDb.query(
+async function loadSchemaObjects(dataSourceId: string): Promise<SchemaObjectMinimal[]> {
+  const result = await appDb.query<SchemaObjectMinimal>(
     `
       SELECT schema_name, object_name
       FROM schema_objects
@@ -145,7 +211,11 @@ async function loadSchemaObjects(dataSourceId) {
   return result.rows;
 }
 
-function resolveParameterSchema(sql, providedParameterSchema, existingSchema) {
+function resolveParameterSchema(
+  sql: string,
+  providedParameterSchema: unknown,
+  existingSchema: ParameterSchemaEntry[] | unknown[]
+): Validation<ParameterSchemaEntry[]> {
   const placeholders = extractPlaceholders(sql);
 
   if (providedParameterSchema === undefined) {
@@ -166,10 +236,16 @@ function resolveParameterSchema(sql, providedParameterSchema, existingSchema) {
   };
 }
 
-function resolveRunOptions(defaultRunParams, requested) {
-  const merged = {
-    max_rows: defaultRunParams?.max_rows,
-    timeout_ms: defaultRunParams?.timeout_ms
+interface ResolvedRunOptions {
+  maxRows: number;
+  timeoutMs: number;
+}
+
+function resolveRunOptions(defaultRunParams: SavedQueryDefaultRunParams | Record<string, unknown> | null | undefined, requested?: { maxRows?: unknown; timeoutMs?: unknown }): ResolvedRunOptions {
+  const params = (defaultRunParams || {}) as Record<string, unknown>;
+  const merged: { max_rows?: unknown; timeout_ms?: unknown } = {
+    max_rows: params.max_rows,
+    timeout_ms: params.timeout_ms
   };
 
   if (requested && Object.prototype.hasOwnProperty.call(requested, "maxRows") && requested.maxRows !== undefined) {
@@ -188,7 +264,11 @@ function resolveRunOptions(defaultRunParams, requested) {
   };
 }
 
-async function getSavedQuery(savedQueryId, { callerUserId } = {}) {
+export interface CallerOptions {
+  callerUserId?: string | null;
+}
+
+export async function getSavedQuery(savedQueryId: string, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<SavedQueryRow, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -205,7 +285,11 @@ async function getSavedQuery(savedQueryId, { callerUserId } = {}) {
   return success(savedQuery);
 }
 
-async function listSavedQueries(dataSourceId, tag, { callerUserId } = {}) {
+export interface ListSavedQueriesResult {
+  items: SavedQueryRow[];
+}
+
+export async function listSavedQueries(dataSourceId: unknown, tag: unknown, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<ListSavedQueriesResult, ErrorBody>> {
   const filter = typeof dataSourceId === "string" ? dataSourceId.trim() : "";
   if (filter && !isUuid(filter)) {
     return failure(400, { error: "bad_request", message: "data_source_id must be a valid UUID" });
@@ -226,7 +310,7 @@ async function listSavedQueries(dataSourceId, tag, { callerUserId } = {}) {
   // The data-source-access filter still runs in the route layer so an admin
   // doesn't suddenly leak queries from sources they were never granted.
   if (callerUserId) {
-    const result = await appDb.query(
+    const result = await appDb.query<SavedQueryRow>(
       `
         SELECT ${SAVED_QUERY_COLUMNS}
         FROM saved_queries sq
@@ -247,7 +331,7 @@ async function listSavedQueries(dataSourceId, tag, { callerUserId } = {}) {
     return success({ items: result.rows });
   }
 
-  const result = await appDb.query(
+  const result = await appDb.query<SavedQueryRow>(
     `
       SELECT ${SAVED_QUERY_COLUMNS}
       FROM saved_queries
@@ -261,15 +345,27 @@ async function listSavedQueries(dataSourceId, tag, { callerUserId } = {}) {
   return success({ items: result.rows });
 }
 
-function normalizeVisibility(value, fallback = "private") {
+function normalizeVisibility(value: unknown, fallback: SavedQueryVisibility = "private"): Validation<SavedQueryVisibility> {
   if (value === undefined) return { ok: true, value: fallback };
-  if (typeof value !== "string" || !ALLOWED_VISIBILITY.has(value)) {
+  if (typeof value !== "string" || !ALLOWED_VISIBILITY.has(value as SavedQueryVisibility)) {
     return { ok: false, message: `visibility must be one of: ${[...ALLOWED_VISIBILITY].join(", ")}` };
   }
-  return { ok: true, value };
+  return { ok: true, value: value as SavedQueryVisibility };
 }
 
-async function createSavedQuery({
+export interface CreateSavedQueryInput {
+  ownerId?: string | null;
+  name?: unknown;
+  description?: unknown;
+  dataSourceId?: unknown;
+  sql?: unknown;
+  defaultRunParams?: unknown;
+  parameterSchema?: unknown;
+  tags?: unknown;
+  visibility?: unknown;
+}
+
+export async function createSavedQuery({
   ownerId,
   name,
   description,
@@ -279,7 +375,7 @@ async function createSavedQuery({
   parameterSchema,
   tags,
   visibility
-}) {
+}: CreateSavedQueryInput): Promise<ServiceResult<SavedQueryRow, ErrorBody>> {
   const trimmedOwnerId = String(ownerId || "anonymous").trim() || "anonymous";
   const trimmedDataSourceId = String(dataSourceId || "").trim();
   const trimmedName = typeof name === "string" ? name.trim() : "";
@@ -308,16 +404,16 @@ async function createSavedQuery({
       message: `description cannot exceed ${SAVED_QUERY_DESCRIPTION_MAX_LENGTH} characters`
     });
   }
-  if (!defaultRunParamsValidation.ok) {
+  if (defaultRunParamsValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: defaultRunParamsValidation.message });
   }
-  if (!parameterSchemaValidation.ok) {
+  if (parameterSchemaValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: parameterSchemaValidation.message });
   }
-  if (!tagsValidation.ok) {
+  if (tagsValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: tagsValidation.message });
   }
-  if (!visibilityValidation.ok) {
+  if (visibilityValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: visibilityValidation.message });
   }
 
@@ -326,7 +422,7 @@ async function createSavedQuery({
   }
 
   try {
-    const insertResult = await appDb.query(
+    const insertResult = await appDb.query<SavedQueryRow>(
       `
         INSERT INTO saved_queries (
           owner_id,
@@ -357,7 +453,7 @@ async function createSavedQuery({
     const created = insertResult.rows[0];
     await versionService.recordVersion(
       created.id,
-      versionService.snapshotFromSavedQuery(created),
+      versionService.snapshotFromSavedQuery(created) as SavedQuerySnapshot,
       { actorUserId: isUuid(trimmedOwnerId) ? trimmedOwnerId : null, changeSummary: "created" }
     );
     return success(created, 201);
@@ -372,7 +468,11 @@ async function createSavedQuery({
   }
 }
 
-async function updateSavedQuery(savedQueryId, {
+export interface UpdateSavedQueryInput extends CreateSavedQueryInput {
+  callerUserId?: string | null;
+}
+
+export async function updateSavedQuery(savedQueryId: string, {
   name,
   description,
   dataSourceId,
@@ -382,7 +482,7 @@ async function updateSavedQuery(savedQueryId, {
   tags,
   visibility,
   callerUserId
-}) {
+}: UpdateSavedQueryInput): Promise<ServiceResult<SavedQueryRow, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -401,7 +501,7 @@ async function updateSavedQuery(savedQueryId, {
   const normalizedDescription = normalizeOptionalTrimmedString(description);
   const defaultRunParamsValidation = validateSavedQueryDefaultRunParams(defaultRunParams);
   const parameterSchemaValidation = resolveParameterSchema(trimmedSql, parameterSchema, existing.parameter_schema);
-  const tagsValidation = tags === undefined
+  const tagsValidation: Validation<string[]> = tags === undefined
     ? { ok: true, value: existing.tags || [] }
     : normalizeTags(tags);
   const visibilityValidation = normalizeVisibility(visibility, existing.visibility || "private");
@@ -424,16 +524,16 @@ async function updateSavedQuery(savedQueryId, {
       message: `description cannot exceed ${SAVED_QUERY_DESCRIPTION_MAX_LENGTH} characters`
     });
   }
-  if (!defaultRunParamsValidation.ok) {
+  if (defaultRunParamsValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: defaultRunParamsValidation.message });
   }
-  if (!parameterSchemaValidation.ok) {
+  if (parameterSchemaValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: parameterSchemaValidation.message });
   }
-  if (!tagsValidation.ok) {
+  if (tagsValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: tagsValidation.message });
   }
-  if (!visibilityValidation.ok) {
+  if (visibilityValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: visibilityValidation.message });
   }
 
@@ -442,7 +542,7 @@ async function updateSavedQuery(savedQueryId, {
   }
 
   try {
-    const updateResult = await appDb.query(
+    const updateResult = await appDb.query<SavedQueryRow>(
       `
         UPDATE saved_queries
         SET
@@ -474,7 +574,7 @@ async function updateSavedQuery(savedQueryId, {
     const updated = updateResult.rows[0];
     await versionService.recordVersion(
       updated.id,
-      versionService.snapshotFromSavedQuery(updated),
+      versionService.snapshotFromSavedQuery(updated) as SavedQuerySnapshot,
       { actorUserId: callerUserId || null, changeSummary: "updated" }
     );
     return success(updated);
@@ -489,7 +589,7 @@ async function updateSavedQuery(savedQueryId, {
   }
 }
 
-async function deleteSavedQuery(savedQueryId, { callerUserId } = {}) {
+export async function deleteSavedQuery(savedQueryId: string, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<{ ok: true; id: string }, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -504,7 +604,7 @@ async function deleteSavedQuery(savedQueryId, { callerUserId } = {}) {
     }
   }
 
-  const deleteResult = await appDb.query(
+  const deleteResult = await appDb.query<{ id: string }>(
     `DELETE FROM saved_queries WHERE id = $1 RETURNING id`,
     [savedQueryId]
   );
@@ -513,22 +613,24 @@ async function deleteSavedQuery(savedQueryId, { callerUserId } = {}) {
     return failure(404, { error: "not_found", message: "Saved query not found" });
   }
 
-  return success({ ok: true, id: deleteResult.rows[0].id });
+  return success({ ok: true as const, id: deleteResult.rows[0].id });
 }
 
-async function loadShareRecord(savedQueryId, userId) {
+async function loadShareRecord(savedQueryId: string, userId: string): Promise<{ permission: SharePermission } | null> {
   if (!isUuid(savedQueryId) || !userId) return null;
-  const result = await appDb.query(
+  const result = await appDb.query<{ permission: SharePermission }>(
     `SELECT permission FROM saved_query_shares WHERE saved_query_id = $1 AND user_id = $2`,
     [savedQueryId, userId]
   );
   return result.rows[0] || null;
 }
 
+export type CallerAccess = "owner" | SharePermission | null;
+
 // Effective access for the caller. Owner is always full. Visibility 'shared'
 // gives view; explicit share row gives view-or-run. Returns one of:
 // 'owner' | 'run' | 'view' | null
-async function resolveCallerAccess(savedQuery, callerUserId) {
+export async function resolveCallerAccess(savedQuery: Pick<SavedQueryRow, "id" | "owner_id" | "visibility"> | null, callerUserId: string | null | undefined): Promise<CallerAccess> {
   if (!savedQuery) return null;
   if (!callerUserId) return null;
   if (savedQuery.owner_id === callerUserId) return "owner";
@@ -538,7 +640,13 @@ async function resolveCallerAccess(savedQuery, callerUserId) {
   return null;
 }
 
-async function validateSavedQueryParams(savedQueryId, providedParams, { callerUserId } = {}) {
+interface ValidateParamsBody {
+  ok: boolean;
+  errors?: unknown[];
+  resolved_values?: Record<string, unknown>;
+}
+
+export async function validateSavedQueryParams(savedQueryId: string, providedParams: unknown, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<ValidateParamsBody, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -555,14 +663,29 @@ async function validateSavedQueryParams(savedQueryId, providedParams, { callerUs
   }
 
   const validation = validateParameterValues(savedQuery.parameter_schema, providedParams);
-  if (!validation.ok) {
+  if (validation.ok !== true) {
     return success({ ok: false, errors: validation.errors });
   }
 
   return success({ ok: true, resolved_values: validation.resolvedValues });
 }
 
-async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, callerUserId } = {}) {
+export interface ExecuteSavedQueryInput {
+  params?: unknown;
+  maxRows?: unknown;
+  timeoutMs?: unknown;
+  callerUserId?: string | null;
+}
+
+export interface ExecuteSavedQueryResult {
+  sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  duration_ms: number;
+}
+
+export async function executeSavedQuery(savedQueryId: string, { params, maxRows, timeoutMs, callerUserId }: ExecuteSavedQueryInput = {}): Promise<ServiceResult<ExecuteSavedQueryResult, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -572,7 +695,10 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, cal
     return failure(404, { error: "not_found", message: "Saved query not found" });
   }
   if (callerUserId) {
-    const access = await resolveCallerAccess(savedQuery, callerUserId);
+    const access = await resolveCallerAccess(
+      { id: savedQuery.id, owner_id: savedQuery.owner_id, visibility: savedQuery.visibility },
+      callerUserId
+    );
     if (!access || access === "view") {
       return failure(403, {
         error: "forbidden",
@@ -590,7 +716,7 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, cal
   }
 
   const parameterValidation = validateParameterValues(savedQuery.parameter_schema, params);
-  if (!parameterValidation.ok) {
+  if (parameterValidation.ok !== true) {
     return failure(400, {
       error: "bad_request",
       message: "Invalid saved query parameters",
@@ -620,7 +746,7 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, cal
     });
   }
 
-  let adapter = null;
+  let adapter: ReturnType<typeof createDatabaseAdapter> | null = null;
   try {
     adapter = createDatabaseAdapter(savedQuery.db_type, savedQuery.connection_ref);
     const adapterValidation = await adapter.validateSql(normalized.sql);
@@ -653,8 +779,8 @@ async function executeSavedQuery(savedQueryId, { params, maxRows, timeoutMs, cal
   }
 }
 
-async function listSharesForQuery(savedQueryId) {
-  const result = await appDb.query(
+async function listSharesForQuery(savedQueryId: string): Promise<ShareRow[]> {
+  const result = await appDb.query<ShareRow>(
     `
       SELECT saved_query_id, user_id, permission, granted_by_user_id, created_at
       FROM saved_query_shares
@@ -666,18 +792,19 @@ async function listSharesForQuery(savedQueryId) {
   return result.rows;
 }
 
-function normalizeShareGrants(grants) {
+function normalizeShareGrants(grants: unknown): Validation<ShareGrant[] | undefined> {
   if (grants === undefined) return { ok: true, value: undefined };
   if (!Array.isArray(grants)) {
     return { ok: false, message: "shares must be an array" };
   }
-  const seen = new Set();
-  const normalized = [];
+  const seen = new Set<string>();
+  const normalized: ShareGrant[] = [];
   for (const entry of grants) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       return { ok: false, message: "each share entry must be an object" };
     }
-    const userId = typeof entry.user_id === "string" ? entry.user_id.trim() : "";
+    const record = entry as Record<string, unknown>;
+    const userId = typeof record.user_id === "string" ? record.user_id.trim() : "";
     if (!isUuid(userId)) {
       return { ok: false, message: "each share entry must include a user_id UUID" };
     }
@@ -685,23 +812,40 @@ function normalizeShareGrants(grants) {
       return { ok: false, message: `duplicate share entry for user ${userId}` };
     }
     seen.add(userId);
-    const permission = typeof entry.permission === "string" ? entry.permission : "";
-    if (!ALLOWED_SHARE_PERMISSIONS.has(permission)) {
+    const permission = typeof record.permission === "string" ? record.permission : "";
+    if (!ALLOWED_SHARE_PERMISSIONS.has(permission as SharePermission)) {
       return {
         ok: false,
         message: `permission must be one of: ${[...ALLOWED_SHARE_PERMISSIONS].join(", ")}`
       };
     }
-    normalized.push({ user_id: userId, permission });
+    normalized.push({ user_id: userId, permission: permission as SharePermission });
   }
   return { ok: true, value: normalized };
+}
+
+export interface ShareSavedQueryInput {
+  callerUserId?: string | null;
+  visibility?: unknown;
+  shares?: unknown;
+}
+
+export interface ShareSavedQueryResult {
+  visibility: SavedQueryVisibility;
+  previous_visibility: SavedQueryVisibility;
+  shares: ShareRow[];
+  diff: {
+    added: ShareGrant[];
+    updated: Array<ShareGrant & { previous_permission: SharePermission }>;
+    removed: ShareGrant[];
+  };
 }
 
 // Replace-semantics: the body's `shares` array fully replaces whatever
 // rows exist for this query. Pass `shares: []` to revoke everyone.
 // Visibility is optional and only changed when present in the body.
 // Returns the new access summary plus a diff so callers can audit each change.
-async function shareSavedQuery(savedQueryId, { callerUserId, visibility, shares } = {}) {
+export async function shareSavedQuery(savedQueryId: string, { callerUserId, visibility, shares }: ShareSavedQueryInput = {}): Promise<ServiceResult<ShareSavedQueryResult, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -718,20 +862,20 @@ async function shareSavedQuery(savedQueryId, { callerUserId, visibility, shares 
   }
 
   const visibilityValidation = visibility === undefined
-    ? { ok: true, value: existing.visibility || "private" }
+    ? { ok: true as const, value: (existing.visibility || "private") as SavedQueryVisibility }
     : normalizeVisibility(visibility, existing.visibility || "private");
-  if (!visibilityValidation.ok) {
+  if (visibilityValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: visibilityValidation.message });
   }
 
   const sharesValidation = normalizeShareGrants(shares);
-  if (!sharesValidation.ok) {
+  if (sharesValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: sharesValidation.message });
   }
 
   const previousVisibility = existing.visibility || "private";
   const previousShares = await listSharesForQuery(savedQueryId);
-  const previousByUser = new Map(previousShares.map((row) => [row.user_id, row.permission]));
+  const previousByUser = new Map<string, SharePermission>(previousShares.map((row) => [row.user_id, row.permission]));
 
   if (visibility !== undefined && visibilityValidation.value !== previousVisibility) {
     await appDb.query(
@@ -740,12 +884,12 @@ async function shareSavedQuery(savedQueryId, { callerUserId, visibility, shares 
     );
   }
 
-  const added = [];
-  const updated = [];
-  const removed = [];
+  const added: ShareGrant[] = [];
+  const updated: Array<ShareGrant & { previous_permission: SharePermission }> = [];
+  const removed: ShareGrant[] = [];
 
   if (sharesValidation.value !== undefined) {
-    const nextByUser = new Map(sharesValidation.value.map((row) => [row.user_id, row.permission]));
+    const nextByUser = new Map<string, SharePermission>(sharesValidation.value.map((row) => [row.user_id, row.permission]));
 
     for (const [userId, permission] of nextByUser) {
       const prev = previousByUser.get(userId);
@@ -789,7 +933,14 @@ async function shareSavedQuery(savedQueryId, { callerUserId, visibility, shares 
   });
 }
 
-async function getSavedQueryAccess(savedQueryId, { callerUserId } = {}) {
+export interface SavedQueryAccessResult {
+  saved_query_id: string;
+  owner_id: string;
+  visibility: SavedQueryVisibility;
+  shares: ShareRow[];
+}
+
+export async function getSavedQueryAccess(savedQueryId: string, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<SavedQueryAccessResult, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -812,7 +963,7 @@ async function getSavedQueryAccess(savedQueryId, { callerUserId } = {}) {
   });
 }
 
-async function listSavedQueryVersions(savedQueryId, { callerUserId } = {}) {
+export async function listSavedQueryVersions(savedQueryId: string, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<{ items: SavedQueryVersionRow[] }, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -830,7 +981,13 @@ async function listSavedQueryVersions(savedQueryId, { callerUserId } = {}) {
   return success({ items: versions });
 }
 
-async function restoreSavedQueryVersion(savedQueryId, versionId, { callerUserId } = {}) {
+export interface RestoreVersionResult {
+  saved_query: SavedQueryRow;
+  restored_from_version_number: number;
+  new_version: SavedQueryVersionRow;
+}
+
+export async function restoreSavedQueryVersion(savedQueryId: string, versionId: string, { callerUserId }: CallerOptions = {}): Promise<ServiceResult<RestoreVersionResult, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -853,7 +1010,7 @@ async function restoreSavedQueryVersion(savedQueryId, versionId, { callerUserId 
   // UPDATE shape so visibility/tags/parameter_schema all flow through the
   // existing column list. The restore itself becomes a new version row so
   // the timeline reads top-to-bottom.
-  const updateResult = await appDb.query(
+  const updateResult = await appDb.query<SavedQueryRow>(
     `
       UPDATE saved_queries
       SET
@@ -885,7 +1042,7 @@ async function restoreSavedQueryVersion(savedQueryId, versionId, { callerUserId 
 
   const newVersion = await versionService.recordVersion(
     savedQueryId,
-    versionService.snapshotFromSavedQuery(restored),
+    versionService.snapshotFromSavedQuery(restored) as SavedQuerySnapshot,
     {
       actorUserId: callerUserId || null,
       changeSummary: `restored from version ${version.version_number}`
@@ -898,18 +1055,3 @@ async function restoreSavedQueryVersion(savedQueryId, versionId, { callerUserId 
     new_version: newVersion
   });
 }
-
-module.exports = {
-  getSavedQuery,
-  listSavedQueries,
-  createSavedQuery,
-  updateSavedQuery,
-  deleteSavedQuery,
-  validateSavedQueryParams,
-  executeSavedQuery,
-  shareSavedQuery,
-  getSavedQueryAccess,
-  listSavedQueryVersions,
-  restoreSavedQueryVersion,
-  resolveCallerAccess
-};

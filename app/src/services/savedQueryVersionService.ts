@@ -6,8 +6,10 @@
 // surface serialises edits per saved_query (one HTTP request at a time),
 // collisions are unlikely in practice, but the retry loop keeps it safe.
 
-const appDb = require("../lib/appDb");
-const { isUuid, isPgUniqueViolation } = require("../lib/validation");
+import appDb = require("../lib/appDb");
+import { isUuid, isPgUniqueViolation } from "../lib/validation";
+import type { SavedQueryVisibility } from "../types/domain";
+import type { ParameterSchemaEntry } from "./queryParameterParser";
 
 const VERSION_COLUMNS = `
   id,
@@ -26,7 +28,54 @@ const VERSION_COLUMNS = `
   created_at
 `;
 
-function snapshotFromSavedQuery(savedQuery) {
+export interface SavedQuerySnapshot {
+  name: string;
+  description: string | null;
+  data_source_id: string;
+  sql: string;
+  default_run_params: Record<string, unknown>;
+  parameter_schema: ParameterSchemaEntry[];
+  tags: string[];
+  visibility: SavedQueryVisibility;
+}
+
+export interface SavedQueryVersionRow {
+  id: string;
+  saved_query_id: string;
+  version_number: number;
+  name: string;
+  description: string | null;
+  data_source_id: string;
+  sql: string;
+  default_run_params: Record<string, unknown>;
+  parameter_schema: ParameterSchemaEntry[];
+  tags: string[];
+  visibility: SavedQueryVisibility;
+  change_summary: string | null;
+  created_by_user_id: string | null;
+  created_at: string | Date;
+}
+
+export interface RecordVersionOptions {
+  actorUserId?: string | null;
+  changeSummary?: string | null;
+}
+
+/**
+ * Build a snapshot payload from a live saved-query row. Defensive about
+ * missing/nullable fields so callers can pass either the OpenAPI shape or
+ * the raw DB row.
+ */
+export function snapshotFromSavedQuery(savedQuery: {
+  name: string;
+  description?: string | null;
+  data_source_id: string;
+  sql: string;
+  default_run_params?: Record<string, unknown> | null;
+  parameter_schema?: ParameterSchemaEntry[] | null;
+  tags?: string[] | null;
+  visibility?: SavedQueryVisibility | null;
+}): SavedQuerySnapshot {
   return {
     name: savedQuery.name,
     description: savedQuery.description ?? null,
@@ -39,17 +88,21 @@ function snapshotFromSavedQuery(savedQuery) {
   };
 }
 
-async function nextVersionNumber(savedQueryId) {
-  const result = await appDb.query(
+async function nextVersionNumber(savedQueryId: string): Promise<number> {
+  const result = await appDb.query<{ max_version: number | string | null }>(
     `SELECT COALESCE(MAX(version_number), 0) AS max_version
        FROM saved_query_versions
       WHERE saved_query_id = $1`,
     [savedQueryId]
   );
-  return (result.rows[0]?.max_version ?? 0) + 1;
+  return Number(result.rows[0]?.max_version ?? 0) + 1;
 }
 
-async function recordVersion(savedQueryId, snapshot, { actorUserId = null, changeSummary = null } = {}) {
+export async function recordVersion(
+  savedQueryId: string,
+  snapshot: SavedQuerySnapshot,
+  { actorUserId = null, changeSummary = null }: RecordVersionOptions = {}
+): Promise<SavedQueryVersionRow> {
   if (!isUuid(savedQueryId)) {
     throw new Error("recordVersion: savedQueryId must be a UUID");
   }
@@ -63,7 +116,7 @@ async function recordVersion(savedQueryId, snapshot, { actorUserId = null, chang
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const versionNumber = await nextVersionNumber(savedQueryId);
     try {
-      const result = await appDb.query(
+      const result = await appDb.query<SavedQueryVersionRow>(
         `
           INSERT INTO saved_query_versions (
             saved_query_id,
@@ -111,8 +164,8 @@ async function recordVersion(savedQueryId, snapshot, { actorUserId = null, chang
   throw new Error("recordVersion: failed to claim a version_number after retries");
 }
 
-async function listVersions(savedQueryId) {
-  const result = await appDb.query(
+export async function listVersions(savedQueryId: string): Promise<SavedQueryVersionRow[]> {
+  const result = await appDb.query<SavedQueryVersionRow>(
     `
       SELECT ${VERSION_COLUMNS}
         FROM saved_query_versions
@@ -124,17 +177,10 @@ async function listVersions(savedQueryId) {
   return result.rows;
 }
 
-async function getVersionById(versionId) {
-  const result = await appDb.query(
+export async function getVersionById(versionId: string): Promise<SavedQueryVersionRow | null> {
+  const result = await appDb.query<SavedQueryVersionRow>(
     `SELECT ${VERSION_COLUMNS} FROM saved_query_versions WHERE id = $1`,
     [versionId]
   );
   return result.rows[0] || null;
 }
-
-module.exports = {
-  snapshotFromSavedQuery,
-  recordVersion,
-  listVersions,
-  getVersionById
-};

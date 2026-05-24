@@ -24,17 +24,39 @@
 // DST transitions are handled by the underlying Date math (we keep stepping
 // until a UTC instant is found that matches the local-wall-clock fields).
 
-const MINUTE_RANGE = [0, 59];
-const HOUR_RANGE = [0, 23];
-const DOM_RANGE = [1, 31];
-const MONTH_RANGE = [1, 12];
-const DOW_RANGE = [0, 6];
+type Range = readonly [number, number];
 
-function parseField(spec, [min, max]) {
+export interface ParsedCron {
+  expression: string;
+  minutes: Set<number>;
+  hours: Set<number>;
+  doms: Set<number>;
+  months: Set<number>;
+  dows: Set<number>;
+  domStarred: boolean;
+  dowStarred: boolean;
+}
+
+interface ZonedParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  dayOfWeek: number;
+}
+
+const MINUTE_RANGE: Range = [0, 59];
+const HOUR_RANGE: Range = [0, 23];
+const DOM_RANGE: Range = [1, 31];
+const MONTH_RANGE: Range = [1, 12];
+const DOW_RANGE: Range = [0, 6];
+
+function parseField(spec: string, [min, max]: Range): Set<number> {
   if (typeof spec !== "string" || !spec.length) {
     throw new Error(`cron field must be a non-empty string`);
   }
-  const result = new Set();
+  const result = new Set<number>();
   for (const part of spec.split(",")) {
     if (!part.length) {
       throw new Error(`cron field has empty list entry`);
@@ -45,8 +67,8 @@ function parseField(spec, [min, max]) {
     if (!Number.isInteger(step) || step <= 0) {
       throw new Error(`cron step must be a positive integer`);
     }
-    let rangeStart;
-    let rangeEnd;
+    let rangeStart: number;
+    let rangeEnd: number;
     if (base === "*") {
       rangeStart = min;
       rangeEnd = max;
@@ -71,7 +93,7 @@ function parseField(spec, [min, max]) {
   return result;
 }
 
-function parseCronExpression(expression) {
+export function parseCronExpression(expression: unknown): ParsedCron {
   if (typeof expression !== "string") {
     throw new Error("cron expression must be a string");
   }
@@ -103,7 +125,7 @@ function parseCronExpression(expression) {
   };
 }
 
-function isCronExpressionValid(expression) {
+export function isCronExpressionValid(expression: unknown): boolean {
   try {
     parseCronExpression(expression);
     return true;
@@ -112,10 +134,10 @@ function isCronExpressionValid(expression) {
   }
 }
 
-const FORMATTER_CACHE = new Map();
-const DOW_MAP = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+const FORMATTER_CACHE = new Map<string, Intl.DateTimeFormat>();
+const DOW_MAP: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-function getFormatter(timezone) {
+function getFormatter(timezone: string): Intl.DateTimeFormat {
   let formatter = FORMATTER_CACHE.get(timezone);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat("en-US", {
@@ -134,9 +156,9 @@ function getFormatter(timezone) {
   return formatter;
 }
 
-function getZonedParts(date, timezone) {
+function getZonedParts(date: Date, timezone: string): ZonedParts {
   const formatter = getFormatter(timezone);
-  const parts = {};
+  const parts: Record<string, string> = {};
   for (const part of formatter.formatToParts(date)) {
     if (part.type !== "literal") parts[part.type] = part.value;
   }
@@ -150,7 +172,7 @@ function getZonedParts(date, timezone) {
   };
 }
 
-function isTimezoneValid(timezone) {
+export function isTimezoneValid(timezone: unknown): timezone is string {
   if (typeof timezone !== "string" || !timezone.length) return false;
   try {
     // Will throw RangeError if invalid.
@@ -161,7 +183,7 @@ function isTimezoneValid(timezone) {
   }
 }
 
-function matchesCron(parsed, parts) {
+function matchesCron(parsed: ParsedCron, parts: ZonedParts): boolean {
   if (!parsed.minutes.has(parts.minute)) return false;
   if (!parsed.hours.has(parts.hour)) return false;
   if (!parsed.months.has(parts.month)) return false;
@@ -183,13 +205,8 @@ function matchesCron(parsed, parts) {
  *
  * Caps at 366 days of search; anything beyond that is a sign of an impossible
  * combination (e.g. "0 0 31 2 *").
- *
- * @param {string} expression  cron expression in `timezone`
- * @param {string} timezone    IANA tz name
- * @param {Date}   [fromDate]  defaults to "now"
- * @returns {Date}             next fire time as a UTC Date
  */
-function computeNextRun(expression, timezone, fromDate = new Date()) {
+export function computeNextRun(expression: string, timezone: string, fromDate: Date = new Date()): Date {
   const parsed = parseCronExpression(expression);
   if (!isTimezoneValid(timezone)) {
     throw new Error(`invalid timezone: ${timezone}`);
@@ -238,10 +255,3 @@ function computeNextRun(expression, timezone, fromDate = new Date()) {
   }
   throw new Error(`no cron match within 366 days for expression "${expression}"`);
 }
-
-module.exports = {
-  parseCronExpression,
-  isCronExpressionValid,
-  isTimezoneValid,
-  computeNextRun
-};

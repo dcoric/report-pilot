@@ -10,16 +10,69 @@
 // via the FK (ON DELETE SET NULL in the migration). The frontend can filter
 // the list to "presets that apply to my current data source" on its own.
 
-const appDb = require("../lib/appDb");
+import appDb = require("../lib/appDb");
 
-const TITLE_MAX = 200;
-const PROMPT_MAX = 8 * 1024;
-const TAGS_MAX = 16;
-const TAG_MAX_LEN = 64;
-const ALLOWED_VISIBILITY = new Set(["private", "shared"]);
+export const TITLE_MAX = 200 as const;
+export const PROMPT_MAX = 8 * 1024;
+export const TAGS_MAX = 16 as const;
+export const TAG_MAX_LEN = 64 as const;
+export const ALLOWED_VISIBILITY: ReadonlySet<PresetVisibility> = new Set<PresetVisibility>(["private", "shared"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function rowToPreset(row) {
+export type PresetVisibility = "private" | "shared";
+
+export interface PromptPresetRow {
+  id: string;
+  owner_user_id: string;
+  title: string;
+  prompt_text: string;
+  data_source_id: string | null;
+  tags: string[] | null;
+  visibility: PresetVisibility;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+export interface PromptPreset {
+  id: string;
+  owner_user_id: string;
+  title: string;
+  prompt_text: string;
+  data_source_id: string | null;
+  tags: string[];
+  visibility: PresetVisibility;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+interface NormalizedPresetFields {
+  title?: string;
+  prompt_text?: string;
+  data_source_id?: string | null;
+  tags?: string[];
+  visibility?: PresetVisibility;
+}
+
+interface FieldValidationOk<T> {
+  ok: true;
+  value: T;
+}
+interface FieldValidationErr {
+  ok: false;
+  message?: string;
+}
+type FieldValidation<T> = FieldValidationOk<T> | FieldValidationErr;
+
+export type ValidatePresetResult =
+  | { ok: true; value: NormalizedPresetFields }
+  | { ok: false; code: string; message: string };
+
+export interface ServiceResult<T> {
+  statusCode: number;
+  body: T;
+}
+
+function rowToPreset(row: PromptPresetRow | null | undefined): PromptPreset | null {
   if (!row) return null;
   return {
     id: row.id,
@@ -34,12 +87,12 @@ function rowToPreset(row) {
   };
 }
 
-function normalizeTags(value) {
+function normalizeTags(value: unknown): string[] | null {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) return null;
   if (value.length > TAGS_MAX) return null;
-  const out = [];
-  const seen = new Set();
+  const out: string[] = [];
+  const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") return null;
     const trimmed = entry.trim();
@@ -54,27 +107,33 @@ function normalizeTags(value) {
 }
 
 // Returns `{ ok: true, value }` or `{ ok: false, code, message }`.
-function validatePreset(body, { partial = false } = {}) {
+export function validatePreset(body: unknown, { partial = false }: { partial?: boolean } = {}): ValidatePresetResult {
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, code: "invalid_body", message: "preset body must be a JSON object" };
   }
-  const value = {};
+  const input = body as Record<string, unknown>;
+  const value: NormalizedPresetFields = {};
 
-  const requireField = (key, validator, code, message) => {
-    const has = Object.prototype.hasOwnProperty.call(body, key);
+  function requireField<T>(
+    key: string,
+    validator: (raw: unknown) => FieldValidation<T>,
+    code: string,
+    message: string
+  ): ValidatePresetResult | null {
+    const has = Object.prototype.hasOwnProperty.call(input, key);
     if (!has) {
       if (partial) return null;
       return { ok: false, code, message };
     }
-    const validated = validator(body[key]);
-    if (validated.ok) {
-      value[key] = validated.value;
+    const validated = validator(input[key]);
+    if (validated.ok === true) {
+      (value as Record<string, unknown>)[key] = validated.value;
       return null;
     }
     return { ok: false, code, message: validated.message || message };
-  };
+  }
 
-  const titleErr = requireField(
+  const titleErr = requireField<string>(
     "title",
     (raw) => {
       if (typeof raw !== "string") return { ok: false, message: "title must be a string" };
@@ -88,7 +147,7 @@ function validatePreset(body, { partial = false } = {}) {
   );
   if (titleErr) return titleErr;
 
-  const promptErr = requireField(
+  const promptErr = requireField<string>(
     "prompt_text",
     (raw) => {
       if (typeof raw !== "string") return { ok: false, message: "prompt_text must be a string" };
@@ -104,8 +163,8 @@ function validatePreset(body, { partial = false } = {}) {
 
   // Optional fields. When omitted on create we apply sensible defaults;
   // when omitted on partial update we leave the existing column alone.
-  if (Object.prototype.hasOwnProperty.call(body, "data_source_id")) {
-    const raw = body.data_source_id;
+  if (Object.prototype.hasOwnProperty.call(input, "data_source_id")) {
+    const raw = input.data_source_id;
     if (raw === null || raw === "") {
       value.data_source_id = null;
     } else if (typeof raw === "string" && UUID_RE.test(raw)) {
@@ -117,8 +176,8 @@ function validatePreset(body, { partial = false } = {}) {
     value.data_source_id = null;
   }
 
-  if (Object.prototype.hasOwnProperty.call(body, "tags")) {
-    const tags = normalizeTags(body.tags);
+  if (Object.prototype.hasOwnProperty.call(input, "tags")) {
+    const tags = normalizeTags(input.tags);
     if (tags === null) {
       return { ok: false, code: "invalid_tags", message: `tags must be an array of up to ${TAGS_MAX} strings (each up to ${TAG_MAX_LEN} chars)` };
     }
@@ -127,12 +186,12 @@ function validatePreset(body, { partial = false } = {}) {
     value.tags = [];
   }
 
-  if (Object.prototype.hasOwnProperty.call(body, "visibility")) {
-    const raw = body.visibility;
-    if (typeof raw !== "string" || !ALLOWED_VISIBILITY.has(raw)) {
+  if (Object.prototype.hasOwnProperty.call(input, "visibility")) {
+    const raw = input.visibility;
+    if (typeof raw !== "string" || !ALLOWED_VISIBILITY.has(raw as PresetVisibility)) {
       return { ok: false, code: "invalid_visibility", message: `visibility must be one of: ${[...ALLOWED_VISIBILITY].join(", ")}` };
     }
-    value.visibility = raw;
+    value.visibility = raw as PresetVisibility;
   } else if (!partial) {
     value.visibility = "private";
   }
@@ -140,7 +199,7 @@ function validatePreset(body, { partial = false } = {}) {
   return { ok: true, value };
 }
 
-async function listForUser({ userId, includeShared = true } = {}) {
+export async function listForUser({ userId, includeShared = true }: { userId?: string | null; includeShared?: boolean } = {}): Promise<PromptPreset[]> {
   if (!userId) return [];
   const sql = includeShared
     ? `SELECT id, owner_user_id, title, prompt_text, data_source_id, tags,
@@ -153,13 +212,13 @@ async function listForUser({ userId, includeShared = true } = {}) {
          FROM prompt_presets
          WHERE owner_user_id = $1
          ORDER BY created_at DESC`;
-  const result = await appDb.query(sql, [userId]);
-  return result.rows.map(rowToPreset);
+  const result = await appDb.query<PromptPresetRow>(sql, [userId]);
+  return result.rows.map((row) => rowToPreset(row) as PromptPreset);
 }
 
-async function findById(id) {
+export async function findById(id: unknown): Promise<PromptPreset | null> {
   if (typeof id !== "string" || !id) return null;
-  const result = await appDb.query(
+  const result = await appDb.query<PromptPresetRow>(
     `SELECT id, owner_user_id, title, prompt_text, data_source_id, tags,
             visibility, created_at, updated_at
        FROM prompt_presets WHERE id = $1`,
@@ -168,12 +227,12 @@ async function findById(id) {
   return rowToPreset(result.rows[0] || null);
 }
 
-async function createPreset({ ownerUserId, body }) {
+export async function createPreset({ ownerUserId, body }: { ownerUserId?: string | null; body: unknown }): Promise<ServiceResult<unknown>> {
   if (!ownerUserId) {
     return { statusCode: 401, body: { error: "unauthenticated" } };
   }
   const parsed = validatePreset(body);
-  if (!parsed.ok) {
+  if (parsed.ok !== true) {
     return { statusCode: 400, body: { error: "bad_request", code: parsed.code, message: parsed.message } };
   }
   const v = parsed.value;
@@ -187,7 +246,7 @@ async function createPreset({ ownerUserId, body }) {
       };
     }
   }
-  const result = await appDb.query(
+  const result = await appDb.query<PromptPresetRow>(
     `INSERT INTO prompt_presets (owner_user_id, title, prompt_text, data_source_id, tags, visibility)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, owner_user_id, title, prompt_text, data_source_id, tags,
@@ -197,7 +256,7 @@ async function createPreset({ ownerUserId, body }) {
   return { statusCode: 201, body: rowToPreset(result.rows[0]) };
 }
 
-async function updatePreset({ ownerUserId, id, body }) {
+export async function updatePreset({ ownerUserId, id, body }: { ownerUserId?: string | null; id: unknown; body: unknown }): Promise<ServiceResult<unknown>> {
   if (!ownerUserId) return { statusCode: 401, body: { error: "unauthenticated" } };
   const existing = await findById(id);
   if (!existing) return { statusCode: 404, body: { error: "not_found", message: "preset not found" } };
@@ -206,7 +265,7 @@ async function updatePreset({ ownerUserId, id, body }) {
   }
   // Partial update: keep existing values for fields the caller doesn't send.
   const parsed = validatePreset(body, { partial: true });
-  if (!parsed.ok) {
+  if (parsed.ok !== true) {
     return { statusCode: 400, body: { error: "bad_request", code: parsed.code, message: parsed.message } };
   }
   const merged = { ...existing, ...parsed.value };
@@ -219,7 +278,7 @@ async function updatePreset({ ownerUserId, id, body }) {
       };
     }
   }
-  const result = await appDb.query(
+  const result = await appDb.query<PromptPresetRow>(
     `UPDATE prompt_presets
         SET title = $2,
             prompt_text = $3,
@@ -235,7 +294,7 @@ async function updatePreset({ ownerUserId, id, body }) {
   return { statusCode: 200, body: rowToPreset(result.rows[0]) };
 }
 
-async function deletePreset({ ownerUserId, id }) {
+export async function deletePreset({ ownerUserId, id }: { ownerUserId?: string | null; id: string }): Promise<ServiceResult<unknown>> {
   if (!ownerUserId) return { statusCode: 401, body: { error: "unauthenticated" } };
   const existing = await findById(id);
   if (!existing) return { statusCode: 404, body: { error: "not_found", message: "preset not found" } };
@@ -245,17 +304,3 @@ async function deletePreset({ ownerUserId, id }) {
   await appDb.query("DELETE FROM prompt_presets WHERE id = $1", [id]);
   return { statusCode: 200, body: { ok: true, id } };
 }
-
-module.exports = {
-  TITLE_MAX,
-  PROMPT_MAX,
-  TAGS_MAX,
-  TAG_MAX_LEN,
-  ALLOWED_VISIBILITY,
-  validatePreset,
-  listForUser,
-  findById,
-  createPreset,
-  updatePreset,
-  deletePreset
-};
