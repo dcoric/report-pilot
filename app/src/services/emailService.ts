@@ -1,4 +1,4 @@
-const nodemailer = require("nodemailer");
+import nodemailer, { type Transporter } from "nodemailer";
 
 const SMTP_HOST = process.env.SMTP_HOST || "localhost";
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
@@ -7,9 +7,22 @@ const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 const SMTP_FROM = process.env.SMTP_FROM || "Report Pilot Reports <noreply@report-pilot.local>";
 
-let transporter = null;
+interface SendExportEmailOptions {
+  recipients: string[];
+  subject: string;
+  textBody: string;
+  fileBuffer: Buffer;
+  fileName: string;
+  contentType: string;
+}
 
-function getTransporter() {
+interface SendExportEmailResult {
+  messageId: string;
+}
+
+let transporter: Transporter | null = null;
+
+function getTransporter(): Transporter {
   if (!transporter) {
     transporter = nodemailer.createTransport({
       host: SMTP_HOST,
@@ -23,17 +36,8 @@ function getTransporter() {
 
 /**
  * Send an email with an export file attached.
- *
- * @param {Object} opts
- * @param {string[]} opts.recipients
- * @param {string} opts.subject
- * @param {string} opts.textBody
- * @param {Buffer} opts.fileBuffer
- * @param {string} opts.fileName
- * @param {string} opts.contentType
- * @returns {Promise<{messageId: string}>}
  */
-async function sendExportEmail({ recipients, subject, textBody, fileBuffer, fileName, contentType }) {
+async function sendExportEmail({ recipients, subject, textBody, fileBuffer, fileName, contentType }: SendExportEmailOptions): Promise<SendExportEmailResult> {
   const transport = getTransporter();
 
   const info = await transport.sendMail({
@@ -53,4 +57,9 @@ async function sendExportEmail({ recipients, subject, textBody, fileBuffer, file
   return { messageId: info.messageId };
 }
 
-module.exports = { sendExportEmail };
+// Use CommonJS `module.exports` so tests can monkey-patch
+// `emailService.sendExportEmail`. Named `export` statements compile to
+// immutable getters under tsx, breaking the patch (see lib/appDb.ts).
+export = {
+  sendExportEmail
+};

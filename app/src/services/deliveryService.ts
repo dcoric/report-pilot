@@ -1,31 +1,64 @@
-const appDb = require("../lib/appDb");
-const { exportQueryResult, SUPPORTED_FORMATS } = require("./exportService");
-const { sendExportEmail } = require("./emailService");
+import appDb = require("../lib/appDb");
+import { exportQueryResult, SUPPORTED_FORMATS } from "./exportService";
+import emailService = require("./emailService");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+export type DeliveryMode = "download" | "email";
+export type DeliveryFormat = "json" | "csv" | "xlsx" | "tsv" | "parquet";
+
+export interface CreateDeliveryInput {
+  sessionId: string;
+  deliveryMode: DeliveryMode;
+  format: DeliveryFormat;
+  recipients?: string[];
+  requestedBy: string;
+}
+
+export interface DownloadDeliveryResult {
+  id: string;
+  status: "completed";
+  delivery_mode: "download";
+  buffer: Buffer;
+  contentType: string;
+  filename: string;
+}
+
+export interface EmailDeliveryAck {
+  id: string;
+  status: "processing";
+  delivery_mode: "email";
+}
+
+export type CreateDeliveryResult = DownloadDeliveryResult | EmailDeliveryAck;
+
+export interface DeliveryRecord {
+  id: string;
+  session_id: string;
+  delivery_mode: DeliveryMode;
+  format: DeliveryFormat;
+  recipients: string[] | null;
+  status: string;
+  error_message: string | null;
+  file_name: string | null;
+  file_size_bytes: number | null;
+  requested_by: string;
+  created_at: Date | string;
+  completed_at: Date | string | null;
+}
+
 /**
  * Validate an array of email addresses.
- * @param {string[]} emails
- * @returns {{ok: boolean, invalid: string[]}}
  */
-function validateRecipients(emails) {
+function validateRecipients(emails: string[]): { ok: boolean; invalid: string[] } {
   const invalid = emails.filter((e) => !EMAIL_REGEX.test(e));
   return { ok: invalid.length === 0, invalid };
 }
 
 /**
  * Create a delivery record and, for email mode, kick off async delivery.
- *
- * @param {Object} opts
- * @param {string} opts.sessionId
- * @param {string} opts.deliveryMode  'download' | 'email'
- * @param {string} opts.format        'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet'
- * @param {string[]} [opts.recipients]
- * @param {string} opts.requestedBy
- * @returns {Promise<Object>} delivery record (for download mode includes buffer)
  */
-async function createDelivery({ sessionId, deliveryMode, format, recipients, requestedBy }) {
+export async function createDelivery({ sessionId, deliveryMode, format, recipients, requestedBy }: CreateDeliveryInput): Promise<CreateDeliveryResult> {
   if (!SUPPORTED_FORMATS.has(format)) {
     throw Object.assign(new Error(`Unsupported format: ${format}`), { statusCode: 400 });
   }
@@ -44,7 +77,7 @@ async function createDelivery({ sessionId, deliveryMode, format, recipients, req
   }
 
   // Insert delivery record
-  const insertResult = await appDb.query(
+  const insertResult = await appDb.query<{ id: string; status: string; created_at: Date | string }>(
     `
       INSERT INTO export_deliveries (session_id, delivery_mode, format, recipients, status, requested_by)
       VALUES ($1, $2, $3, $4, 'pending', $5)
@@ -84,14 +117,14 @@ async function createDelivery({ sessionId, deliveryMode, format, recipients, req
           SET status = 'failed', error_message = $2, completed_at = NOW()
           WHERE id = $1
         `,
-        [delivery.id, err.message]
+        [delivery.id, (err as Error).message]
       );
       throw err;
     }
   }
 
   // Email mode: run async
-  processEmailDelivery(delivery.id, sessionId, format, recipients).catch((err) => {
+  processEmailDelivery(delivery.id, sessionId, format, recipients!).catch((err: Error) => {
     console.error(`[delivery] Email delivery ${delivery.id} failed: ${err.message}`);
   });
 
@@ -105,7 +138,7 @@ async function createDelivery({ sessionId, deliveryMode, format, recipients, req
 /**
  * Process email delivery asynchronously.
  */
-async function processEmailDelivery(deliveryId, sessionId, format, recipients) {
+async function processEmailDelivery(deliveryId: string, sessionId: string, format: DeliveryFormat, recipients: string[]): Promise<void> {
   await appDb.query(
     "UPDATE export_deliveries SET status = 'processing' WHERE id = $1",
     [deliveryId]
@@ -115,13 +148,13 @@ async function processEmailDelivery(deliveryId, sessionId, format, recipients) {
     const { buffer, contentType, filename } = await exportQueryResult(sessionId, format);
 
     // Fetch session question for email subject
-    const sessionResult = await appDb.query(
+    const sessionResult = await appDb.query<{ question: string | null }>(
       "SELECT question FROM query_sessions WHERE id = $1",
       [sessionId]
     );
     const question = sessionResult.rows[0]?.question || "Query Export";
 
-    await sendExportEmail({
+    await emailService.sendExportEmail({
       recipients,
       subject: `Report Pilot Export: ${question.substring(0, 80)}`,
       textBody: `Your requested export for the query "${question}" is attached.\n\nFormat: ${format.toUpperCase()}\nFile: ${filename}`,
@@ -145,7 +178,7 @@ async function processEmailDelivery(deliveryId, sessionId, format, recipients) {
         SET status = 'failed', error_message = $2, completed_at = NOW()
         WHERE id = $1
       `,
-      [deliveryId, err.message]
+      [deliveryId, (err as Error).message]
     );
     throw err;
   }
@@ -153,11 +186,9 @@ async function processEmailDelivery(deliveryId, sessionId, format, recipients) {
 
 /**
  * Fetch a delivery record by ID.
- * @param {string} exportId
- * @returns {Promise<Object|null>}
  */
-async function getDeliveryStatus(exportId) {
-  const result = await appDb.query(
+export async function getDeliveryStatus(exportId: string): Promise<DeliveryRecord | null> {
+  const result = await appDb.query<DeliveryRecord>(
     `
       SELECT id, session_id, delivery_mode, format, recipients, status, error_message,
              file_name, file_size_bytes, requested_by, created_at, completed_at
@@ -169,5 +200,3 @@ async function getDeliveryStatus(exportId) {
 
   return result.rows[0] || null;
 }
-
-module.exports = { createDelivery, getDeliveryStatus };
