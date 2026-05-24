@@ -1,6 +1,6 @@
-const fs = require("fs/promises");
-const path = require("path");
-const appDb = require("../lib/appDb");
+import * as fs from "fs/promises";
+import * as path from "path";
+import appDb = require("../lib/appDb");
 
 const DEFAULT_REPORT_DIR =
   process.env.BENCHMARK_REPORT_DIR || path.join(process.cwd(), "docs", "evals", "reports");
@@ -8,10 +8,71 @@ const DEFAULT_BENCHMARK_DATA_SOURCE = "dvdrental";
 const DEFAULT_BENCHMARK_CONNECTION_REF = "postgresql://postgres:postgres@host.docker.internal:5440/dvdrental";
 const DEFAULT_BENCHMARK_ORACLE_CONN = "postgresql://postgres:postgres@localhost:5440/dvdrental";
 
-async function buildObservabilityMetrics(opts = {}) {
+export interface NumberSummary {
+  count: number;
+  avg: number | null;
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+}
+
+export interface ObservabilityMetrics {
+  window_hours: number;
+  generated_at: string;
+  totals: {
+    attempts: number;
+    attempts_with_execution: number;
+    attempts_with_explain: number;
+  };
+  latency_ms: {
+    generation: NumberSummary;
+    execution: NumberSummary;
+  };
+  query_cost: {
+    explain_max_total_cost: NumberSummary;
+    explain_max_plan_rows: NumberSummary;
+    mean_explain_cost_per_attempt: number | null;
+  };
+  token_usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    avg_total_tokens_per_attempt: number | null;
+  };
+  provider_failures: Array<{ provider: string; failures: number }>;
+}
+
+export interface BenchmarkReleaseGates {
+  found: boolean;
+  source?: "database";
+  report_id?: string;
+  run_date?: string | Date | null;
+  data_source_id?: string | null;
+  summary?: Record<string, unknown> | null;
+  release_gates?: Record<string, unknown> | null;
+  report_file?: string;
+  message?: string;
+}
+
+export interface BenchmarkCommand {
+  command: string;
+  env: Record<string, string>;
+}
+
+export async function buildObservabilityMetrics(opts: { windowHours?: number } = {}): Promise<ObservabilityMetrics> {
   const windowHours = clampWindowHours(opts.windowHours);
 
-  const attemptsResult = await appDb.query(
+  interface AttemptRow {
+    id: string;
+    llm_provider: string | null;
+    latency_ms: number | string | null;
+    token_usage_json: Record<string, unknown> | null;
+    validation_result_json: Record<string, unknown> | null;
+    created_at: Date | string;
+    execution_duration_ms: number | string | null;
+  }
+
+  const attemptsResult = await appDb.query<AttemptRow>(
     `
       SELECT
         qa.id,
@@ -30,16 +91,16 @@ async function buildObservabilityMetrics(opts = {}) {
   );
 
   const rows = attemptsResult.rows;
-  const generationLatencies = [];
-  const executionLatencies = [];
-  const explainCosts = [];
-  const explainRows = [];
+  const generationLatencies: number[] = [];
+  const executionLatencies: number[] = [];
+  const explainCosts: number[] = [];
+  const explainRows: number[] = [];
 
   let tokenPrompt = 0;
   let tokenCompletion = 0;
   let tokenTotal = 0;
 
-  const providerFailureCounts = new Map();
+  const providerFailureCounts = new Map<string, number>();
   for (const row of rows) {
     const generationLatency = Number(row.latency_ms);
     if (Number.isFinite(generationLatency)) {
@@ -58,8 +119,9 @@ async function buildObservabilityMetrics(opts = {}) {
       tokenTotal += usage.total_tokens;
     }
 
-    const validation = row.validation_result_json || {};
-    const metrics = validation?.explain_budget?.metrics;
+    const validation = (row.validation_result_json || {}) as Record<string, unknown>;
+    const explainBudget = validation.explain_budget as Record<string, unknown> | undefined;
+    const metrics = explainBudget?.metrics as Record<string, unknown> | undefined;
     if (metrics && Number.isFinite(Number(metrics.maxTotalCost))) {
       explainCosts.push(Number(metrics.maxTotalCost));
     }
@@ -68,7 +130,7 @@ async function buildObservabilityMetrics(opts = {}) {
     }
 
     const providerAttempts = Array.isArray(validation.provider_attempts) ? validation.provider_attempts : [];
-    for (const attempt of providerAttempts) {
+    for (const attempt of providerAttempts as Array<Record<string, unknown>>) {
       if (attempt?.status !== "failed") {
         continue;
       }
@@ -114,8 +176,15 @@ async function buildObservabilityMetrics(opts = {}) {
   };
 }
 
-async function loadLatestBenchmarkReleaseGates(reportDir = DEFAULT_REPORT_DIR) {
-  const dbResult = await appDb.query(
+export async function loadLatestBenchmarkReleaseGates(reportDir: string = DEFAULT_REPORT_DIR): Promise<BenchmarkReleaseGates> {
+  interface BenchmarkRow {
+    id: string;
+    run_date: Date | string | null;
+    data_source_id: string | null;
+    summary_json: (Record<string, unknown> & { release_gates?: Record<string, unknown> }) | null;
+  }
+
+  const dbResult = await appDb.query<BenchmarkRow>(
     `
       SELECT
         id,
@@ -128,7 +197,7 @@ async function loadLatestBenchmarkReleaseGates(reportDir = DEFAULT_REPORT_DIR) {
     `
   );
 
-  if (dbResult.rowCount > 0) {
+  if ((dbResult.rowCount ?? 0) > 0) {
     const row = dbResult.rows[0];
     return {
       found: true,
@@ -147,7 +216,7 @@ async function loadLatestBenchmarkReleaseGates(reportDir = DEFAULT_REPORT_DIR) {
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch (err) {
-    if (err.code === "ENOENT") {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return {
         found: false,
         message: `No benchmark reports found at ${dir}`
@@ -180,19 +249,19 @@ async function loadLatestBenchmarkReleaseGates(reportDir = DEFAULT_REPORT_DIR) {
 
   const latest = stats.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
   const raw = await fs.readFile(latest.filePath, "utf8");
-  const parsed = JSON.parse(raw);
+  const parsed = JSON.parse(raw) as Record<string, unknown> & { summary?: Record<string, unknown> & { release_gates?: Record<string, unknown> } };
 
   return {
     found: true,
     report_file: latest.filePath,
-    run_date: parsed.run_date || null,
-    data_source_id: parsed.data_source_id || null,
+    run_date: (parsed.run_date as string | null) || null,
+    data_source_id: (parsed.data_source_id as string | null) || null,
     summary: parsed.summary || null,
     release_gates: parsed.summary?.release_gates || null
   };
 }
 
-function buildBenchmarkCommand() {
+export function buildBenchmarkCommand(): BenchmarkCommand {
   const dataSourceName = process.env.BENCHMARK_DATA_SOURCE_NAME || DEFAULT_BENCHMARK_DATA_SOURCE;
   const fallbackConn = process.env.BENCHMARK_DATA_SOURCE_CONN || DEFAULT_BENCHMARK_ORACLE_CONN;
   const connectionRef = process.env.BENCHMARK_CONNECTION_REF || fallbackConn || DEFAULT_BENCHMARK_CONNECTION_REF;
@@ -201,7 +270,7 @@ function buildBenchmarkCommand() {
   const provider = process.env.BENCHMARK_PROVIDER || "";
   const model = process.env.BENCHMARK_MODEL || "";
 
-  const env = {
+  const env: Record<string, string> = {
     BENCHMARK_DATA_SOURCE_NAME: dataSourceName,
     BENCHMARK_CONNECTION_REF: connectionRef,
     BENCHMARK_ORACLE_CONN: oracleConn
@@ -228,14 +297,21 @@ function buildBenchmarkCommand() {
   };
 }
 
-function normalizeTokenUsage(raw) {
+interface NormalizedTokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+function normalizeTokenUsage(raw: unknown): NormalizedTokenUsage | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
+  const r = raw as Record<string, unknown>;
 
-  const promptTokens = toFiniteNumber(raw.prompt_tokens ?? raw.promptTokenCount);
-  const completionTokens = toFiniteNumber(raw.completion_tokens ?? raw.candidatesTokenCount ?? raw.output_tokens);
-  const totalTokens = toFiniteNumber(raw.total_tokens ?? raw.totalTokenCount);
+  const promptTokens = toFiniteNumber(r.prompt_tokens ?? r.promptTokenCount);
+  const completionTokens = toFiniteNumber(r.completion_tokens ?? r.candidatesTokenCount ?? r.output_tokens);
+  const totalTokens = toFiniteNumber(r.total_tokens ?? r.totalTokenCount);
 
   const normalizedPrompt = promptTokens || 0;
   const normalizedCompletion = completionTokens || 0;
@@ -248,7 +324,7 @@ function normalizeTokenUsage(raw) {
   };
 }
 
-function summarizeNumbers(values) {
+function summarizeNumbers(values: number[]): NumberSummary {
   if (!Array.isArray(values) || values.length === 0) {
     return {
       count: 0,
@@ -272,7 +348,7 @@ function summarizeNumbers(values) {
   };
 }
 
-function percentileSorted(sorted, p) {
+function percentileSorted(sorted: number[], p: number): number {
   if (!Array.isArray(sorted) || sorted.length === 0) {
     return NaN;
   }
@@ -281,16 +357,16 @@ function percentileSorted(sorted, p) {
   return sorted[idx];
 }
 
-function round2(value) {
+function round2(value: number): number {
   return Number(Number(value).toFixed(2));
 }
 
-function toFiniteNumber(value) {
+function toFiniteNumber(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function clampWindowHours(value) {
+function clampWindowHours(value: unknown): number {
   const n = Number(value || 24);
   if (!Number.isFinite(n)) {
     return 24;
@@ -298,14 +374,8 @@ function clampWindowHours(value) {
   return Math.max(1, Math.min(24 * 30, Math.round(n)));
 }
 
-function toShellLiteral(value) {
+function toShellLiteral(value: unknown): string {
   const source = String(value ?? "");
   const escaped = source.replace(/'/g, "'\\''");
   return `'${escaped}'`;
 }
-
-module.exports = {
-  buildObservabilityMetrics,
-  loadLatestBenchmarkReleaseGates,
-  buildBenchmarkCommand
-};

@@ -1,7 +1,24 @@
-const appDb = require("../lib/appDb");
-const roleService = require("./roleService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import roleService = require("./roleService");
 
-async function hasAccess(userId, dataSourceId) {
+export interface UserWithAccess {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  granted_at: Date | string;
+  granted_by_user_id: string | null;
+  roles: string[];
+}
+
+export interface GrantRevokeArgs {
+  userId: string;
+  dataSourceId: string;
+  actorUserId?: string | null;
+}
+
+export async function hasAccess(userId: string | null | undefined, dataSourceId: string | null | undefined): Promise<boolean> {
   if (!userId || !dataSourceId) {
     return false;
   }
@@ -9,20 +26,20 @@ async function hasAccess(userId, dataSourceId) {
     "SELECT 1 FROM user_data_source_access WHERE user_id = $1 AND data_source_id = $2",
     [userId, dataSourceId]
   );
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
-async function listAccessibleDataSourceIds(userId) {
+export async function listAccessibleDataSourceIds(userId: string | null | undefined): Promise<string[]> {
   if (!userId) return [];
-  const result = await appDb.query(
+  const result = await appDb.query<{ data_source_id: string }>(
     "SELECT data_source_id FROM user_data_source_access WHERE user_id = $1",
     [userId]
   );
   return result.rows.map((row) => row.data_source_id);
 }
 
-async function listUsersWithAccess(dataSourceId) {
-  const result = await appDb.query(
+export async function listUsersWithAccess(dataSourceId: string): Promise<UserWithAccess[]> {
+  const result = await appDb.query<UserWithAccess>(
     `
       SELECT
         u.id,
@@ -58,7 +75,7 @@ async function listUsersWithAccess(dataSourceId) {
   }));
 }
 
-async function grantAccess(client, { userId, dataSourceId, actorUserId }) {
+export async function grantAccess(client: PoolClient, { userId, dataSourceId, actorUserId }: GrantRevokeArgs): Promise<boolean> {
   const insert = await client.query(
     `
       INSERT INTO user_data_source_access (user_id, data_source_id, granted_by_user_id)
@@ -68,7 +85,7 @@ async function grantAccess(client, { userId, dataSourceId, actorUserId }) {
     `,
     [userId, dataSourceId, actorUserId || null]
   );
-  const changed = insert.rowCount > 0;
+  const changed = (insert.rowCount ?? 0) > 0;
   if (changed) {
     await roleService.writeAuditEntry(client, {
       actorUserId,
@@ -80,12 +97,12 @@ async function grantAccess(client, { userId, dataSourceId, actorUserId }) {
   return changed;
 }
 
-async function revokeAccess(client, { userId, dataSourceId, actorUserId }) {
+export async function revokeAccess(client: PoolClient, { userId, dataSourceId, actorUserId }: GrantRevokeArgs): Promise<boolean> {
   const del = await client.query(
     "DELETE FROM user_data_source_access WHERE user_id = $1 AND data_source_id = $2 RETURNING user_id",
     [userId, dataSourceId]
   );
-  const changed = del.rowCount > 0;
+  const changed = (del.rowCount ?? 0) > 0;
   if (changed) {
     await roleService.writeAuditEntry(client, {
       actorUserId,
@@ -96,11 +113,3 @@ async function revokeAccess(client, { userId, dataSourceId, actorUserId }) {
   }
   return changed;
 }
-
-module.exports = {
-  hasAccess,
-  listAccessibleDataSourceIds,
-  listUsersWithAccess,
-  grantAccess,
-  revokeAccess
-};

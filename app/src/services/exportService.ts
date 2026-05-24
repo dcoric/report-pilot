@@ -1,34 +1,43 @@
-const appDb = require("../lib/appDb");
-const { createDatabaseAdapter } = require("../adapters/dbAdapterFactory");
-const { stringify } = require("csv-stringify/sync"); // Synchronous for simplicity in MVP, or stream
-const xlsx = require("xlsx");
-const parquet = require("parquetjs-lite");
-const fs = require("fs/promises");
-const os = require("os");
-const path = require("path");
+import appDb = require("../lib/appDb");
+import { createDatabaseAdapter } from "../adapters/dbAdapterFactory";
+import { stringify } from "csv-stringify/sync";
+import * as xlsx from "xlsx";
+import * as parquet from "parquetjs-lite";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 
-const SUPPORTED_FORMATS = new Set(["json", "csv", "xlsx", "tsv", "parquet"]);
+export type ExportFormat = "json" | "csv" | "xlsx" | "tsv" | "parquet";
+
+export const SUPPORTED_FORMATS: ReadonlySet<ExportFormat> = new Set<ExportFormat>(["json", "csv", "xlsx", "tsv", "parquet"]);
+
+export interface ExportResult {
+  buffer: Buffer;
+  contentType: string;
+  filename: string;
+}
+
+type ParquetPrimitive = "BOOLEAN" | "INT64" | "DOUBLE" | "TIMESTAMP_MILLIS" | "UTF8";
+
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
 
 /**
  * Exports current query results for a given session.
  * Re-runs the *latest successful* SQL generation for the session to get a fresh cursor/result.
- *
- * @param {string} sessionId
- * @param {string} format 'json' | 'csv' | 'xlsx' | 'tsv' | 'parquet'
- * @returns {Promise<{
- *   buffer: Buffer | string,
- *   contentType: string,
- *   filename: string
- * }>}
  */
-async function exportQueryResult(sessionId, format = "json") {
+export async function exportQueryResult(sessionId: string, format: ExportFormat = "json"): Promise<ExportResult> {
   if (!SUPPORTED_FORMATS.has(format)) {
     throw new Error(`Unsupported format: ${format}`);
   }
 
   // 1. Fetch session and check data source info
-  const sessionResult = await appDb.query(
+  const sessionResult = await appDb.query<{
+    id: string;
+    data_source_id: string;
+    question: string | null;
+    connection_ref: string;
+    db_type: string;
+  }>(
     `
       SELECT
         qs.id,
@@ -50,7 +59,7 @@ async function exportQueryResult(sessionId, format = "json") {
   const session = sessionResult.rows[0];
 
   // 2. Fetch the latest successful attempt's SQL
-  const attemptResult = await appDb.query(
+  const attemptResult = await appDb.query<{ generated_sql: string | null }>(
     `
       SELECT qa.generated_sql
       FROM query_attempts qa
@@ -74,11 +83,11 @@ async function exportQueryResult(sessionId, format = "json") {
   // 3. Re-execute the SQL (Read-Only)
   // Note: For very large datasets, we should stream. For MVP, we load into memory.
   const adapter = createDatabaseAdapter(session.db_type, session.connection_ref);
-  let rows = [];
-  let columns = [];
+  let rows: Array<Record<string, unknown>> = [];
+  let columns: string[] = [];
   try {
     const execution = await adapter.executeReadOnly(sql, { maxRows: 100000 }); // Increase limit for export
-    rows = execution.rows;
+    rows = execution.rows as Array<Record<string, unknown>>;
     columns = execution.columns || [];
   } finally {
     await adapter.close();
@@ -90,8 +99,8 @@ async function exportQueryResult(sessionId, format = "json") {
   const filename = `${safeName}_${timestamp}.${format === "xlsx" ? "xlsx" : format}`;
   const columnOrder = getColumnOrder(columns, rows);
 
-  let buffer;
-  let contentType;
+  let buffer: Buffer;
+  let contentType: string;
 
   switch (format) {
     case "json": {
@@ -102,9 +111,6 @@ async function exportQueryResult(sessionId, format = "json") {
     }
 
     case "csv":
-      // csv-stringify handles objects if columns are consistent
-      // We can infer columns from the first row or passing 'columns' option if needed.
-      // stringify(rows, { header: true }) works well.
       buffer = Buffer.from(
         stringify(rows, { header: true, columns: columnOrder.length > 0 ? columnOrder : undefined }),
         "utf-8"
@@ -139,14 +145,17 @@ async function exportQueryResult(sessionId, format = "json") {
       buffer = await exportParquet(rows, columnOrder);
       contentType = "application/vnd.apache.parquet";
       break;
+
+    default:
+      throw new Error(`Unsupported format: ${format}`);
   }
 
   return { buffer, contentType, filename };
 }
 
-function getColumnOrder(columns, rows) {
+function getColumnOrder(columns: string[] | unknown, rows: Array<Record<string, unknown>>): string[] {
   if (Array.isArray(columns) && columns.length > 0) {
-    return columns;
+    return columns as string[];
   }
   if (rows.length > 0) {
     return Object.keys(rows[0]);
@@ -154,8 +163,8 @@ function getColumnOrder(columns, rows) {
   return [];
 }
 
-function normalizeRowForJson(row, columnOrder) {
-  const ordered = {};
+function normalizeRowForJson(row: Record<string, unknown>, columnOrder: string[]): Record<string, unknown> {
+  const ordered: Record<string, unknown> = {};
   const keys = Array.isArray(columnOrder) && columnOrder.length > 0
     ? columnOrder
     : Object.keys(row || {});
@@ -173,7 +182,7 @@ function normalizeRowForJson(row, columnOrder) {
   return ordered;
 }
 
-function normalizeJsonValue(value) {
+function normalizeJsonValue(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
   }
@@ -203,9 +212,9 @@ function normalizeJsonValue(value) {
   }
 
   if (typeof value === "object") {
-    const out = {};
-    for (const key of Object.keys(value)) {
-      out[key] = normalizeJsonValue(value[key]);
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      out[key] = normalizeJsonValue((value as Record<string, unknown>)[key]);
     }
     return out;
   }
@@ -213,7 +222,7 @@ function normalizeJsonValue(value) {
   return String(value);
 }
 
-function inferParquetType(values) {
+function inferParquetType(values: unknown[]): ParquetPrimitive {
   const presentValues = values.filter((value) => value !== null && value !== undefined);
   if (presentValues.length === 0) {
     return "UTF8";
@@ -237,7 +246,7 @@ function inferParquetType(values) {
   return "UTF8";
 }
 
-function isDateLike(value) {
+function isDateLike(value: unknown): boolean {
   if (value instanceof Date) {
     return !Number.isNaN(value.getTime());
   }
@@ -250,7 +259,7 @@ function isDateLike(value) {
   return !Number.isNaN(Date.parse(value));
 }
 
-function normalizeParquetValue(value, type) {
+function normalizeParquetValue(value: unknown, type: ParquetPrimitive): unknown {
   if (value === null || value === undefined) {
     return null;
   }
@@ -280,19 +289,19 @@ function normalizeParquetValue(value, type) {
   }
 
   if (type === "TIMESTAMP_MILLIS") {
-    const dateValue = value instanceof Date ? value : new Date(value);
+    const dateValue = value instanceof Date ? value : new Date(value as string);
     return Number.isNaN(dateValue.getTime()) ? null : dateValue;
   }
 
   return String(value);
 }
 
-async function exportParquet(rows, columnOrder) {
+async function exportParquet(rows: Array<Record<string, unknown>>, columnOrder: string[]): Promise<Buffer> {
   if (!Array.isArray(columnOrder) || columnOrder.length === 0) {
     throw new Error("Cannot export parquet without columns");
   }
 
-  const schemaDefinition = {};
+  const schemaDefinition: Record<string, { type: ParquetPrimitive; optional: boolean }> = {};
   for (const column of columnOrder) {
     const values = rows.map((row) => row[column]);
     schemaDefinition[column] = {
@@ -301,21 +310,25 @@ async function exportParquet(rows, columnOrder) {
     };
   }
 
-  const schema = new parquet.ParquetSchema(schemaDefinition);
+  const schema = new (parquet as { ParquetSchema: new (def: unknown) => unknown }).ParquetSchema(schemaDefinition);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "report-pilot-export-"));
   const filePath = path.join(tempDir, `export-${Date.now()}.parquet`);
 
-  let writer;
+  let writer: { appendRow: (row: Record<string, unknown>) => Promise<void>; close: () => Promise<void> } | null = null;
   try {
-    writer = await parquet.ParquetWriter.openFile(schema, filePath);
+    writer = await (parquet as {
+      ParquetWriter: {
+        openFile: (schema: unknown, path: string) => Promise<{ appendRow: (row: Record<string, unknown>) => Promise<void>; close: () => Promise<void> }>;
+      };
+    }).ParquetWriter.openFile(schema, filePath);
     for (const row of rows) {
-      const normalizedRow = {};
+      const normalizedRow: Record<string, unknown> = {};
       for (const column of columnOrder) {
         normalizedRow[column] = normalizeParquetValue(row[column], schemaDefinition[column].type);
       }
-      await writer.appendRow(normalizedRow);
+      await writer!.appendRow(normalizedRow);
     }
-    await writer.close();
+    await writer!.close();
     writer = null;
 
     return await fs.readFile(filePath);
@@ -327,14 +340,10 @@ async function exportParquet(rows, columnOrder) {
   }
 }
 
-module.exports = {
-  exportQueryResult,
-  SUPPORTED_FORMATS,
-  __private: {
-    getColumnOrder,
-    normalizeRowForJson,
-    normalizeJsonValue,
-    inferParquetType,
-    normalizeParquetValue
-  }
+export const __private = {
+  getColumnOrder,
+  normalizeRowForJson,
+  normalizeJsonValue,
+  inferParquetType,
+  normalizeParquetValue
 };

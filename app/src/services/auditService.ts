@@ -8,41 +8,91 @@
 // source access grants). For standalone events (login, auth provider CRUD)
 // the function falls back to `appDb`.
 
-const appDb = require("../lib/appDb");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
 
-const ALLOWED_OUTCOMES = new Set(["success", "failure", "info"]);
+export type AuditOutcome = "success" | "failure" | "info";
 
-const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
+export interface WriteEventInput {
+  actorUserId?: string | null;
+  actorEmail?: string | null;
+  targetUserId?: string | null;
+  action: string;
+  outcome?: AuditOutcome | string;
+  details?: Record<string, unknown>;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
 
-function trimString(value, max) {
+export interface ListEventsInput {
+  action?: string | null;
+  actorUserId?: string | null;
+  targetUserId?: string | null;
+  outcome?: string | null;
+  since?: string | null;
+  until?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditEventItem {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  actor: { id: string; email: string | null; display_name: string | null } | null;
+  target_user_id: string | null;
+  target: { id: string; email: string | null; display_name: string | null } | null;
+  action: string;
+  outcome: AuditOutcome | string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: Date | string;
+}
+
+export interface ListEventsResult {
+  items: AuditEventItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const ALLOWED_OUTCOMES: ReadonlySet<string> = new Set(["success", "failure", "info"]);
+
+export const DEFAULT_LIMIT = 50;
+export const MAX_LIMIT = 200;
+
+function trimString(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.length > max ? trimmed.slice(0, max) : trimmed;
 }
 
-function normalizeOutcome(value) {
+function normalizeOutcome(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string") return null;
   const lower = value.trim().toLowerCase();
   return ALLOWED_OUTCOMES.has(lower) ? lower : null;
 }
 
-async function writeEvent({
-  actorUserId = null,
-  actorEmail = null,
-  targetUserId = null,
-  action,
-  outcome = "success",
-  details = {},
-  ipAddress = null,
-  userAgent = null
-}, client = null) {
+export async function writeEvent(
+  {
+    actorUserId = null,
+    actorEmail = null,
+    targetUserId = null,
+    action,
+    outcome = "success",
+    details = {},
+    ipAddress = null,
+    userAgent = null
+  }: WriteEventInput,
+  client: PoolClient | null = null
+): Promise<void> {
   if (typeof action !== "string" || !action) {
     throw new Error("audit action is required");
   }
-  const exec = client || appDb;
+  const exec = (client || appDb) as typeof appDb;
   await exec.query(
     `
       INSERT INTO auth_audit_log
@@ -63,19 +113,19 @@ async function writeEvent({
   );
 }
 
-function clampLimit(value) {
+function clampLimit(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LIMIT;
   return Math.min(Math.floor(parsed), MAX_LIMIT);
 }
 
-function clampOffset(value) {
+function clampOffset(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return Math.floor(parsed);
 }
 
-function parseTimestamp(value) {
+function parseTimestamp(value: unknown): string | null {
   if (!value) return null;
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -85,7 +135,24 @@ function parseTimestamp(value) {
   return date.toISOString();
 }
 
-async function listEvents({
+interface AuditEventRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: Date | string;
+  actor_user_email: string | null;
+  actor_user_display_name: string | null;
+  target_user_email: string | null;
+  target_user_display_name: string | null;
+}
+
+export async function listEvents({
   action = null,
   actorUserId = null,
   targetUserId = null,
@@ -94,9 +161,9 @@ async function listEvents({
   until = null,
   limit = DEFAULT_LIMIT,
   offset = 0
-} = {}) {
-  const conditions = [];
-  const params = [];
+}: ListEventsInput = {}): Promise<ListEventsResult> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
 
   if (typeof action === "string" && action.trim()) {
     params.push(action.trim());
@@ -130,7 +197,7 @@ async function listEvents({
   const effectiveLimit = clampLimit(limit);
   const effectiveOffset = clampOffset(offset);
 
-  const countResult = await appDb.query(
+  const countResult = await appDb.query<{ total: string | number }>(
     `SELECT COUNT(*)::bigint AS total FROM auth_audit_log a ${where}`,
     params
   );
@@ -138,7 +205,7 @@ async function listEvents({
 
   params.push(effectiveLimit);
   params.push(effectiveOffset);
-  const listResult = await appDb.query(
+  const listResult = await appDb.query<AuditEventRow>(
     `
       SELECT
         a.id,
@@ -165,7 +232,7 @@ async function listEvents({
     params
   );
 
-  const items = listResult.rows.map((row) => ({
+  const items: AuditEventItem[] = listResult.rows.map((row) => ({
     id: row.id,
     actor_user_id: row.actor_user_id,
     actor_email: row.actor_email,
@@ -191,10 +258,3 @@ async function listEvents({
     offset: effectiveOffset
   };
 }
-
-module.exports = {
-  DEFAULT_LIMIT,
-  MAX_LIMIT,
-  writeEvent,
-  listEvents
-};
