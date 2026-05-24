@@ -1,16 +1,69 @@
-const appDb = require("../lib/appDb");
-const authService = require("./authService");
-const roleService = require("./roleService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import authService = require("./authService");
+import roleService = require("./roleService");
 
-function success(body, statusCode = 200) {
+export interface ServiceResult<T = unknown> {
+  ok: boolean;
+  statusCode: number;
+  body: T;
+}
+
+export interface PublicUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+  roles: string[];
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface UserRowWithRoles extends UserRow {
+  roles: string[];
+}
+
+export interface CreateUserInput {
+  email: unknown;
+  password: unknown;
+  displayName?: unknown;
+  roles?: unknown;
+  actorUserId?: string | null;
+}
+
+export interface UpdateUserRolesInput {
+  userId: string;
+  assign?: unknown;
+  revoke?: unknown;
+  actorUserId?: string | null;
+}
+
+interface ServiceErrorBody {
+  error: string;
+  code?: string;
+  message: string;
+}
+
+function success<T>(body: T, statusCode = 200): ServiceResult<T> {
   return { ok: true, statusCode, body };
 }
 
-function failure(statusCode, body) {
+function failure(statusCode: number, body: ServiceErrorBody): ServiceResult<ServiceErrorBody> {
   return { ok: false, statusCode, body };
 }
 
-function publicUser(user, roles) {
+export function publicUser(user: UserRow, roles: string[] | unknown): PublicUser {
   return {
     id: user.id,
     email: user.email,
@@ -19,12 +72,12 @@ function publicUser(user, roles) {
     last_login_at: user.last_login_at,
     created_at: user.created_at,
     updated_at: user.updated_at,
-    roles: Array.isArray(roles) ? roles : []
+    roles: Array.isArray(roles) ? (roles as string[]) : []
   };
 }
 
-async function listUsers() {
-  const result = await appDb.query(
+export async function listUsers(): Promise<ServiceResult<{ items: PublicUser[] }>> {
+  const result = await appDb.query<UserRowWithRoles>(
     `
       SELECT
         u.id,
@@ -52,17 +105,18 @@ async function listUsers() {
   });
 }
 
-async function createUser({ email, password, displayName, roles, actorUserId }) {
+export async function createUser({ email, password, displayName, roles, actorUserId }: CreateUserInput): Promise<ServiceResult<unknown>> {
   const normalizedEmail = authService.normalizeEmail(email);
   if (!normalizedEmail) {
     return failure(400, { error: "bad_request", message: "email is not a valid address" });
   }
   const policy = authService.checkPasswordPolicy(password, { email: normalizedEmail });
-  if (!policy.ok) {
-    return failure(400, { error: "bad_request", code: policy.code, message: policy.message });
+  if (policy.ok !== true) {
+    const { code, message } = policy;
+    return failure(400, { error: "bad_request", code, message });
   }
 
-  let requestedRoleNames = null;
+  let requestedRoleNames: string[] | null = null;
   if (roles !== undefined && roles !== null) {
     const parsed = roleService.uniqueRoleNames(roles);
     if (parsed === null) {
@@ -80,8 +134,8 @@ async function createUser({ email, password, displayName, roles, actorUserId }) 
     : null;
 
   try {
-    const result = await appDb.withTransaction(async (client) => {
-      const userInsert = await client.query(
+    const result = await appDb.withTransaction(async (client: PoolClient) => {
+      const userInsert = await client.query<UserRow>(
         `
           INSERT INTO users (email, password_hash, display_name)
           VALUES ($1, $2, $3)
@@ -108,21 +162,22 @@ async function createUser({ email, password, displayName, roles, actorUserId }) 
     });
     return success(publicUser(result.user, result.roles), 201);
   } catch (err) {
-    if (err && err.code === "23505") {
+    const e = err as { code?: string; unknown?: string[] };
+    if (e && e.code === "23505") {
       return failure(409, { error: "conflict", message: "a user with that email already exists" });
     }
-    if (err && err.code === "unknown_role") {
+    if (e && e.code === "unknown_role") {
       return failure(400, {
         error: "bad_request",
-        message: `unknown role(s): ${err.unknown.join(", ")}`
+        message: `unknown role(s): ${(e.unknown || []).join(", ")}`
       });
     }
     throw err;
   }
 }
 
-async function updateUserRoles({ userId, assign, revoke, actorUserId }) {
-  const userResult = await appDb.query(
+export async function updateUserRoles({ userId, assign, revoke, actorUserId }: UpdateUserRolesInput): Promise<ServiceResult<unknown>> {
+  const userResult = await appDb.query<UserRow>(
     "SELECT id, email, display_name, is_active, last_login_at, created_at, updated_at FROM users WHERE id = $1",
     [userId]
   );
@@ -131,8 +186,8 @@ async function updateUserRoles({ userId, assign, revoke, actorUserId }) {
   }
   const user = userResult.rows[0];
 
-  let assignNames = [];
-  let revokeNames = [];
+  let assignNames: string[] = [];
+  let revokeNames: string[] = [];
   if (assign !== undefined && assign !== null) {
     const parsed = roleService.uniqueRoleNames(assign);
     if (parsed === null) {
@@ -160,7 +215,7 @@ async function updateUserRoles({ userId, assign, revoke, actorUserId }) {
   }
 
   try {
-    return await appDb.withTransaction(async (client) => {
+    return await appDb.withTransaction(async (client: PoolClient) => {
       const assignResult = await roleService.assignRolesByName(client, {
         userId: user.id,
         roleNames: assignNames,
@@ -181,19 +236,13 @@ async function updateUserRoles({ userId, assign, revoke, actorUserId }) {
       });
     });
   } catch (err) {
-    if (err && err.code === "unknown_role") {
+    const e = err as { code?: string; unknown?: string[] };
+    if (e && e.code === "unknown_role") {
       return failure(400, {
         error: "bad_request",
-        message: `unknown role(s): ${err.unknown.join(", ")}`
+        message: `unknown role(s): ${(e.unknown || []).join(", ")}`
       });
     }
     throw err;
   }
 }
-
-module.exports = {
-  listUsers,
-  createUser,
-  updateUserRoles,
-  publicUser
-};

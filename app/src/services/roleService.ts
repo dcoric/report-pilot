@@ -1,10 +1,48 @@
-const appDb = require("../lib/appDb");
-const auditService = require("./auditService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import auditService = require("./auditService");
 
-const DEFAULT_ROLE = "viewer";
-const SYSTEM_ROLE_NAMES = new Set(["admin", "analyst", "viewer"]);
+export const DEFAULT_ROLE = "viewer";
+export const SYSTEM_ROLE_NAMES: ReadonlySet<string> = new Set(["admin", "analyst", "viewer"]);
 
-function normalizeRoleName(value) {
+export interface RoleRow {
+  id: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  created_at?: Date | string;
+  assigned_at?: Date | string;
+}
+
+export interface AssignRevokeRolesInput {
+  userId: string;
+  roleNames: unknown[];
+  actorUserId?: string | null;
+}
+
+export interface AssignRolesResult {
+  assigned: string[];
+  skipped: string[];
+}
+
+export interface RevokeRolesResult {
+  revoked: string[];
+  skipped: string[];
+}
+
+interface AuditEntryArgs {
+  actorUserId?: string | null;
+  targetUserId: string;
+  action: string;
+  details?: Record<string, unknown>;
+}
+
+interface UnknownRoleError extends Error {
+  code: "unknown_role";
+  unknown: string[];
+}
+
+export function normalizeRoleName(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -12,12 +50,12 @@ function normalizeRoleName(value) {
   return trimmed || null;
 }
 
-function uniqueRoleNames(values) {
+export function uniqueRoleNames(values: unknown): string[] | null {
   if (!Array.isArray(values)) {
     return null;
   }
-  const seen = new Set();
-  const result = [];
+  const seen = new Set<string>();
+  const result: string[] = [];
   for (const entry of values) {
     const name = normalizeRoleName(entry);
     if (!name) {
@@ -32,44 +70,44 @@ function uniqueRoleNames(values) {
   return result;
 }
 
-async function listRoles() {
-  const result = await appDb.query(
+export async function listRoles(): Promise<RoleRow[]> {
+  const result = await appDb.query<RoleRow>(
     "SELECT id, name, description, is_system, created_at FROM roles ORDER BY name"
   );
   return result.rows;
 }
 
-async function findRoleByName(name) {
+export async function findRoleByName(name: unknown): Promise<RoleRow | null> {
   const normalized = normalizeRoleName(name);
   if (!normalized) {
     return null;
   }
-  const result = await appDb.query(
+  const result = await appDb.query<RoleRow>(
     "SELECT id, name, description, is_system FROM roles WHERE lower(name) = $1",
     [normalized]
   );
   return result.rows[0] || null;
 }
 
-async function findRolesByNames(names) {
+export async function findRolesByNames(names: unknown): Promise<RoleRow[]> {
   if (!Array.isArray(names) || names.length === 0) {
     return [];
   }
   const normalized = names
     .map(normalizeRoleName)
-    .filter((value) => value !== null);
+    .filter((value): value is string => value !== null);
   if (normalized.length === 0) {
     return [];
   }
-  const result = await appDb.query(
+  const result = await appDb.query<RoleRow>(
     "SELECT id, name, description, is_system FROM roles WHERE lower(name) = ANY($1::text[])",
     [normalized]
   );
   return result.rows;
 }
 
-async function listRolesForUser(userId, client = null) {
-  const exec = client || appDb;
+export async function listRolesForUser(userId: string, client: PoolClient | null = null): Promise<RoleRow[]> {
+  const exec = (client || appDb) as typeof appDb;
   const result = await exec.query(
     `
       SELECT r.id, r.name, r.description, r.is_system, ur.assigned_at
@@ -80,16 +118,16 @@ async function listRolesForUser(userId, client = null) {
     `,
     [userId]
   );
-  return result.rows;
+  return result.rows as RoleRow[];
 }
 
-async function listRoleNamesForUser(userId, client = null) {
+export async function listRoleNamesForUser(userId: string, client: PoolClient | null = null): Promise<string[]> {
   const rows = await listRolesForUser(userId, client);
   return rows.map((row) => row.name);
 }
 
-async function listPermissionNamesForUser(userId, client = null) {
-  const exec = client || appDb;
+export async function listPermissionNamesForUser(userId: string, client: PoolClient | null = null): Promise<string[]> {
+  const exec = (client || appDb) as typeof appDb;
   const result = await exec.query(
     `
       SELECT DISTINCT p.name
@@ -101,10 +139,10 @@ async function listPermissionNamesForUser(userId, client = null) {
     `,
     [userId]
   );
-  return result.rows.map((row) => row.name);
+  return (result.rows as Array<{ name: string }>).map((row) => row.name);
 }
 
-async function writeAuditEntry(client, { actorUserId, targetUserId, action, details = {} }) {
+export async function writeAuditEntry(client: PoolClient, { actorUserId, targetUserId, action, details = {} }: AuditEntryArgs): Promise<void> {
   // Thin shim kept for existing callers (role assignment, data source access).
   // New code paths should use auditService.writeEvent directly so they can
   // record outcome / IP / user-agent metadata too.
@@ -114,7 +152,7 @@ async function writeAuditEntry(client, { actorUserId, targetUserId, action, deta
   );
 }
 
-async function assignRolesByName(client, { userId, roleNames, actorUserId }) {
+export async function assignRolesByName(client: PoolClient, { userId, roleNames, actorUserId }: AssignRevokeRolesInput): Promise<AssignRolesResult> {
   const distinct = uniqueRoleNames(roleNames) || [];
   if (distinct.length === 0) {
     return { assigned: [], skipped: [] };
@@ -123,19 +161,20 @@ async function assignRolesByName(client, { userId, roleNames, actorUserId }) {
     "SELECT id, name FROM roles WHERE lower(name) = ANY($1::text[])",
     [distinct]
   );
-  const found = new Map(rolesResult.rows.map((row) => [row.name, row]));
+  const foundRows = rolesResult.rows as RoleRow[];
+  const found = new Map(foundRows.map((row) => [row.name, row]));
   const missing = distinct.filter((name) => !found.has(name));
   if (missing.length > 0) {
-    const err = new Error(`unknown roles: ${missing.join(", ")}`);
+    const err = new Error(`unknown roles: ${missing.join(", ")}`) as UnknownRoleError;
     err.code = "unknown_role";
     err.unknown = missing;
     throw err;
   }
 
-  const assigned = [];
-  const skipped = [];
+  const assigned: string[] = [];
+  const skipped: string[] = [];
   for (const name of distinct) {
-    const role = found.get(name);
+    const role = found.get(name)!;
     const insert = await client.query(
       `
         INSERT INTO user_roles (user_id, role_id, assigned_by_user_id)
@@ -145,7 +184,7 @@ async function assignRolesByName(client, { userId, roleNames, actorUserId }) {
       `,
       [userId, role.id, actorUserId || null]
     );
-    if (insert.rowCount > 0) {
+    if ((insert.rowCount ?? 0) > 0) {
       assigned.push(role.name);
       await writeAuditEntry(client, {
         actorUserId,
@@ -160,7 +199,7 @@ async function assignRolesByName(client, { userId, roleNames, actorUserId }) {
   return { assigned, skipped };
 }
 
-async function revokeRolesByName(client, { userId, roleNames, actorUserId }) {
+export async function revokeRolesByName(client: PoolClient, { userId, roleNames, actorUserId }: AssignRevokeRolesInput): Promise<RevokeRolesResult> {
   const distinct = uniqueRoleNames(roleNames) || [];
   if (distinct.length === 0) {
     return { revoked: [], skipped: [] };
@@ -169,24 +208,25 @@ async function revokeRolesByName(client, { userId, roleNames, actorUserId }) {
     "SELECT id, name FROM roles WHERE lower(name) = ANY($1::text[])",
     [distinct]
   );
-  const found = new Map(rolesResult.rows.map((row) => [row.name, row]));
+  const foundRows = rolesResult.rows as RoleRow[];
+  const found = new Map(foundRows.map((row) => [row.name, row]));
   const missing = distinct.filter((name) => !found.has(name));
   if (missing.length > 0) {
-    const err = new Error(`unknown roles: ${missing.join(", ")}`);
+    const err = new Error(`unknown roles: ${missing.join(", ")}`) as UnknownRoleError;
     err.code = "unknown_role";
     err.unknown = missing;
     throw err;
   }
 
-  const revoked = [];
-  const skipped = [];
+  const revoked: string[] = [];
+  const skipped: string[] = [];
   for (const name of distinct) {
-    const role = found.get(name);
+    const role = found.get(name)!;
     const del = await client.query(
       "DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 RETURNING role_id",
       [userId, role.id]
     );
-    if (del.rowCount > 0) {
+    if ((del.rowCount ?? 0) > 0) {
       revoked.push(role.name);
       await writeAuditEntry(client, {
         actorUserId,
@@ -200,19 +240,3 @@ async function revokeRolesByName(client, { userId, roleNames, actorUserId }) {
   }
   return { revoked, skipped };
 }
-
-module.exports = {
-  DEFAULT_ROLE,
-  SYSTEM_ROLE_NAMES,
-  normalizeRoleName,
-  uniqueRoleNames,
-  listRoles,
-  findRoleByName,
-  findRolesByNames,
-  listRolesForUser,
-  listRoleNamesForUser,
-  listPermissionNamesForUser,
-  assignRolesByName,
-  revokeRolesByName,
-  writeAuditEntry
-};

@@ -22,31 +22,88 @@
 //     we just store no roles here unless the SCIM Group flow assigns
 //     them. Reflects the spec recommendation.
 
-const appDb = require("../lib/appDb");
-const authService = require("./authService");
-const auditService = require("./auditService");
-const linkedIdentityService = require("./linkedIdentityService");
-const roleService = require("./roleService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import authService = require("./authService");
+import auditService = require("./auditService");
+import linkedIdentityService = require("./linkedIdentityService");
+import roleService = require("./roleService");
 
-const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
-const SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
-const SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
+export const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+export const SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
+export const SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
 
-function pickPrimaryEmail(emails) {
+interface ScimEmail {
+  value?: string;
+  primary?: boolean;
+  type?: string;
+}
+
+interface ScimName {
+  formatted?: string;
+  givenName?: string;
+  familyName?: string;
+}
+
+interface ScimUserBody {
+  id?: string;
+  externalId?: string;
+  userName?: string;
+  displayName?: string;
+  active?: boolean;
+  emails?: ScimEmail[];
+  name?: ScimName;
+}
+
+interface ScimOperation {
+  op?: string;
+  path?: string;
+  value?: unknown;
+}
+
+interface ScimPatchBody {
+  Operations?: ScimOperation[];
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  password_hash?: string | null;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at?: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+export interface ServiceResponse<T = unknown> {
+  statusCode: number;
+  body: T;
+}
+
+export interface ScimContextArgs {
+  providerId: string;
+  body?: ScimUserBody;
+  actorUserId?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+function pickPrimaryEmail(emails: ScimEmail[] | undefined): string | null {
   if (!Array.isArray(emails)) return null;
   const primary = emails.find((e) => e && e.primary && typeof e.value === "string" && e.value.trim());
-  if (primary) return primary.value.trim();
+  if (primary) return primary.value!.trim();
   const first = emails.find((e) => e && typeof e.value === "string" && e.value.trim());
-  return first ? first.value.trim() : null;
+  return first ? first.value!.trim() : null;
 }
 
-function resourceEmail(body) {
+function resourceEmail(body: ScimUserBody | undefined): string | null {
   // Prefer the primary entry in `emails`; fall back to `userName` (most IdPs
   // set both to the same value).
-  return pickPrimaryEmail(body && body.emails) || (typeof body && typeof body.userName === "string" ? body.userName : null);
+  return pickPrimaryEmail(body?.emails) || (body && typeof body.userName === "string" ? body.userName : null);
 }
 
-function resourceDisplayName(body) {
+function resourceDisplayName(body: ScimUserBody | undefined): string | null {
   if (!body) return null;
   if (typeof body.displayName === "string" && body.displayName.trim()) return body.displayName.trim();
   if (body.name && typeof body.name.formatted === "string" && body.name.formatted.trim()) {
@@ -58,14 +115,14 @@ function resourceDisplayName(body) {
   return null;
 }
 
-function resourceActive(body, defaultActive = true) {
+function resourceActive(body: ScimUserBody | undefined, defaultActive = true): boolean {
   if (body && Object.prototype.hasOwnProperty.call(body, "active")) {
     return Boolean(body.active);
   }
   return defaultActive;
 }
 
-function resourceExternalId(body) {
+function resourceExternalId(body: ScimUserBody | undefined): string | null {
   if (body && typeof body.externalId === "string" && body.externalId.trim()) {
     return body.externalId.trim();
   }
@@ -75,8 +132,8 @@ function resourceExternalId(body) {
   return null;
 }
 
-function scimError(status, detail, scimType = null) {
-  const body = {
+export function scimError(status: number, detail: string, scimType: string | null = null): ServiceResponse {
+  const body: Record<string, unknown> = {
     schemas: [SCIM_ERROR_SCHEMA],
     status: String(status),
     detail
@@ -85,7 +142,7 @@ function scimError(status, detail, scimType = null) {
   return { statusCode: status, body };
 }
 
-function userToScim(user, externalId = null) {
+export function userToScim(user: UserRow, externalId: string | null = null): Record<string, unknown> {
   return {
     schemas: [SCIM_USER_SCHEMA],
     id: user.id,
@@ -104,9 +161,9 @@ function userToScim(user, externalId = null) {
   };
 }
 
-async function loadUser(userId, client = null) {
-  const exec = client || appDb;
-  const result = await exec.query(
+async function loadUser(userId: string, client: PoolClient | null = null): Promise<UserRow | null> {
+  const exec = (client || appDb) as typeof appDb;
+  const result = await exec.query<UserRow>(
     `SELECT id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at
        FROM users WHERE id = $1`,
     [userId]
@@ -114,10 +171,10 @@ async function loadUser(userId, client = null) {
   return result.rows[0] || null;
 }
 
-async function findUserByExternalId(providerId, externalId, client = null) {
+export async function findUserByExternalId(providerId: string, externalId: string, client: PoolClient | null = null): Promise<UserRow | null> {
   if (!providerId || !externalId) return null;
-  const exec = client || appDb;
-  const result = await exec.query(
+  const exec = (client || appDb) as typeof appDb;
+  const result = await exec.query<UserRow>(
     `SELECT u.id, u.email, u.password_hash, u.display_name, u.is_active, u.last_login_at, u.created_at, u.updated_at
        FROM linked_identities li
        JOIN users u ON u.id = li.user_id
@@ -127,10 +184,15 @@ async function findUserByExternalId(providerId, externalId, client = null) {
   return result.rows[0] || null;
 }
 
-async function listUsers({ providerId, filter, startIndex = 1, count = 100 }) {
+export async function listUsers({ providerId, filter, startIndex = 1, count = 100 }: {
+  providerId: string;
+  filter?: string;
+  startIndex?: number;
+  count?: number;
+}): Promise<Record<string, unknown>> {
   const limit = Math.max(1, Math.min(Number(count) || 100, 200));
   const offset = Math.max(0, (Number(startIndex) || 1) - 1);
-  const params = [providerId];
+  const params: unknown[] = [providerId];
   let where = "li.provider_id = $1";
   if (filter && typeof filter === "string") {
     // Minimal filter support: `userName eq "x"` or `externalId eq "x"`.
@@ -147,7 +209,7 @@ async function listUsers({ providerId, filter, startIndex = 1, count = 100 }) {
       }
     }
   }
-  const totalResult = await appDb.query(
+  const totalResult = await appDb.query<{ total: number }>(
     `SELECT COUNT(*)::int AS total
        FROM linked_identities li
        JOIN users u ON u.id = li.user_id
@@ -156,7 +218,7 @@ async function listUsers({ providerId, filter, startIndex = 1, count = 100 }) {
   );
   params.push(limit);
   params.push(offset);
-  const listResult = await appDb.query(
+  const listResult = await appDb.query<UserRow & { external_id: string }>(
     `SELECT u.id, u.email, u.display_name, u.is_active, u.created_at, u.updated_at,
             li.subject AS external_id
        FROM linked_identities li
@@ -175,12 +237,12 @@ async function listUsers({ providerId, filter, startIndex = 1, count = 100 }) {
   };
 }
 
-async function getUser({ providerId, userId }) {
+export async function getUser({ providerId, userId }: { providerId: string; userId: string }): Promise<ServiceResponse> {
   const user = await loadUser(userId);
   if (!user) return scimError(404, "user not found");
   // Optional: enforce provider linkage so a SCIM token from IdP A can't
   // read users only linked to IdP B.
-  const linkResult = await appDb.query(
+  const linkResult = await appDb.query<{ subject: string }>(
     `SELECT subject FROM linked_identities WHERE provider_id = $1 AND user_id = $2`,
     [providerId, userId]
   );
@@ -190,7 +252,7 @@ async function getUser({ providerId, userId }) {
   return { statusCode: 200, body: userToScim(user, linkResult.rows[0].subject) };
 }
 
-async function createUser({ providerId, body, actorUserId = null, ipAddress = null, userAgent = null }) {
+export async function createUser({ providerId, body, actorUserId = null, ipAddress = null, userAgent = null }: ScimContextArgs): Promise<ServiceResponse> {
   const email = resourceEmail(body);
   const externalId = resourceExternalId(body);
   if (!email) {
@@ -214,20 +276,20 @@ async function createUser({ providerId, body, actorUserId = null, ipAddress = nu
   }
 
   try {
-    const created = await appDb.withTransaction(async (client) => {
+    const created = await appDb.withTransaction(async (client: PoolClient) => {
       // Re-use an existing local user if the email already exists; otherwise
       // create one. This matches the AUTH-012 auto-link policy spirit but is
       // unconditional for SCIM (the IdP has explicit administrative
       // authority over user lifecycle, so collisions resolve as "link").
-      const existingByEmail = await client.query(
+      const existingByEmail = await client.query<UserRow>(
         `SELECT id, email, password_hash, display_name, is_active,
                 last_login_at, created_at, updated_at
            FROM users WHERE lower(email) = $1`,
         [normalizedEmail]
       );
-      let user = existingByEmail.rows[0];
+      let user: UserRow = existingByEmail.rows[0];
       if (!user) {
-        const insertResult = await client.query(
+        const insertResult = await client.query<UserRow>(
           `INSERT INTO users (email, password_hash, display_name, is_active)
            VALUES ($1, NULL, $2, $3)
            RETURNING id, email, password_hash, display_name, is_active,
@@ -242,7 +304,7 @@ async function createUser({ providerId, body, actorUserId = null, ipAddress = nu
           details: { email: user.email, source: "scim", provider_id: providerId }
         });
       } else if (active !== user.is_active || (displayName && displayName !== user.display_name)) {
-        const next = await client.query(
+        const next = await client.query<UserRow>(
           `UPDATE users SET is_active = $2, display_name = COALESCE($3, display_name), updated_at = NOW()
             WHERE id = $1
             RETURNING id, email, password_hash, display_name, is_active,
@@ -272,14 +334,17 @@ async function createUser({ providerId, body, actorUserId = null, ipAddress = nu
       .catch(() => {});
     return { statusCode: 201, body: userToScim(created, externalId) };
   } catch (err) {
-    if (err && err.code === "23505") {
+    if (err && (err as { code?: string }).code === "23505") {
       return scimError(409, "duplicate user", "uniqueness");
     }
     throw err;
   }
 }
 
-async function replaceUser({ providerId, userId, body, actorUserId = null, ipAddress = null, userAgent = null }) {
+export async function replaceUser(
+  { providerId, userId, body, actorUserId = null, ipAddress = null, userAgent = null }:
+  ScimContextArgs & { userId: string }
+): Promise<ServiceResponse> {
   const existing = await findUserByExternalIdOrUserId(providerId, userId);
   if (!existing) return scimError(404, "user not found for this provider");
 
@@ -289,7 +354,7 @@ async function replaceUser({ providerId, userId, body, actorUserId = null, ipAdd
   const displayName = resourceDisplayName(body);
   const active = resourceActive(body, existing.is_active);
 
-  const result = await appDb.query(
+  const result = await appDb.query<UserRow>(
     `UPDATE users
         SET email = $2,
             display_name = $3,
@@ -313,7 +378,7 @@ async function replaceUser({ providerId, userId, body, actorUserId = null, ipAdd
       userAgent
     })
     .catch(() => {});
-  const link = await appDb.query(
+  const link = await appDb.query<{ subject: string }>(
     `SELECT subject FROM linked_identities WHERE provider_id = $1 AND user_id = $2`,
     [providerId, updated.id]
   );
@@ -323,7 +388,10 @@ async function replaceUser({ providerId, userId, body, actorUserId = null, ipAdd
 // PATCH with the SCIM 2.0 PatchOp model. We support the minimum the major
 // IdPs use in practice: replace operations on `active`, `userName`,
 // `displayName`, and `emails`. Anything else is silently ignored.
-async function patchUser({ providerId, userId, body, actorUserId = null, ipAddress = null, userAgent = null }) {
+export async function patchUser(
+  { providerId, userId, body, actorUserId = null, ipAddress = null, userAgent = null }:
+  Omit<ScimContextArgs, "body"> & { userId: string; body?: ScimPatchBody }
+): Promise<ServiceResponse> {
   const existing = await findUserByExternalIdOrUserId(providerId, userId);
   if (!existing) return scimError(404, "user not found for this provider");
   if (!body || !Array.isArray(body.Operations)) {
@@ -341,26 +409,27 @@ async function patchUser({ providerId, userId, body, actorUserId = null, ipAddre
     if (!op || typeof op.op !== "string") continue;
     const opName = op.op.toLowerCase();
     if (opName !== "replace" && opName !== "add") continue; // remove unsupported in MVP
-    if (op.path === "active" || (op.value && Object.prototype.hasOwnProperty.call(op.value, "active"))) {
-      const next = op.path === "active" ? op.value : op.value.active;
+    const opVal = op.value as Record<string, unknown> | undefined;
+    if (op.path === "active" || (opVal && Object.prototype.hasOwnProperty.call(opVal, "active"))) {
+      const next = op.path === "active" ? op.value : opVal!.active;
       if (typeof next === "boolean") active = next;
     }
-    if (op.path === "userName" || (op.value && Object.prototype.hasOwnProperty.call(op.value, "userName"))) {
-      const next = op.path === "userName" ? op.value : op.value.userName;
+    if (op.path === "userName" || (opVal && Object.prototype.hasOwnProperty.call(opVal, "userName"))) {
+      const next = op.path === "userName" ? op.value : opVal!.userName;
       if (typeof next === "string") email = next;
     }
-    if (op.path === "displayName" || (op.value && Object.prototype.hasOwnProperty.call(op.value, "displayName"))) {
-      const next = op.path === "displayName" ? op.value : op.value.displayName;
+    if (op.path === "displayName" || (opVal && Object.prototype.hasOwnProperty.call(opVal, "displayName"))) {
+      const next = op.path === "displayName" ? op.value : opVal!.displayName;
       if (typeof next === "string") displayName = next.trim() || null;
     }
-    if (op.value && Array.isArray(op.value.emails)) {
-      const picked = pickPrimaryEmail(op.value.emails);
+    if (opVal && Array.isArray(opVal.emails)) {
+      const picked = pickPrimaryEmail(opVal.emails as ScimEmail[]);
       if (picked) email = picked;
     }
   }
   const normalized = authService.normalizeEmail(email);
   if (!normalized) return scimError(400, `'${email}' is not a valid email address`, "invalidValue");
-  const result = await appDb.query(
+  const result = await appDb.query<UserRow>(
     `UPDATE users
         SET email = $2,
             display_name = $3,
@@ -384,14 +453,17 @@ async function patchUser({ providerId, userId, body, actorUserId = null, ipAddre
       userAgent
     })
     .catch(() => {});
-  const link = await appDb.query(
+  const link = await appDb.query<{ subject: string }>(
     `SELECT subject FROM linked_identities WHERE provider_id = $1 AND user_id = $2`,
     [providerId, updated.id]
   );
   return { statusCode: 200, body: userToScim(updated, link.rows[0] && link.rows[0].subject) };
 }
 
-async function deleteUser({ providerId, userId, actorUserId = null, ipAddress = null, userAgent = null }) {
+export async function deleteUser(
+  { providerId, userId, actorUserId = null, ipAddress = null, userAgent = null }:
+  Omit<ScimContextArgs, "body"> & { userId: string }
+): Promise<ServiceResponse> {
   const existing = await findUserByExternalIdOrUserId(providerId, userId);
   if (!existing) return scimError(404, "user not found for this provider");
   await appDb.query(
@@ -415,33 +487,17 @@ async function deleteUser({ providerId, userId, actorUserId = null, ipAddress = 
   return { statusCode: 204, body: null };
 }
 
-async function findUserByExternalIdOrUserId(providerId, id) {
+export async function findUserByExternalIdOrUserId(providerId: string, id: string): Promise<UserRow | null> {
   // SCIM resource IDs in our world are our `users.id` (UUID). But some IdPs
   // address by externalId; tolerate both lookups.
-  const byId = await appDb.query(
+  const byId = await appDb.query<UserRow>(
     `SELECT u.id, u.email, u.display_name, u.is_active, u.created_at, u.updated_at
        FROM users u
        JOIN linked_identities li ON li.user_id = u.id
       WHERE u.id = $1 AND li.provider_id = $2`,
     [id, providerId]
   );
-  if (byId.rowCount > 0) return byId.rows[0];
+  if ((byId.rowCount ?? 0) > 0) return byId.rows[0];
   const byExternal = await findUserByExternalId(providerId, id);
   return byExternal || null;
 }
-
-module.exports = {
-  SCIM_USER_SCHEMA,
-  SCIM_LIST_RESPONSE_SCHEMA,
-  SCIM_ERROR_SCHEMA,
-  scimError,
-  userToScim,
-  listUsers,
-  getUser,
-  createUser,
-  replaceUser,
-  patchUser,
-  deleteUser,
-  findUserByExternalId,
-  findUserByExternalIdOrUserId
-};

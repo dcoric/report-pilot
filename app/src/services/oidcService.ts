@@ -8,10 +8,54 @@
 // pulls claims from id_token + userinfo, and returns the email + display name
 // the route handler matches against the local users table.
 
-let oidcClient = null;
-function getOidcClient() {
+export interface OidcProvider {
+  id: string;
+  enabled: boolean;
+  issuer: string;
+  client_id: string;
+  client_secret?: string | null;
+  redirect_uri: string;
+  scopes?: string[] | null;
+  claims_mapping?: { email?: string; display_name?: string } | null;
+}
+
+export interface FlowState {
+  provider_id: string;
+  state: string;
+  nonce: string;
+  code_verifier: string;
+}
+
+export interface StartLoginResult {
+  authorizeUrl: string;
+  flowState: FlowState;
+}
+
+export interface CompleteLoginResult {
+  email: string;
+  display_name: string | null;
+  sub: string | null;
+  issuer: string;
+  claims: Record<string, unknown>;
+}
+
+export interface TestConnectionResult {
+  ok: boolean;
+  error?: string;
+  issuer?: string;
+  authorization_endpoint?: string | null;
+  token_endpoint?: string | null;
+  userinfo_endpoint?: string | null;
+  jwks_uri?: string | null;
+  id_token_signing_alg_values_supported?: string[];
+  code_challenge_methods_supported?: string[];
+  response_types_supported?: string[];
+}
+
+let oidcClient: Promise<typeof import("openid-client")> | null = null;
+function getOidcClient(): Promise<typeof import("openid-client")> {
   if (!oidcClient) {
-    // openid-client v6 is ESM-only. Require dynamic import so this module can
+    // openid-client v6 is ESM-only. Use dynamic import so this module can
     // be `require`'d normally in the rest of the codebase.
     oidcClient = import("openid-client");
   }
@@ -21,11 +65,11 @@ function getOidcClient() {
 const DEFAULT_CLAIM_EMAIL = "email";
 const DEFAULT_CLAIM_DISPLAY_NAME = "name";
 
-function emailClaimFor(provider) {
+function emailClaimFor(provider: OidcProvider): string {
   return (provider.claims_mapping && provider.claims_mapping.email) || DEFAULT_CLAIM_EMAIL;
 }
 
-function displayNameClaimFor(provider) {
+function displayNameClaimFor(provider: OidcProvider): string {
   return (provider.claims_mapping && provider.claims_mapping.display_name) || DEFAULT_CLAIM_DISPLAY_NAME;
 }
 
@@ -34,7 +78,7 @@ function displayNameClaimFor(provider) {
 // 60s is the openid-client recommended default for production deployments
 // and matches what every major IdP documents. Configurable so deployments
 // with stricter requirements can dial it down.
-function getClockToleranceSeconds() {
+function getClockToleranceSeconds(): number {
   const raw = Number(process.env.AUTH_OIDC_CLOCK_TOLERANCE_SECONDS);
   if (Number.isFinite(raw) && raw >= 0 && raw <= 600) {
     return Math.floor(raw);
@@ -42,28 +86,38 @@ function getClockToleranceSeconds() {
   return 60;
 }
 
-async function buildConfiguration(provider) {
+async function buildConfiguration(provider: OidcProvider): Promise<unknown> {
   const client = await getOidcClient();
   const issuerUrl = new URL(provider.issuer);
   // openid-client v6 rejects http:// issuers by default. Allow them for
   // localhost / dev / tests; production should be https anyway.
   const allowHttp = issuerUrl.protocol === "http:";
-  const options = allowHttp ? { execute: [client.allowInsecureRequests] } : undefined;
+  const options = allowHttp ? { execute: [(client as Record<string, unknown>).allowInsecureRequests] } : undefined;
   // Metadata object carries the clientSecret (when present) and the
   // clock-skew tolerance. openid-client treats clockTolerance as a Symbol
   // key on the metadata object.
-  const metadata = { [client.clockTolerance]: getClockToleranceSeconds() };
+  const clockToleranceKey = (client as { clockTolerance: symbol }).clockTolerance;
+  const metadata: Record<string | symbol, unknown> = {
+    [clockToleranceKey]: getClockToleranceSeconds()
+  };
   if (provider.client_secret) {
     metadata.client_secret = provider.client_secret;
   }
-  return client.discovery(issuerUrl, provider.client_id, metadata, undefined, options);
+  return (client as { discovery: (issuer: URL, clientId: string, metadata: unknown, jwks: unknown, options: unknown) => Promise<unknown> })
+    .discovery(issuerUrl, provider.client_id, metadata, undefined, options);
 }
 
-async function startLogin(provider) {
+export async function startLogin(provider: OidcProvider): Promise<StartLoginResult> {
   if (!provider || !provider.enabled) {
     throw Object.assign(new Error("provider is disabled or not found"), { statusCode: 404 });
   }
-  const client = await getOidcClient();
+  const client = await getOidcClient() as Record<string, unknown> & {
+    randomState: () => string;
+    randomNonce: () => string;
+    randomPKCECodeVerifier: () => string;
+    calculatePKCECodeChallenge: (verifier: string) => Promise<string>;
+    buildAuthorizationUrl: (config: unknown, opts: Record<string, unknown>) => URL;
+  };
   const config = await buildConfiguration(provider);
 
   const state = client.randomState();
@@ -91,7 +145,7 @@ async function startLogin(provider) {
   };
 }
 
-async function completeLogin(provider, currentUrl, flowState) {
+export async function completeLogin(provider: OidcProvider, currentUrl: string, flowState: FlowState | null | undefined): Promise<CompleteLoginResult> {
   if (!provider) {
     throw Object.assign(new Error("provider not found"), { statusCode: 404 });
   }
@@ -99,10 +153,16 @@ async function completeLogin(provider, currentUrl, flowState) {
     throw Object.assign(new Error("invalid flow state"), { statusCode: 400 });
   }
 
-  const client = await getOidcClient();
+  const client = await getOidcClient() as Record<string, unknown> & {
+    authorizationCodeGrant: (config: unknown, url: URL, opts: Record<string, unknown>) => Promise<{
+      claims?: () => Record<string, unknown> | null;
+      access_token: string;
+    }>;
+    fetchUserInfo: (config: unknown, accessToken: string, sub: string | undefined) => Promise<Record<string, unknown>>;
+  };
   const config = await buildConfiguration(provider);
 
-  let tokens;
+  let tokens: Awaited<ReturnType<typeof client.authorizationCodeGrant>>;
   try {
     tokens = await client.authorizationCodeGrant(
       config,
@@ -114,16 +174,16 @@ async function completeLogin(provider, currentUrl, flowState) {
       }
     );
   } catch (err) {
-    throw Object.assign(new Error(`OIDC token exchange failed: ${err.message}`), { statusCode: 400, cause: err });
+    throw Object.assign(new Error(`OIDC token exchange failed: ${(err as Error).message}`), { statusCode: 400, cause: err });
   }
 
   const claims = tokens.claims ? tokens.claims() : null;
-  let merged = { ...(claims || {}) };
+  let merged: Record<string, unknown> = { ...(claims || {}) };
 
   // Some IdPs only include email in the userinfo endpoint.
   if (!merged[emailClaimFor(provider)]) {
     try {
-      const userinfo = await client.fetchUserInfo(config, tokens.access_token, claims ? claims.sub : undefined);
+      const userinfo = await client.fetchUserInfo(config, tokens.access_token, claims ? (claims.sub as string | undefined) : undefined);
       merged = { ...merged, ...userinfo };
     } catch {
       // userinfo failure is non-fatal; we'll surface the missing-email error below.
@@ -142,8 +202,8 @@ async function completeLogin(provider, currentUrl, flowState) {
   return {
     email: email.trim().toLowerCase(),
     display_name: typeof displayName === "string" && displayName.trim() ? displayName.trim() : null,
-    sub: merged.sub || null,
-    issuer: merged.iss || provider.issuer,
+    sub: (merged.sub as string | undefined) || null,
+    issuer: (merged.iss as string | undefined) || provider.issuer,
     claims: merged
   };
 }
@@ -152,39 +212,32 @@ async function completeLogin(provider, currentUrl, flowState) {
 // fetches `.well-known/openid-configuration` and the JWKS) and returns a
 // success/error summary the admin UI can show. We do not actually try to
 // authenticate.
-async function testConnection(provider) {
+export async function testConnection(provider: OidcProvider | null | undefined): Promise<TestConnectionResult> {
   if (!provider) {
     return { ok: false, error: "provider not found" };
   }
   try {
-    const client = await getOidcClient();
-    const config = await buildConfiguration(provider);
+    await getOidcClient();
+    const config = await buildConfiguration(provider) as { serverMetadata: () => Record<string, unknown> };
     const metadata = config.serverMetadata();
     return {
       ok: true,
-      issuer: metadata.issuer || provider.issuer,
-      authorization_endpoint: metadata.authorization_endpoint || null,
-      token_endpoint: metadata.token_endpoint || null,
-      userinfo_endpoint: metadata.userinfo_endpoint || null,
-      jwks_uri: metadata.jwks_uri || null,
-      id_token_signing_alg_values_supported: metadata.id_token_signing_alg_values_supported || [],
-      code_challenge_methods_supported: metadata.code_challenge_methods_supported || [],
+      issuer: (metadata.issuer as string) || provider.issuer,
+      authorization_endpoint: (metadata.authorization_endpoint as string | null) || null,
+      token_endpoint: (metadata.token_endpoint as string | null) || null,
+      userinfo_endpoint: (metadata.userinfo_endpoint as string | null) || null,
+      jwks_uri: (metadata.jwks_uri as string | null) || null,
+      id_token_signing_alg_values_supported: (metadata.id_token_signing_alg_values_supported as string[]) || [],
+      code_challenge_methods_supported: (metadata.code_challenge_methods_supported as string[]) || [],
       // Surface a name-only summary of what the IdP advertises so the UI can
       // sanity-check scope/response_type configuration without sending the
       // entire blob through.
-      response_types_supported: metadata.response_types_supported || []
+      response_types_supported: (metadata.response_types_supported as string[]) || []
     };
-    // eslint-disable-next-line no-unreachable
   } catch (err) {
     return {
       ok: false,
-      error: err && err.message ? err.message : String(err)
+      error: err && (err as Error).message ? (err as Error).message : String(err)
     };
   }
 }
-
-module.exports = {
-  startLogin,
-  completeLogin,
-  testConnection
-};

@@ -11,23 +11,70 @@
 //     for refusals. `code` is stable for tests / clients; the status the
 //     route should send is in `status`; `message` is human-readable.
 
-const appDb = require("../lib/appDb");
-const authService = require("../services/authService");
-const auditService = require("../services/auditService");
-const linkedIdentityService = require("./linkedIdentityService");
-const roleService = require("./roleService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import authService = require("./authService");
+import auditService = require("./auditService");
+import linkedIdentityService = require("./linkedIdentityService");
+import roleService = require("./roleService");
 
-function loadUserById(id, exec = appDb) {
-  return exec
-    .query(
-      `SELECT id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at
-         FROM users WHERE id = $1`,
-      [id]
-    )
-    .then((r) => r.rows[0] || null);
+export interface ExternalProvider {
+  id: string;
+  name: string;
+  require_email_verified?: boolean;
+  auto_link_by_email?: boolean;
+  jit_enabled?: boolean;
+  jit_allowed_domains?: unknown[];
+  jit_default_role?: string;
 }
 
-function rowToUser(row) {
+export interface ExternalPrincipal {
+  email: string;
+  sub?: string | null;
+  display_name?: string | null;
+  claims?: Record<string, unknown> | null;
+}
+
+export interface ExternalLoginContext {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+export type ExternalLoginResult =
+  | { ok: true; user: PublicUser; mode: "linked_by_sub" | "linked_by_email" | "provisioned" }
+  | { ok: false; code: string; status: number; message: string };
+
+interface UserRow {
+  id: string;
+  email: string;
+  password_hash?: string | null;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+export interface PublicUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+async function loadUserById(id: string, exec: typeof appDb = appDb): Promise<UserRow | null> {
+  const r = await exec.query<UserRow>(
+    `SELECT id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at
+       FROM users WHERE id = $1`,
+    [id]
+  );
+  return r.rows[0] || null;
+}
+
+function rowToUser(row: UserRow | null | undefined): PublicUser | null {
   if (!row) return null;
   return {
     id: row.id,
@@ -40,21 +87,28 @@ function rowToUser(row) {
   };
 }
 
-function emailDomain(email) {
+function emailDomain(email: unknown): string | null {
   if (typeof email !== "string") return null;
   const at = email.lastIndexOf("@");
   if (at < 0) return null;
   return email.slice(at + 1).toLowerCase();
 }
 
-function domainAllowed(email, allowedDomains) {
+function domainAllowed(email: string, allowedDomains: unknown[] | undefined): boolean {
   if (!Array.isArray(allowedDomains) || allowedDomains.length === 0) return true;
   const domain = emailDomain(email);
   if (!domain) return false;
   return allowedDomains.some((d) => String(d).toLowerCase() === domain);
 }
 
-async function recordAuditLinkRejected({ provider, principal, reason, context }) {
+interface AuditLinkRejectedArgs {
+  provider: ExternalProvider;
+  principal: ExternalPrincipal;
+  reason: string;
+  context: ExternalLoginContext;
+}
+
+async function recordAuditLinkRejected({ provider, principal, reason, context }: AuditLinkRejectedArgs): Promise<void> {
   await auditService
     .writeEvent({
       actorEmail: principal.email,
@@ -72,7 +126,11 @@ async function recordAuditLinkRejected({ provider, principal, reason, context })
     .catch(() => {});
 }
 
-async function resolveExternalLogin(provider, principal, context = {}) {
+export async function resolveExternalLogin(
+  provider: ExternalProvider | null | undefined,
+  principal: ExternalPrincipal | null | undefined,
+  context: ExternalLoginContext = {}
+): Promise<ExternalLoginResult> {
   if (!provider) {
     return { ok: false, code: "no_provider", status: 404, message: "auth provider not found" };
   }
@@ -97,7 +155,7 @@ async function resolveExternalLogin(provider, principal, context = {}) {
       };
     }
     await linkedIdentityService.touchLastSeen(existing.id).catch(() => {});
-    return { ok: true, user: rowToUser(userRow), mode: "linked_by_sub" };
+    return { ok: true, user: rowToUser(userRow) as PublicUser, mode: "linked_by_sub" };
   }
 
   // AUTH-015: when the IdP exposes an `email_verified` claim and it's
@@ -162,7 +220,7 @@ async function resolveExternalLogin(provider, principal, context = {}) {
         email: principal.email
       });
     } catch (err) {
-      if (err && err.code === "23505") {
+      if (err && (err as { code?: string }).code === "23505") {
         await recordAuditLinkRejected({
           provider, principal, reason: "subject_owned_by_another_user", context
         });
@@ -192,7 +250,7 @@ async function resolveExternalLogin(provider, principal, context = {}) {
         userAgent: context.userAgent
       })
       .catch(() => {});
-    return { ok: true, user: rowToUser(userByEmail), mode: "linked_by_email" };
+    return { ok: true, user: rowToUser(userByEmail as UserRow) as PublicUser, mode: "linked_by_email" };
   }
 
   // 3) No local user, no link — JIT path.
@@ -245,13 +303,13 @@ async function resolveExternalLogin(provider, principal, context = {}) {
   // Atomically create the user, attach the requested role, and record the
   // external identity. If any step trips a unique violation we surface it as
   // a conflict instead of a 500.
-  let created;
+  let created: UserRow;
   try {
-    created = await appDb.withTransaction(async (client) => {
+    created = await appDb.withTransaction(async (client: PoolClient) => {
       const trimmedDisplayName = typeof principal.display_name === "string" && principal.display_name.trim()
         ? principal.display_name.trim()
         : null;
-      const userInsert = await client.query(
+      const userInsert = await client.query<UserRow>(
         `INSERT INTO users (email, password_hash, display_name)
          VALUES ($1, NULL, $2)
          RETURNING id, email, display_name, is_active, last_login_at, created_at, updated_at`,
@@ -281,14 +339,15 @@ async function resolveExternalLogin(provider, principal, context = {}) {
       return user;
     });
   } catch (err) {
-    if (err && err.code === "23505") {
+    const e = err as { code?: string };
+    if (e && e.code === "23505") {
       // Race: another OIDC callback for the same email or subject committed
       // first. Re-resolve from scratch — the caller will get whatever the
       // committed state now is (most likely a linked_by_email or
       // linked_by_sub return).
       return resolveExternalLogin(provider, principal, context);
     }
-    if (err && err.code === "unknown_role") {
+    if (e && e.code === "unknown_role") {
       return {
         ok: false,
         code: "unknown_default_role",
@@ -335,9 +394,5 @@ async function resolveExternalLogin(provider, principal, context = {}) {
     })
     .catch(() => {});
 
-  return { ok: true, user: rowToUser(created), mode: "provisioned" };
+  return { ok: true, user: rowToUser(created) as PublicUser, mode: "provisioned" };
 }
-
-module.exports = {
-  resolveExternalLogin
-};
