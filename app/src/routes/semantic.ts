@@ -1,13 +1,35 @@
 import appDb = require("../lib/appDb");
-import { json, badRequest, readJsonBody } from "../lib/http";
+import { json, badRequest, readJsonBody, type RouteHandler } from "../lib/http";
 import { ENTITY_TYPES } from "../lib/constants";
 import ragService = require("../services/ragService");
 import { enforceDataSourceAccess } from "../lib/authGate";
-import type { ServerResponse } from "http";
-import type { AuthedRequest } from "../lib/authGate";
+import type {
+  SemanticEntityRequest,
+  MetricDefinitionRequest,
+  JoinPolicyRequest
+} from "../types";
 
-async function handleUpsertSemanticEntity(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as any;
+// `owner`, `active`, `filters_json`, `notes` are accepted by the routes but
+// aren't yet declared on the OpenAPI request schemas. Until the spec is
+// updated, the routes describe them locally.
+type SemanticEntityUpsert = Partial<SemanticEntityRequest> & {
+  id?: string;
+  owner?: string | null;
+  active?: boolean | null;
+};
+
+type MetricDefinitionUpsert = Partial<MetricDefinitionRequest> & {
+  id?: string;
+  filters_json?: Record<string, unknown> | null;
+};
+
+type JoinPolicyUpsert = Partial<JoinPolicyRequest> & {
+  id?: string;
+  notes?: string | null;
+};
+
+const handleUpsertSemanticEntity: RouteHandler<SemanticEntityRequest> = async (req, res) => {
+  const body = await readJsonBody<SemanticEntityUpsert>(req);
   const {
     id,
     data_source_id: dataSourceId,
@@ -74,10 +96,10 @@ async function handleUpsertSemanticEntity(req: AuthedRequest, res: ServerRespons
 
   ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
-}
+};
 
-async function handleUpsertMetricDefinition(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as any;
+const handleUpsertMetricDefinition: RouteHandler<MetricDefinitionRequest> = async (req, res) => {
+  const body = await readJsonBody<MetricDefinitionUpsert>(req);
   const { id, semantic_entity_id: semanticEntityId, sql_expression: sqlExpression, grain, filters_json: filtersJson } = body;
 
   if (!semanticEntityId || !sqlExpression) {
@@ -145,10 +167,10 @@ async function handleUpsertMetricDefinition(req: AuthedRequest, res: ServerRespo
 
   ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
-}
+};
 
-async function handleUpsertJoinPolicy(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as any;
+const handleUpsertJoinPolicy: RouteHandler<JoinPolicyRequest> = async (req, res) => {
+  const body = await readJsonBody<JoinPolicyUpsert>(req);
   const {
     id,
     data_source_id: dataSourceId,
@@ -210,7 +232,7 @@ async function handleUpsertJoinPolicy(req: AuthedRequest, res: ServerResponse): 
 
   ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
-}
+};
 
 export {
   handleUpsertSemanticEntity,

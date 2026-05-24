@@ -1,14 +1,20 @@
 import appDb = require("../lib/appDb");
-import { json, badRequest, readJsonBody } from "../lib/http";
+import {
+  json,
+  badRequest,
+  readJsonBody,
+  errorMessage,
+  type RouteHandler,
+  type RouteHandlerWithId
+} from "../lib/http";
 import { isSupportedDbType } from "../adapters/dbAdapterFactory";
 import { runIntrospection, persistSnapshot, IntrospectionDataSource } from "../services/introspectionService";
 import { parseSchemaFromDdl } from "../services/ddlImportService";
 import ragService = require("../services/ragService");
 import { enforceDataSourceAccess, listAccessibleDataSourceIds } from "../lib/authGate";
-import type { ServerResponse } from "http";
-import type { AuthedRequest } from "../lib/authGate";
+import type { CreateDataSourceRequest, ImportSchemaRequest } from "../types";
 
-async function runIntrospectionJob(jobId: string, dataSource: IntrospectionDataSource) {
+async function runIntrospectionJob(jobId: string, dataSource: IntrospectionDataSource): Promise<void> {
   try {
     await appDb.query(
       `
@@ -31,20 +37,21 @@ async function runIntrospectionJob(jobId: string, dataSource: IntrospectionDataS
       [jobId]
     );
   } catch (err) {
+    const message = errorMessage(err);
     await appDb.query(
       `
         UPDATE introspection_jobs
         SET status = 'failed', error_message = $2, updated_at = NOW()
         WHERE id = $1
       `,
-      [jobId, (err as Error).message]
+      [jobId, message]
     );
-    console.error(`[introspection] Job ${jobId} failed: ${(err as Error).message}`);
+    console.error(`[introspection] Job ${jobId} failed: ${message}`);
   }
 }
 
-async function handleCreateDataSource(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as any;
+const handleCreateDataSource: RouteHandler<CreateDataSourceRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<CreateDataSourceRequest>>(req);
   const { name, db_type: dbType, connection_ref: connectionRef } = body;
   const normalizedDbType = String(dbType || "").trim().toLowerCase();
 
@@ -66,9 +73,9 @@ async function handleCreateDataSource(req: AuthedRequest, res: ServerResponse): 
   );
 
   return json(res, 201, result.rows[0]);
-}
+};
 
-async function handleListDataSources(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleListDataSources: RouteHandler = async (req, res) => {
   const accessible = await listAccessibleDataSourceIds(req);
   let result;
   if (accessible === null) {
@@ -93,9 +100,9 @@ async function handleListDataSources(req: AuthedRequest, res: ServerResponse): P
     );
   }
   return json(res, 200, { items: result.rows });
-}
+};
 
-async function handleDeleteDataSource(_req: AuthedRequest, res: ServerResponse, dataSourceId: string): Promise<void> {
+const handleDeleteDataSource: RouteHandlerWithId = async (_req, res, dataSourceId) => {
   const result = await appDb.query(
     "DELETE FROM data_sources WHERE id = $1 RETURNING id",
     [dataSourceId]
@@ -106,14 +113,14 @@ async function handleDeleteDataSource(_req: AuthedRequest, res: ServerResponse, 
   }
 
   return json(res, 200, { ok: true, id: dataSourceId });
-}
+};
 
-async function handleIntrospect(req: AuthedRequest, res: ServerResponse, dataSourceId: string): Promise<void> {
-  const result = await appDb.query(
+const handleIntrospect: RouteHandlerWithId = async (req, res, dataSourceId) => {
+  const result = await appDb.query<IntrospectionDataSource>(
     "SELECT id, db_type, connection_ref FROM data_sources WHERE id = $1",
     [dataSourceId]
   );
-  const dataSource = result.rows[0] as IntrospectionDataSource;
+  const dataSource = result.rows[0];
   if (!dataSource) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
   }
@@ -137,16 +144,16 @@ async function handleIntrospect(req: AuthedRequest, res: ServerResponse, dataSou
   const jobId = jobInsert.rows[0].id;
 
   setImmediate(() => {
-    runIntrospectionJob(jobId, dataSource).catch((err: Error) => {
-      console.error(`[introspection] Unexpected error for job ${jobId}: ${err.message}`);
+    runIntrospectionJob(jobId, dataSource).catch((err: unknown) => {
+      console.error(`[introspection] Unexpected error for job ${jobId}: ${errorMessage(err)}`);
     });
   });
 
   return json(res, 202, { job_id: jobId, status: "queued" });
-}
+};
 
-async function handleImportSchema(req: AuthedRequest, res: ServerResponse, dataSourceId: string): Promise<void> {
-  const result = await appDb.query(
+const handleImportSchema: RouteHandlerWithId<ImportSchemaRequest> = async (req, res, dataSourceId) => {
+  const result = await appDb.query<{ id: string; db_type: string }>(
     "SELECT id, db_type FROM data_sources WHERE id = $1",
     [dataSourceId]
   );
@@ -159,7 +166,7 @@ async function handleImportSchema(req: AuthedRequest, res: ServerResponse, dataS
     return undefined;
   }
 
-  const body = await readJsonBody(req) as any;
+  const body = await readJsonBody<Partial<ImportSchemaRequest>>(req);
   const ddl = String(body.ddl || "").trim();
   if (!ddl) {
     return badRequest(res, "ddl field is required and must be a non-empty string");
@@ -171,12 +178,12 @@ async function handleImportSchema(req: AuthedRequest, res: ServerResponse, dataS
   }
 
   await persistSnapshot(dataSourceId, snapshot);
-  ragService.reindexRagDocuments(dataSourceId).catch((err: Error) => {
-    console.error(`[import-schema] RAG reindex failed for ${dataSourceId}: ${err.message}`);
+  ragService.reindexRagDocuments(dataSourceId).catch((err: unknown) => {
+    console.error(`[import-schema] RAG reindex failed for ${dataSourceId}: ${errorMessage(err)}`);
   });
 
   return json(res, 200, { ok: true, object_count: snapshot.objects.length });
-}
+};
 
 export {
   handleCreateDataSource,

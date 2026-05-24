@@ -1,15 +1,17 @@
 import type { ServerResponse } from "http";
-import type { AuthedRequest } from "../lib/authGate";
-import { json, readJsonBody, badRequest } from "../lib/http";
+import { json, readJsonBody, badRequest, type RouteHandler } from "../lib/http";
 import {
   buildSessionCookie,
   buildClearSessionCookie,
   readSessionToken
 } from "../lib/sessionCookie";
 import * as authService from "../services/authService";
+import type { PublicAuthUser } from "../services/authService";
 import * as auditService from "../services/auditService";
 import * as loginLockoutService from "../services/loginLockoutService";
 import * as roleService from "../services/roleService";
+import type { AuthedRequest } from "../lib/authGate";
+import type { AuthUser, AuthMeResponse, LoginRequest } from "../types";
 
 function clientAddress(req: AuthedRequest): string | null {
   const forwarded = req.headers["x-forwarded-for"];
@@ -22,7 +24,12 @@ function clientAddress(req: AuthedRequest): string | null {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null;
 }
 
-function publicUser(user: any, { roles = [], permissions = [] } = {}) {
+interface Authorization {
+  roles: string[];
+  permissions: string[];
+}
+
+function publicUser(user: PublicAuthUser | null | undefined, { roles = [], permissions = [] }: Partial<Authorization> = {}): AuthUser | null {
   if (!user) {
     return null;
   }
@@ -31,14 +38,14 @@ function publicUser(user: any, { roles = [], permissions = [] } = {}) {
     email: user.email,
     display_name: user.display_name,
     is_active: user.is_active,
-    last_login_at: user.last_login_at,
-    created_at: user.created_at,
+    last_login_at: user.last_login_at as string | null,
+    created_at: user.created_at as string,
     roles,
     permissions
   };
 }
 
-async function loadAuthorization(userId: string) {
+async function loadAuthorization(userId: string): Promise<Authorization> {
   const [roles, permissions] = await Promise.all([
     roleService.listRoleNamesForUser(userId),
     roleService.listPermissionNamesForUser(userId)
@@ -46,8 +53,8 @@ async function loadAuthorization(userId: string) {
   return { roles, permissions };
 }
 
-async function handleLogin(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as Record<string, unknown>;
+const handleLogin: RouteHandler<LoginRequest, AuthMeResponse> = async (req, res) => {
+  const body = await readJsonBody<Partial<LoginRequest>>(req);
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
 
@@ -125,9 +132,9 @@ async function handleLogin(req: AuthedRequest, res: ServerResponse): Promise<voi
     user: publicUser(result.user, authz),
     expires_at: result.expiresAt
   });
-}
+};
 
-async function handleLogout(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleLogout: RouteHandler = async (req, res) => {
   const token = readSessionToken(req);
   let session = null;
   if (token) {
@@ -149,9 +156,9 @@ async function handleLogout(req: AuthedRequest, res: ServerResponse): Promise<vo
   }
   res.setHeader("Set-Cookie", buildClearSessionCookie());
   return json(res, 200, { ok: true });
-}
+};
 
-async function handleMe(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleMe: RouteHandler<never, AuthMeResponse> = async (req, res) => {
   const token = readSessionToken(req);
   if (!token) {
     return json(res, 401, { error: "unauthenticated" });
@@ -167,7 +174,7 @@ async function handleMe(req: AuthedRequest, res: ServerResponse): Promise<void> 
     user: publicUser(session.user, authz),
     expires_at: session.expiresAt
   });
-}
+};
 
 export {
   handleLogin,

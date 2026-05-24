@@ -56,16 +56,28 @@ export type AuthMeResponse = ApiSchema<'AuthMeResponse'>;
 export type LoginRequest = ApiSchema<'LoginRequest'>;
 export type LoginLockoutResponse = ApiSchema<'LoginLockoutResponse'>;
 export type AdminUser = ApiSchema<'AdminUser'>;
+export type CreateAdminUserRequest = ApiSchema<'CreateAdminUserRequest'>;
+export type UpdateUserRolesRequest = ApiSchema<'UpdateUserRolesRequest'>;
 export type AuthProvider = ApiSchema<'AuthProvider'>;
+export type AuthProviderUpsertRequest = ApiSchema<'AuthProviderUpsertRequest'>;
+export type AuthProviderMappingRulesRequest = ApiSchema<'AuthProviderMappingRulesRequest'>;
+export type GrantDataSourceAccessRequest = ApiSchema<'GrantDataSourceAccessRequest'>;
 export type LinkedIdentity = ApiSchema<'LinkedIdentity'>;
 export type UserConfig = ApiSchema<'UserConfig'>;
 export type PromptPreset = ApiSchema<'PromptPreset'>;
+export type PromptPresetUpsertRequest = ApiSchema<'PromptPresetUpsertRequest'>;
 export type AuditEventApi = ApiSchema<'AuditEvent'>;
 
 // Data sources + schema
 export type DataSourceResponse = ApiSchema<'DataSourceResponse'>;
 export type CreateDataSourceRequest = ApiSchema<'CreateDataSourceRequest'>;
+export type ImportSchemaRequest = ApiSchema<'ImportSchemaRequest'>;
 export type SchemaObjectApi = ApiSchema<'SchemaObject'>;
+export type SchemaObjectVisibilityRequest = ApiSchema<'SchemaObjectVisibilityRequest'>;
+export type SemanticEntityRequest = ApiSchema<'SemanticEntityRequest'>;
+export type MetricDefinitionRequest = ApiSchema<'MetricDefinitionRequest'>;
+export type JoinPolicyRequest = ApiSchema<'JoinPolicyRequest'>;
+export type RagNoteRequest = ApiSchema<'RagNoteRequest'>;
 export type RagNoteResponse = ApiSchema<'RagNoteResponse'>;
 
 // Providers + routing
@@ -76,17 +88,33 @@ export type RoutingRuleResponse = ApiSchema<'RoutingRuleResponse'>;
 
 // Saved queries + lifecycle
 export type SavedQueryApi = ApiSchema<'SavedQuery'>;
+export type CreateSavedQueryRequest = ApiSchema<'CreateSavedQueryRequest'>;
+export type UpdateSavedQueryRequest = ApiSchema<'UpdateSavedQueryRequest'>;
+export type ShareSavedQueryRequest = ApiSchema<'ShareSavedQueryRequest'>;
+export type ValidateParamsRequest = ApiSchema<'ValidateParamsRequest'>;
+export type RunSavedQueryRequest = ApiSchema<'RunSavedQueryRequest'>;
 export type SavedQueryFolderApi = ApiSchema<'SavedQueryFolder'>;
+export type CreateSavedQueryFolderRequest = ApiSchema<'CreateSavedQueryFolderRequest'>;
+export type UpdateSavedQueryFolderRequest = ApiSchema<'UpdateSavedQueryFolderRequest'>;
+export type MoveSavedQueryRequest = ApiSchema<'MoveSavedQueryRequest'>;
 export type SavedQueryVersion = ApiSchema<'SavedQueryVersion'>;
 export type SavedQueryScheduleApi = ApiSchema<'SavedQuerySchedule'>;
+export type SavedQueryScheduleRequest = ApiSchema<'SavedQueryScheduleRequest'>;
 export type SavedQueryScheduleRunApi = ApiSchema<'SavedQueryScheduleRun'>;
 export type QueryParameter = ApiSchema<'QueryParameter'>;
+export type CreateSessionRequest = ApiSchema<'CreateSessionRequest'>;
 export type CreateSessionResponse = ApiSchema<'CreateSessionResponse'>;
+export type RunSessionRequest = ApiSchema<'RunSessionRequest'>;
 export type RunSessionResponse = ApiSchema<'RunSessionResponse'>;
+export type FeedbackRequest = ApiSchema<'FeedbackRequest'>;
+
+// Observability + benchmarks
+export type BenchmarkReportUploadRequest = ApiSchema<'BenchmarkReportUploadRequest'>;
 
 // Export delivery
 export type ExportDeliveryStatus = ApiSchema<'ExportDeliveryStatus'>;
 export type ExportRequest = ApiSchema<'ExportRequest'>;
+export type ExportDeliverRequest = ApiSchema<'ExportDeliverRequest'>;
 
 // ---------------------------------------------------------------------------
 // Domain types (DB rows, provider configs).

@@ -18,9 +18,13 @@
 // `application/scim+json` content type as required by RFC 7644.
 
 import type { ServerResponse } from "http";
-import type { URL } from "url";
 import type { AuthedRequest } from "../lib/authGate";
-import { readJsonBody } from "../lib/http";
+import {
+  readJsonBody,
+  type RouteHandler,
+  type RouteHandlerWithId,
+  type RouteHandlerWithUrl
+} from "../lib/http";
 import { authenticateScim, writeScimError } from "../lib/scimAuth";
 import * as scimUserService from "../services/scimUserService";
 import * as scimGroupService from "../services/scimGroupService";
@@ -98,41 +102,45 @@ function schemas() {
   };
 }
 
-async function handleServiceProviderConfig(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleServiceProviderConfig: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   return scimJson(res, 200, serviceProviderConfig());
-}
+};
 
-async function handleResourceTypes(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleResourceTypes: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   return scimJson(res, 200, resourceTypes());
-}
+};
 
-async function handleSchemas(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleSchemas: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   return scimJson(res, 200, schemas());
-}
+};
 
-async function handleListUsers(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleListUsers: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   const params = requestUrl.searchParams;
+  const startIndex = Number(params.get("startIndex")) || 1;
+  const count = Number(params.get("count")) || 100;
   const result = await scimUserService.listUsers({
     providerId: token.provider_id,
     filter: params.get("filter"),
-    startIndex: (params.get("startIndex") || 1) as number,
-    count: (params.get("count") || 100) as number
+    startIndex,
+    count
   });
   return scimJson(res, 200, result);
-}
+};
 
-async function handleCreateUser(req: AuthedRequest, res: ServerResponse): Promise<void> {
+// SCIM message bodies aren't fully described in our OpenAPI surface — keep them
+// as `unknown` and let the service do schema validation.
+const handleCreateUser: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
-  let body: any;
+  let body: unknown;
   try {
     body = await readJsonBody(req);
   } catch {
@@ -145,19 +153,19 @@ async function handleCreateUser(req: AuthedRequest, res: ServerResponse): Promis
     userAgent: req.headers["user-agent"] || null
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handleGetUser(req: AuthedRequest, res: ServerResponse, userId: string): Promise<void> {
+const handleGetUser: RouteHandlerWithId = async (req, res, userId) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   const result = await scimUserService.getUser({ providerId: token.provider_id, userId });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handleReplaceUser(req: AuthedRequest, res: ServerResponse, userId: string): Promise<void> {
+const handleReplaceUser: RouteHandlerWithId = async (req, res, userId) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
-  const body = await readJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  const body = await readJsonBody<Record<string, unknown> | null>(req).catch(() => null);
   const result = await scimUserService.replaceUser({
     providerId: token.provider_id,
     userId,
@@ -166,12 +174,12 @@ async function handleReplaceUser(req: AuthedRequest, res: ServerResponse, userId
     userAgent: req.headers["user-agent"] || null
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handlePatchUser(req: AuthedRequest, res: ServerResponse, userId: string): Promise<void> {
+const handlePatchUser: RouteHandlerWithId = async (req, res, userId) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
-  const body = await readJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  const body = await readJsonBody<Record<string, unknown> | null>(req).catch(() => null);
   const result = await scimUserService.patchUser({
     providerId: token.provider_id,
     userId,
@@ -180,9 +188,9 @@ async function handlePatchUser(req: AuthedRequest, res: ServerResponse, userId: 
     userAgent: req.headers["user-agent"] || null
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handleDeleteUser(req: AuthedRequest, res: ServerResponse, userId: string): Promise<void> {
+const handleDeleteUser: RouteHandlerWithId = async (req, res, userId) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   const result = await scimUserService.deleteUser({
@@ -192,36 +200,36 @@ async function handleDeleteUser(req: AuthedRequest, res: ServerResponse, userId:
     userAgent: req.headers["user-agent"] || null
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handleListGroups(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleListGroups: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
   const result = scimGroupService.listGroups();
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handleCreateOrReplaceGroup(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handleCreateOrReplaceGroup: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
-  const body = await readJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  const body = await readJsonBody<Record<string, unknown> | null>(req).catch(() => null);
   const result = await scimGroupService.createOrReplaceGroup({
     providerId: token.provider_id,
     body
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
-async function handlePatchGroup(req: AuthedRequest, res: ServerResponse): Promise<void> {
+const handlePatchGroup: RouteHandler = async (req, res) => {
   const token = await authenticateScim(req, res);
   if (!token) return;
-  const body = await readJsonBody(req).catch(() => null) as Record<string, unknown> | null;
+  const body = await readJsonBody<Record<string, unknown> | null>(req).catch(() => null);
   const result = await scimGroupService.patchGroup({
     providerId: token.provider_id,
     body
   });
   return scimJson(res, result.statusCode, result.body);
-}
+};
 
 export {
   handleServiceProviderConfig,

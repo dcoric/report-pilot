@@ -1,22 +1,48 @@
 import appDb = require("../lib/appDb");
-import type { ServerResponse } from "http";
-import { json, badRequest, internalError, readJsonBody } from "../lib/http";
-import { exportQueryResult, SUPPORTED_FORMATS } from "../services/exportService";
+import {
+  json,
+  badRequest,
+  internalError,
+  readJsonBody,
+  errorMessage,
+  type RouteHandlerWithId
+} from "../lib/http";
+import {
+  exportQueryResult,
+  SUPPORTED_FORMATS,
+  type ExportFormat
+} from "../services/exportService";
 import { createDelivery, getDeliveryStatus } from "../services/deliveryService";
-import { enforceDataSourceAccess, type AuthedRequest } from "../lib/authGate";
+import { enforceDataSourceAccess } from "../lib/authGate";
+import type { ExportRequest, ExportDeliverRequest } from "../types";
 
 async function loadSessionDataSourceId(sessionId: string): Promise<string | null> {
-  const result = await appDb.query(
+  const result = await appDb.query<{ data_source_id: string }>(
     "SELECT data_source_id FROM query_sessions WHERE id = $1",
     [sessionId]
   );
-  return result.rowCount > 0 ? result.rows[0].data_source_id : null;
+  return (result.rowCount ?? 0) > 0 ? result.rows[0].data_source_id : null;
 }
 
-async function handleExportSession(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
-  const body = await readJsonBody(req).catch(() => ({})) as any; // Body optional
-  const requestUrl = new URL(req.url, "http://localhost");
-  const format = body.format || requestUrl.searchParams.get("format") || "json";
+interface HttpishError {
+  statusCode?: number;
+  message?: string;
+}
+
+function isStatusCodeError(err: unknown): err is HttpishError & { statusCode: number } {
+  return Boolean(err && typeof err === "object" && typeof (err as HttpishError).statusCode === "number");
+}
+
+function isNotFoundExportError(message: string): boolean {
+  return message === "Session not found"
+    || message === "No successful query attempts found for this session";
+}
+
+const handleExportSession: RouteHandlerWithId<ExportRequest> = async (req, res, sessionId) => {
+  // Body is optional — POST may carry `{ format }` or it can come from `?format=`.
+  const body = await readJsonBody<Partial<ExportRequest>>(req).catch(() => ({} as Partial<ExportRequest>));
+  const requestUrl = new URL(req.url ?? "/", "http://localhost");
+  const format = (body.format || requestUrl.searchParams.get("format") || "json") as ExportFormat;
 
   if (!SUPPORTED_FORMATS.has(format)) {
     return badRequest(res, `Unsupported format: ${format}`);
@@ -39,16 +65,17 @@ async function handleExportSession(req: AuthedRequest, res: ServerResponse, sess
     });
     res.end(buffer);
   } catch (err) {
-    if (err.message === "Session not found" || err.message === "No successful query attempts found for this session") {
-      return json(res, 404, { error: "not_found", message: err.message });
+    const message = errorMessage(err);
+    if (isNotFoundExportError(message)) {
+      return json(res, 404, { error: "not_found", message });
     }
     console.error("[export] failed:", err);
     return internalError(res);
   }
-}
+};
 
-async function handleExportDeliver(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
-  const body = await readJsonBody(req) as any;
+const handleExportDeliver: RouteHandlerWithId<ExportDeliverRequest> = async (req, res, sessionId) => {
+  const body = await readJsonBody<Partial<ExportDeliverRequest>>(req);
   const { delivery_mode: deliveryMode, format = "json", recipients } = body;
 
   if (!deliveryMode || !["download", "email"].includes(deliveryMode)) {
@@ -66,17 +93,22 @@ async function handleExportDeliver(req: AuthedRequest, res: ServerResponse, sess
   const requestedBy = req.user && req.user.id ? req.user.id : "anonymous";
 
   try {
-    const delivery = await createDelivery({ sessionId, deliveryMode, format, recipients, requestedBy });
+    const delivery = await createDelivery({
+      sessionId,
+      deliveryMode,
+      format: format as ExportFormat,
+      recipients,
+      requestedBy
+    });
 
-    if (deliveryMode === "download") {
-      const dl = delivery as any;
+    if (delivery.delivery_mode === "download") {
       res.writeHead(200, {
-        "Content-Type": dl.contentType,
-        "Content-Disposition": `attachment; filename="${dl.filename}"`,
-        "Content-Length": dl.buffer.length,
-        "x-export-id": dl.id
+        "Content-Type": delivery.contentType,
+        "Content-Disposition": `attachment; filename="${delivery.filename}"`,
+        "Content-Length": delivery.buffer.length,
+        "x-export-id": delivery.id
       });
-      res.end(dl.buffer);
+      res.end(delivery.buffer);
       return;
     }
 
@@ -87,19 +119,19 @@ async function handleExportDeliver(req: AuthedRequest, res: ServerResponse, sess
       delivery_mode: delivery.delivery_mode
     });
   } catch (err) {
-    const e = err as any;
-    if (e.statusCode === 400) {
-      return badRequest(res, e.message);
+    if (isStatusCodeError(err) && err.statusCode === 400) {
+      return badRequest(res, err.message);
     }
-    if (e.message === "Session not found" || e.message === "No successful query attempts found for this session") {
-      return json(res, 404, { error: "not_found", message: e.message });
+    const message = errorMessage(err);
+    if (isNotFoundExportError(message)) {
+      return json(res, 404, { error: "not_found", message });
     }
     console.error("[export/deliver] failed:", err);
     return internalError(res);
   }
-}
+};
 
-async function handleExportStatus(req: AuthedRequest, res: ServerResponse, exportId: string): Promise<void> {
+const handleExportStatus: RouteHandlerWithId = async (req, res, exportId) => {
   const delivery = await getDeliveryStatus(exportId);
   if (!delivery) {
     return json(res, 404, { error: "not_found", message: "Export delivery not found" });
@@ -109,7 +141,7 @@ async function handleExportStatus(req: AuthedRequest, res: ServerResponse, expor
     return undefined;
   }
   return json(res, 200, delivery);
-}
+};
 
 export {
   handleExportSession,

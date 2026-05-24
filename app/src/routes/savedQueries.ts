@@ -1,8 +1,13 @@
-import type { ServerResponse } from "http";
-import type { URL } from "url";
-import type { AuthedRequest } from "../lib/authGate";
 import appDb = require("../lib/appDb");
-import { json, readJsonBody } from "../lib/http";
+import {
+  json,
+  readJsonBody,
+  writeServiceResult,
+  type RouteHandler,
+  type RouteHandlerWithId,
+  type RouteHandlerWithIds,
+  type RouteHandlerWithUrl
+} from "../lib/http";
 import { isUuid } from "../lib/validation";
 import {
   createSavedQuery,
@@ -18,7 +23,14 @@ import {
   restoreSavedQueryVersion
 } from "../services/savedQueryService";
 import { writeEvent } from "../services/auditService";
-import { enforceDataSourceAccess, listAccessibleDataSourceIds } from "../lib/authGate";
+import { enforceDataSourceAccess, listAccessibleDataSourceIds, type AuthedRequest } from "../lib/authGate";
+import type {
+  CreateSavedQueryRequest,
+  UpdateSavedQueryRequest,
+  ShareSavedQueryRequest,
+  ValidateParamsRequest,
+  RunSavedQueryRequest
+} from "../types";
 
 function callerId(req: AuthedRequest): string | null {
   return (req.user && req.user.id) || null;
@@ -28,29 +40,25 @@ function requestClientIp(req: AuthedRequest): string | null {
   return (req.socket && req.socket.remoteAddress) || null;
 }
 
-function writeResult(res: ServerResponse, result: { statusCode: number; body: unknown }): void {
-  return json(res, result.statusCode, result.body);
-}
-
 async function loadSavedQueryDataSourceId(savedQueryId: string): Promise<string | null> {
   if (!isUuid(savedQueryId)) return null;
-  const result = await appDb.query(
+  const result = await appDb.query<{ data_source_id: string }>(
     "SELECT data_source_id FROM saved_queries WHERE id = $1",
     [savedQueryId]
   );
-  return result.rowCount > 0 ? result.rows[0].data_source_id : null;
+  return (result.rowCount ?? 0) > 0 ? result.rows[0].data_source_id : null;
 }
 
 async function dataSourceExists(dataSourceId: string): Promise<boolean> {
   if (!isUuid(dataSourceId)) return false;
   const result = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
-async function handleCreateSavedQuery(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as Record<string, unknown>;
-  if (body && body.data_source_id && await dataSourceExists(body.data_source_id as string)) {
-    if (!(await enforceDataSourceAccess(req, res, body.data_source_id as string))) {
+const handleCreateSavedQuery: RouteHandler<CreateSavedQueryRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<CreateSavedQueryRequest>>(req);
+  if (body && body.data_source_id && await dataSourceExists(body.data_source_id)) {
+    if (!(await enforceDataSourceAccess(req, res, body.data_source_id))) {
       return undefined;
     }
   }
@@ -65,10 +73,10 @@ async function handleCreateSavedQuery(req: AuthedRequest, res: ServerResponse): 
     tags: body.tags,
     visibility: body.visibility
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListSavedQueries(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleListSavedQueries: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (dataSourceId && isUuid(dataSourceId) && !(await enforceDataSourceAccess(req, res, dataSourceId))) {
     return undefined;
@@ -79,31 +87,32 @@ async function handleListSavedQueries(req: AuthedRequest, res: ServerResponse, r
     requestUrl.searchParams.get("tag"),
     { callerUserId: callerId(req) }
   );
-  if (accessible !== null && result.ok && Array.isArray(result.body.items)) {
+  if (result.ok && accessible !== null) {
     const accessibleSet = new Set(accessible);
-    result.body.items = result.body.items.filter((item) => accessibleSet.has(item.data_source_id));
+    const filteredItems = result.body.items.filter((item) => accessibleSet.has(item.data_source_id));
+    return json(res, result.statusCode, { ...result.body, items: filteredItems });
   }
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleGetSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleGetSavedQuery: RouteHandlerWithId = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
   const result = await getSavedQuery(savedQueryId, { callerUserId: callerId(req) });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleUpdateSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleUpdateSavedQuery: RouteHandlerWithId<UpdateSavedQueryRequest> = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req) as Record<string, unknown>;
+  const body = await readJsonBody<Partial<UpdateSavedQueryRequest>>(req);
   if (body && body.data_source_id && body.data_source_id !== dsId
-      && await dataSourceExists(body.data_source_id as string)) {
-    if (!(await enforceDataSourceAccess(req, res, body.data_source_id as string))) {
+      && await dataSourceExists(body.data_source_id)) {
+    if (!(await enforceDataSourceAccess(req, res, body.data_source_id))) {
       return undefined;
     }
   }
@@ -118,68 +127,61 @@ async function handleUpdateSavedQuery(req: AuthedRequest, res: ServerResponse, s
     visibility: body.visibility,
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleDeleteSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleDeleteSavedQuery: RouteHandlerWithId = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
   const result = await deleteSavedQuery(savedQueryId, { callerUserId: callerId(req) });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleValidateParams(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleValidateParams: RouteHandlerWithId<ValidateParamsRequest> = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req) as Record<string, unknown>;
+  const body = await readJsonBody<Partial<ValidateParamsRequest>>(req);
   const result = await validateSavedQueryParams(savedQueryId, body.params, {
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleRunSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleRunSavedQuery: RouteHandlerWithId<RunSavedQueryRequest> = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req) as Record<string, unknown>;
+  const body = await readJsonBody<Partial<RunSavedQueryRequest>>(req);
   const result = await executeSavedQuery(savedQueryId, {
     params: body.params,
     maxRows: body.max_rows,
     timeoutMs: body.timeout_ms,
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleShareSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleShareSavedQuery: RouteHandlerWithId<ShareSavedQueryRequest> = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req) as Record<string, unknown>;
+  const body = await readJsonBody<Partial<ShareSavedQueryRequest>>(req);
   const result = await shareSavedQuery(savedQueryId, {
     callerUserId: callerId(req),
     visibility: body.visibility,
     shares: body.shares
   });
 
+  // Narrow the discriminated union so we can read the typed diff directly.
   if (result.ok) {
+    const summary = result.body;
     const actor = callerId(req);
-    const summary = result.body as {
-      previous_visibility: string;
-      visibility: string;
-      diff: {
-        added: Array<{ user_id: string; permission: string }>;
-        updated: Array<{ user_id: string; previous_permission: string; permission: string }>;
-        removed: Array<{ user_id: string; permission: string }>;
-      };
-    };
     const ip = requestClientIp(req);
     const userAgent = req.headers["user-agent"] || null;
     if (summary.previous_visibility !== summary.visibility) {
@@ -231,10 +233,10 @@ async function handleShareSavedQuery(req: AuthedRequest, res: ServerResponse, sa
     }
   }
 
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleGetSavedQueryAccess(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleGetSavedQueryAccess: RouteHandlerWithId = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
@@ -242,10 +244,10 @@ async function handleGetSavedQueryAccess(req: AuthedRequest, res: ServerResponse
   const result = await getSavedQueryAccess(savedQueryId, {
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListSavedQueryVersions(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
+const handleListSavedQueryVersions: RouteHandlerWithId = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
@@ -253,10 +255,10 @@ async function handleListSavedQueryVersions(req: AuthedRequest, res: ServerRespo
   const result = await listSavedQueryVersions(savedQueryId, {
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleRestoreSavedQueryVersion(req: AuthedRequest, res: ServerResponse, savedQueryId: string, versionId: string): Promise<void> {
+const handleRestoreSavedQueryVersion: RouteHandlerWithIds = async (req, res, savedQueryId, versionId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
@@ -265,22 +267,23 @@ async function handleRestoreSavedQueryVersion(req: AuthedRequest, res: ServerRes
     callerUserId: callerId(req)
   });
 
+  // Narrow to access typed `restored_from_version_number` / `new_version`.
   if (result.ok) {
     writeEvent({
       actorUserId: callerId(req),
       action: "saved_query.version.restored",
       details: {
         saved_query_id: savedQueryId,
-        restored_from_version_number: (result.body as { restored_from_version_number: number }).restored_from_version_number,
-        new_version_number: (result.body as { new_version: { version_number: number } }).new_version.version_number
+        restored_from_version_number: result.body.restored_from_version_number,
+        new_version_number: result.body.new_version.version_number
       },
       ipAddress: requestClientIp(req),
       userAgent: req.headers["user-agent"] || null
     }).catch(() => {});
   }
 
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
 export {
   handleCreateSavedQuery,

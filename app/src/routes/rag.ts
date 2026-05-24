@@ -1,14 +1,19 @@
 import appDb = require("../lib/appDb");
-import { json, badRequest, readJsonBody } from "../lib/http";
+import {
+  json,
+  badRequest,
+  readJsonBody,
+  type RouteHandler,
+  type RouteHandlerWithId,
+  type RouteHandlerWithUrl
+} from "../lib/http";
 import { RAG_NOTE_TITLE_MAX_LENGTH, RAG_NOTE_CONTENT_MAX_LENGTH } from "../lib/constants";
 import { isUuid } from "../lib/validation";
 import ragService = require("../services/ragService");
 import { enforceDataSourceAccess } from "../lib/authGate";
-import type { ServerResponse } from "http";
-import type { URL } from "url";
-import type { AuthedRequest } from "../lib/authGate";
+import type { RagNoteRequest } from "../types";
 
-async function handleListRagNotes(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleListRagNotes: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = String(requestUrl.searchParams.get("data_source_id") || "").trim();
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
@@ -39,10 +44,10 @@ async function handleListRagNotes(req: AuthedRequest, res: ServerResponse, reque
   );
 
   return json(res, 200, { items: result.rows });
-}
+};
 
-async function handleUpsertRagNote(req: AuthedRequest, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as any;
+const handleUpsertRagNote: RouteHandler<RagNoteRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<RagNoteRequest>>(req);
   const id = body.id ? String(body.id).trim() : null;
   const dataSourceId = String(body.data_source_id || "").trim();
   const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -136,9 +141,9 @@ async function handleUpsertRagNote(req: AuthedRequest, res: ServerResponse): Pro
 
   ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
-}
+};
 
-async function handleDeleteRagNote(req: AuthedRequest, res: ServerResponse, noteId: string): Promise<void> {
+const handleDeleteRagNote: RouteHandlerWithId = async (req, res, noteId) => {
   if (!isUuid(noteId)) {
     return badRequest(res, "noteId must be a valid UUID");
   }
@@ -170,9 +175,9 @@ async function handleDeleteRagNote(req: AuthedRequest, res: ServerResponse, note
 
   ragService.triggerRagReindexAsync(deleteResult.rows[0].data_source_id);
   return json(res, 200, { ok: true, id: deleteResult.rows[0].id });
-}
+};
 
-async function handleRagReindex(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleRagReindex: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
@@ -196,7 +201,7 @@ async function handleRagReindex(req: AuthedRequest, res: ServerResponse, request
     status: "succeeded",
     ...result
   });
-}
+};
 
 export {
   handleListRagNotes,

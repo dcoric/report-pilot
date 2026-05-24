@@ -1,21 +1,19 @@
 import appDb = require("../lib/appDb");
-import type { ServerResponse } from "http";
-import type { IncomingMessage } from "http";
-import type { URL } from "url";
-import { json, badRequest, readJsonBody } from "../lib/http";
+import { json, badRequest, readJsonBody, type RouteHandler, type RouteHandlerWithUrl } from "../lib/http";
 import {
   buildObservabilityMetrics,
   loadLatestBenchmarkReleaseGates,
   buildBenchmarkCommand
 } from "../services/observabilityService";
+import type { BenchmarkReportUploadRequest } from "../types";
 
-async function handleObservabilityMetrics(req: IncomingMessage, res: ServerResponse, requestUrl: URL): Promise<void> {
-  const windowHours = Number(requestUrl.searchParams.get("window_hours") || 24);
+const handleObservabilityMetrics: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
+  const windowHours = Number(requestUrl.searchParams.get("window_hours")) || 24;
   const metrics = await buildObservabilityMetrics({ windowHours });
   return json(res, 200, metrics);
-}
+};
 
-async function handleReleaseGates(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+const handleReleaseGates: RouteHandler = async (_req, res) => {
   const payload = await loadLatestBenchmarkReleaseGates();
   if (!payload.found) {
     return json(res, 404, {
@@ -24,15 +22,15 @@ async function handleReleaseGates(_req: IncomingMessage, res: ServerResponse): P
     });
   }
   return json(res, 200, payload);
-}
+};
 
-async function handleBenchmarkCommand(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+const handleBenchmarkCommand: RouteHandler = async (_req, res) => {
   const payload = buildBenchmarkCommand();
   return json(res, 200, payload);
-}
+};
 
-async function handleCreateBenchmarkReport(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as Record<string, unknown>;
+const handleCreateBenchmarkReport: RouteHandler<BenchmarkReportUploadRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<BenchmarkReportUploadRequest>>(req);
   const {
     run_date: runDate,
     dataset_file: datasetFile,
@@ -63,7 +61,7 @@ async function handleCreateBenchmarkReport(req: IncomingMessage, res: ServerResp
   );
 
   return json(res, 201, inserted.rows[0]);
-}
+};
 
 export {
   handleObservabilityMetrics,

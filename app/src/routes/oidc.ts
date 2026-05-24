@@ -1,7 +1,12 @@
-import type { ServerResponse, IncomingMessage } from "http";
-import type { URL } from "url";
+import type { ServerResponse } from "http";
 import type { AuthedRequest } from "../lib/authGate";
-import { json, badRequest } from "../lib/http";
+import {
+  json,
+  badRequest,
+  errorMessage,
+  type RouteHandler,
+  type RouteHandlerWithUrl
+} from "../lib/http";
 import { buildFlowCookie, buildClearFlowCookie, readFlowCookie, OidcFlowPayload } from "../lib/oidcFlowCookie";
 import { buildSessionCookie, buildClearSessionCookie } from "../lib/sessionCookie";
 import { createSession } from "../services/authService";
@@ -20,12 +25,19 @@ function clientAddress(req: AuthedRequest): string | null {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null;
 }
 
-async function handleListEnabledProviders(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const items = await listEnabledProvidersForLogin();
-  return json(res, 200, { items });
+function errorStatusCode(err: unknown): number {
+  if (err && typeof err === "object" && typeof (err as { statusCode?: unknown }).statusCode === "number") {
+    return (err as { statusCode: number }).statusCode;
+  }
+  return 500;
 }
 
-async function handleStartLogin(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleListEnabledProviders: RouteHandler = async (_req, res) => {
+  const items = await listEnabledProvidersForLogin();
+  return json(res, 200, { items });
+};
+
+const handleStartLogin: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const providerId = requestUrl.searchParams.get("provider_id");
   if (!providerId) {
     return badRequest(res, "provider_id query parameter is required");
@@ -39,15 +51,14 @@ async function handleStartLogin(req: AuthedRequest, res: ServerResponse, request
   try {
     result = await startLogin(provider);
   } catch (err) {
-    const status = (err as { statusCode?: number }).statusCode || 500;
-    return json(res, status, { error: "oidc_error", message: (err as Error).message });
+    return json(res, errorStatusCode(err), { error: "oidc_error", message: errorMessage(err) });
   }
 
   res.setHeader("Set-Cookie", buildFlowCookie(result.flowState as OidcFlowPayload));
   res.writeHead(302, { Location: result.authorizeUrl });
   res.end();
   return;
-}
+};
 
 function redirectAfterLogin(res: ServerResponse, target = "/dashboard", sessionCookie: string | null = null): void {
   const headers: Record<string, string | string[]> = { Location: target };
@@ -58,7 +69,7 @@ function redirectAfterLogin(res: ServerResponse, target = "/dashboard", sessionC
   res.end();
 }
 
-async function handleCallback(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleCallback: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const flowState = readFlowCookie(req);
   if (!flowState) {
     return json(res, 400, { error: "bad_request", message: "missing or expired OIDC flow state" });
@@ -84,7 +95,11 @@ async function handleCallback(req: AuthedRequest, res: ServerResponse, requestUr
   // event.
   const stateExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
   const recorded = await recordUsedState({ state: flowState.state, providerId: provider.id, expiresAt: stateExpiresAt })
-    .catch((err) => ({ replayed: false as boolean, ok: false as boolean, reason: err && (err as Error).message }));
+    .catch((err): { replayed: boolean; ok: boolean; reason: string } => ({
+      replayed: false,
+      ok: false,
+      reason: errorMessage(err)
+    }));
   if (recorded.replayed) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
     await writeEvent({
@@ -107,16 +122,16 @@ async function handleCallback(req: AuthedRequest, res: ServerResponse, requestUr
     principal = await completeLogin(provider, currentUrl, flowState as FlowState);
   } catch (err) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
+    const message = errorMessage(err);
     await writeEvent({
       action: "auth.login.failure",
       outcome: "failure",
-      details: { method: "oidc", provider: provider.name, reason: (err as Error).message || "oidc_error" },
+      details: { method: "oidc", provider: provider.name, reason: message || "oidc_error" },
       ipAddress,
       userAgent
     })
       .catch(() => {});
-    const status = (err as { statusCode?: number }).statusCode || 500;
-    return json(res, status, { error: "oidc_error", message: (err as Error).message });
+    return json(res, errorStatusCode(err), { error: "oidc_error", message });
   }
 
   // AUTH-012: resolve the IdP principal to a local user, applying account
@@ -173,10 +188,10 @@ async function handleCallback(req: AuthedRequest, res: ServerResponse, requestUr
   // array for duplicate header names.
   res.setHeader("Set-Cookie", [sessionCookie, clearFlowCookie]);
   return redirectAfterLogin(res, "/dashboard");
-}
+};
 
 // Exposed for use by AUTH-009 (admin "test connection" button) and tests.
-async function handleStartLoginJson(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
+const handleStartLoginJson: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const providerId = requestUrl.searchParams.get("provider_id");
   if (!providerId) {
     return badRequest(res, "provider_id query parameter is required");
@@ -190,10 +205,9 @@ async function handleStartLoginJson(req: AuthedRequest, res: ServerResponse, req
     res.setHeader("Set-Cookie", buildFlowCookie(result.flowState as OidcFlowPayload));
     return json(res, 200, { authorize_url: result.authorizeUrl });
   } catch (err) {
-    const status = (err as { statusCode?: number }).statusCode || 500;
-    return json(res, status, { error: "oidc_error", message: (err as Error).message });
+    return json(res, errorStatusCode(err), { error: "oidc_error", message: errorMessage(err) });
   }
-}
+};
 
 export {
   handleListEnabledProviders,

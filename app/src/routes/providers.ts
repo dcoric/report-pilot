@@ -1,7 +1,5 @@
 import appDb = require("../lib/appDb");
-import type { ServerResponse } from "http";
-import type { IncomingMessage } from "http";
-import { json, badRequest, readJsonBody } from "../lib/http";
+import { json, badRequest, readJsonBody, errorMessage, type RouteHandler } from "../lib/http";
 import { LLM_PROVIDERS, ROUTING_STRATEGIES } from "../lib/constants";
 import { normalizeProviderUpsertInput } from "../services/providerConfigService";
 import { OpenAiAdapter } from "../adapters/llm/openAiAdapter";
@@ -10,6 +8,7 @@ import { DeepSeekAdapter } from "../adapters/llm/deepSeekAdapter";
 import { OpenRouterAdapter } from "../adapters/llm/openRouterAdapter";
 import { CustomAdapter } from "../adapters/llm/customAdapter";
 import { resolveApiKey } from "../adapters/llm/httpClient";
+import type { LlmProviderRequest, RoutingRuleRequest } from "../types";
 
 function buildHealthAdapter(provider: string, apiKeyRef: string | null, defaultModel: string | null, baseUrl: string | null) {
   if (provider === "openai") {
@@ -58,17 +57,17 @@ async function loadSupportedProviderSet(): Promise<Set<string>> {
   return providers;
 }
 
-async function handleProviderList(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+const handleProviderList: RouteHandler = async (_req, res) => {
   const result = await appDb.query(
     `SELECT id, provider, default_model, base_url, display_name, enabled, created_at, updated_at
      FROM llm_providers
      ORDER BY provider`
   );
   return json(res, 200, { items: result.rows });
-}
+};
 
-async function handleProviderUpsert(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as Record<string, unknown>;
+const handleProviderUpsert: RouteHandler<LlmProviderRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<LlmProviderRequest>>(req);
   const provider = typeof body.provider === "string" ? body.provider.trim() : "";
 
   const existingResult = await appDb.query(
@@ -107,10 +106,10 @@ async function handleProviderUpsert(req: IncomingMessage, res: ServerResponse): 
   );
 
   return json(res, 200, result.rows[0]);
-}
+};
 
-async function handleRoutingRuleUpsert(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readJsonBody(req) as Record<string, unknown>;
+const handleRoutingRuleUpsert: RouteHandler<RoutingRuleRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<RoutingRuleRequest>>(req);
   const {
     data_source_id: dataSourceId,
     primary_provider: primaryProvider,
@@ -124,15 +123,15 @@ async function handleRoutingRuleUpsert(req: IncomingMessage, res: ServerResponse
 
   const supportedProviders = await loadSupportedProviderSet();
 
-  if (!supportedProviders.has(primaryProvider as string)) {
+  if (!supportedProviders.has(primaryProvider)) {
     return badRequest(res, "Invalid primary_provider");
   }
 
-  if (!ROUTING_STRATEGIES.has(strategy as string)) {
+  if (!ROUTING_STRATEGIES.has(strategy)) {
     return badRequest(res, "Invalid strategy");
   }
 
-  const invalidFallback = (fallbackProviders as string[]).find((provider: string) => !supportedProviders.has(provider));
+  const invalidFallback = fallbackProviders.find((p) => !supportedProviders.has(p));
   if (invalidFallback) {
     return badRequest(res, `Invalid fallback provider: ${invalidFallback}`);
   }
@@ -163,10 +162,16 @@ async function handleRoutingRuleUpsert(req: IncomingMessage, res: ServerResponse
   );
 
   return json(res, 200, result.rows[0]);
-}
+};
 
-async function handleProviderHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const result = await appDb.query(
+const handleProviderHealth: RouteHandler = async (_req, res) => {
+  const result = await appDb.query<{
+    provider: string;
+    api_key_ref: string | null;
+    default_model: string | null;
+    base_url: string | null;
+    enabled: boolean;
+  }>(
     `
       SELECT provider, api_key_ref, default_model, base_url, enabled
       FROM llm_providers
@@ -175,7 +180,7 @@ async function handleProviderHealth(_req: IncomingMessage, res: ServerResponse):
   );
 
   const checkedAt = new Date().toISOString();
-  const items = [];
+  const items: Array<{ provider: string; status: string; checked_at: string; reason?: string }> = [];
 
   for (const row of result.rows) {
     if (!row.enabled) {
@@ -188,7 +193,7 @@ async function handleProviderHealth(_req: IncomingMessage, res: ServerResponse):
     }
 
     try {
-      const adapter = buildHealthAdapter(row.provider as string, row.api_key_ref as string | null, row.default_model as string | null, row.base_url as string | null);
+      const adapter = buildHealthAdapter(row.provider, row.api_key_ref, row.default_model, row.base_url);
       await adapter.healthCheck();
       items.push({
         provider: row.provider,
@@ -200,13 +205,13 @@ async function handleProviderHealth(_req: IncomingMessage, res: ServerResponse):
         provider: row.provider,
         status: "degraded",
         checked_at: checkedAt,
-        reason: (err as Error).message
+        reason: errorMessage(err)
       });
     }
   }
 
   return json(res, 200, { items });
-}
+};
 
 export {
   handleProviderList,
