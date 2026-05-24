@@ -10,43 +10,66 @@
 // the matched row (with the bound provider id) so the route handler can
 // attribute SCIM activity.
 
-const crypto = require("crypto");
-const appDb = require("../lib/appDb");
+import crypto from "crypto";
+import appDb = require("../lib/appDb");
 
-const TOKEN_PREFIX = "scim_";
+export const TOKEN_PREFIX = "scim_";
 const TOKEN_BYTES = 32;
-const LABEL_MAX = 120;
+export const LABEL_MAX = 120;
 
-function generateRawToken() {
+export interface ScimTokenPublic {
+  id: string;
+  provider_id: string;
+  label: string;
+  created_at: Date | string;
+  last_used_at: Date | string | null;
+  revoked_at: Date | string | null;
+}
+
+export interface IssueTokenInput {
+  providerId: string;
+  label: string;
+}
+
+export type IssueTokenResult =
+  | { ok: true; token: string; record: ScimTokenPublic }
+  | { ok: false; code: "missing_provider" | "invalid_label"; message: string };
+
+export interface RevokeTokenInput {
+  providerId: string;
+  tokenId: string;
+}
+
+export function generateRawToken(): string {
   const raw = crypto.randomBytes(TOKEN_BYTES).toString("base64url");
   return `${TOKEN_PREFIX}${raw}`;
 }
 
-function hashToken(token) {
+export function hashToken(token: unknown): string | null {
   if (typeof token !== "string" || !token) return null;
   return crypto.createHash("sha256").update(token, "utf8").digest("hex");
 }
 
-function rowToPublic(row) {
+function rowToPublic(row: Record<string, unknown> | null | undefined): ScimTokenPublic | null {
   if (!row) return null;
   return {
-    id: row.id,
-    provider_id: row.provider_id,
-    label: row.label,
-    created_at: row.created_at,
-    last_used_at: row.last_used_at,
-    revoked_at: row.revoked_at
+    id: row.id as string,
+    provider_id: row.provider_id as string,
+    label: row.label as string,
+    created_at: row.created_at as Date | string,
+    last_used_at: (row.last_used_at as Date | string | null) ?? null,
+    revoked_at: (row.revoked_at as Date | string | null) ?? null
   };
 }
 
-function normalizeLabel(value) {
+function normalizeLabel(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > LABEL_MAX) return null;
   return trimmed;
 }
 
-async function issueToken({ providerId, label }) {
+export async function issueToken({ providerId, label }: IssueTokenInput): Promise<IssueTokenResult> {
   const normalized = normalizeLabel(label);
   if (!providerId) {
     return { ok: false, code: "missing_provider", message: "provider_id is required" };
@@ -62,10 +85,10 @@ async function issueToken({ providerId, label }) {
      RETURNING id, provider_id, label, created_at, last_used_at, revoked_at`,
     [providerId, normalized, hash]
   );
-  return { ok: true, token: raw, record: rowToPublic(result.rows[0]) };
+  return { ok: true, token: raw, record: rowToPublic(result.rows[0]) as ScimTokenPublic };
 }
 
-async function listForProvider(providerId) {
+export async function listForProvider(providerId: string | null | undefined): Promise<ScimTokenPublic[]> {
   if (!providerId) return [];
   const result = await appDb.query(
     `SELECT id, provider_id, label, created_at, last_used_at, revoked_at
@@ -74,10 +97,10 @@ async function listForProvider(providerId) {
        ORDER BY created_at DESC`,
     [providerId]
   );
-  return result.rows.map(rowToPublic);
+  return result.rows.map(rowToPublic).filter((row): row is ScimTokenPublic => row !== null);
 }
 
-async function revokeToken({ providerId, tokenId }) {
+export async function revokeToken({ providerId, tokenId }: RevokeTokenInput): Promise<ScimTokenPublic | null> {
   if (!providerId || !tokenId) return null;
   const result = await appDb.query(
     `UPDATE scim_tokens
@@ -86,12 +109,12 @@ async function revokeToken({ providerId, tokenId }) {
       RETURNING id, provider_id, label, created_at, last_used_at, revoked_at`,
     [tokenId, providerId]
   );
-  return result.rowCount > 0 ? rowToPublic(result.rows[0]) : null;
+  return (result.rowCount ?? 0) > 0 ? rowToPublic(result.rows[0]) : null;
 }
 
 // Returns the active token row for a presented bearer token, or null. Bumps
 // last_used_at as a side-effect on a successful match.
-async function verifyToken(presented) {
+export async function verifyToken(presented: unknown): Promise<ScimTokenPublic | null> {
   const hash = hashToken(presented);
   if (!hash) return null;
   const result = await appDb.query(
@@ -108,14 +131,3 @@ async function verifyToken(presented) {
     .catch(() => {});
   return rowToPublic(row);
 }
-
-module.exports = {
-  TOKEN_PREFIX,
-  LABEL_MAX,
-  hashToken,
-  generateRawToken,
-  issueToken,
-  listForProvider,
-  revokeToken,
-  verifyToken
-};

@@ -11,15 +11,72 @@
 // transient (we don't need it for any subsequent decision). The user→role
 // state is the source of truth that the app already enforces via AUTH-002.
 
-const appDb = require("../lib/appDb");
-const authProviderService = require("./authProviderService");
-const auditService = require("./auditService");
-const roleService = require("./roleService");
-const scimUserService = require("./scimUserService");
+import type { PoolClient } from "pg";
+import appDb = require("../lib/appDb");
+import authProviderService = require("./authProviderService");
+import auditService = require("./auditService");
+import roleService = require("./roleService");
+import scimUserService = require("./scimUserService");
 
-const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
+export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
 
-function scimGroupListEmpty() {
+interface ScimMember {
+  value?: string;
+  [key: string]: unknown;
+}
+
+interface ScimGroupRepresentation {
+  schemas: string[];
+  id: string;
+  displayName: string | null;
+  members: ScimMember[];
+  meta: {
+    resourceType: string;
+    location: string;
+    provider_id: string;
+  };
+}
+
+interface ApplyDeltaArgs {
+  providerId: string;
+  provider: unknown;
+  groupName: string;
+  addMembers?: ScimMember[];
+  removeMembers?: ScimMember[];
+  actorUserId?: string | null;
+}
+
+interface ApplyDeltaResult {
+  ok: true;
+  applied: { added_roles: string[]; removed_roles: string[] };
+}
+
+interface ScimErrorResult {
+  statusCode: number;
+  body: unknown;
+}
+
+interface ScimOperation {
+  op?: string;
+  path?: string;
+  value?: unknown;
+}
+
+interface ScimGroupBody {
+  id?: string;
+  externalId?: string;
+  displayName?: string;
+  members?: ScimMember[];
+  Operations?: ScimOperation[];
+}
+
+function scimGroupListEmpty(): {
+  schemas: string[];
+  totalResults: number;
+  itemsPerPage: number;
+  startIndex: number;
+  Resources: unknown[];
+} {
   return {
     schemas: [scimUserService.SCIM_LIST_RESPONSE_SCHEMA],
     totalResults: 0,
@@ -31,10 +88,10 @@ function scimGroupListEmpty() {
 
 // Resolve a group's `members[].value` (each is a SCIM user id — our users.id
 // or an externalId) to local user rows for the given provider.
-async function resolveMembers(providerId, members) {
+async function resolveMembers(providerId: string, members: ScimMember[]): Promise<Array<{ id: string }>> {
   if (!Array.isArray(members) || members.length === 0) return [];
-  const ids = members.map((m) => (m && typeof m.value === "string" ? m.value : null)).filter(Boolean);
-  const out = [];
+  const ids = members.map((m) => (m && typeof m.value === "string" ? m.value : null)).filter((v): v is string => v !== null);
+  const out: Array<{ id: string }> = [];
   for (const id of ids) {
     const row = await scimUserService.findUserByExternalIdOrUserId(providerId, id);
     if (row) out.push(row);
@@ -42,11 +99,13 @@ async function resolveMembers(providerId, members) {
   return out;
 }
 
-function rolesForGroupName(provider, groupName) {
+function rolesForGroupName(provider: unknown, groupName: string): string[] {
   return authProviderService.scimGroupsToRoles(provider, [groupName]);
 }
 
-async function applyMembershipDelta({ providerId, provider, groupName, addMembers = [], removeMembers = [], actorUserId = null }) {
+export async function applyMembershipDelta(
+  { providerId, provider, groupName, addMembers = [], removeMembers = [], actorUserId = null }: ApplyDeltaArgs
+): Promise<ApplyDeltaResult> {
   const targetRoles = rolesForGroupName(provider, groupName);
   if (targetRoles.length === 0) {
     // Unmapped group — no role changes to apply, but still a 200 success so
@@ -61,7 +120,7 @@ async function applyMembershipDelta({ providerId, provider, groupName, addMember
     return { ok: true, applied: { added_roles: [], removed_roles: [] } };
   }
 
-  await appDb.withTransaction(async (client) => {
+  await appDb.withTransaction(async (client: PoolClient) => {
     for (const user of addedRows) {
       await roleService.assignRolesByName(client, {
         userId: user.id,
@@ -96,7 +155,7 @@ async function applyMembershipDelta({ providerId, provider, groupName, addMember
   return { ok: true, applied: { added_roles: targetRoles, removed_roles: targetRoles } };
 }
 
-function groupToScim({ providerId, body }) {
+function groupToScim({ providerId, body }: { providerId: string; body: ScimGroupBody }): ScimGroupRepresentation {
   return {
     schemas: [SCIM_GROUP_SCHEMA],
     id: typeof body.id === "string" && body.id ? body.id : (typeof body.externalId === "string" ? body.externalId : ""),
@@ -110,7 +169,9 @@ function groupToScim({ providerId, body }) {
   };
 }
 
-async function createOrReplaceGroup({ providerId, body, actorUserId = null }) {
+export async function createOrReplaceGroup(
+  { providerId, body, actorUserId = null }: { providerId: string; body: ScimGroupBody; actorUserId?: string | null }
+): Promise<ScimErrorResult> {
   if (!body || typeof body.displayName !== "string" || !body.displayName.trim()) {
     return scimUserService.scimError(400, "displayName is required", "invalidValue");
   }
@@ -118,7 +179,7 @@ async function createOrReplaceGroup({ providerId, body, actorUserId = null }) {
   if (!provider) {
     return scimUserService.scimError(404, "provider not found");
   }
-  const members = Array.isArray(body.members) ? body.members : [];
+  const members: ScimMember[] = Array.isArray(body.members) ? body.members : [];
   // Treat this as the canonical set: everyone in `members` should hold the
   // mapped role(s), nobody else needs to.
   await applyMembershipDelta({
@@ -131,7 +192,9 @@ async function createOrReplaceGroup({ providerId, body, actorUserId = null }) {
   return { statusCode: 200, body: groupToScim({ providerId, body }) };
 }
 
-async function patchGroup({ providerId, body, actorUserId = null }) {
+export async function patchGroup(
+  { providerId, body, actorUserId = null }: { providerId: string; body: ScimGroupBody; actorUserId?: string | null }
+): Promise<ScimErrorResult> {
   if (!body || !Array.isArray(body.Operations)) {
     return scimUserService.scimError(400, "Operations array is required", "invalidSyntax");
   }
@@ -140,8 +203,8 @@ async function patchGroup({ providerId, body, actorUserId = null }) {
     return scimUserService.scimError(404, "provider not found");
   }
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : null;
-  let addMembers = [];
-  let removeMembers = [];
+  let addMembers: ScimMember[] = [];
+  let removeMembers: ScimMember[] = [];
   let groupName = displayName;
   for (const op of body.Operations) {
     if (!op || typeof op.op !== "string") continue;
@@ -150,7 +213,7 @@ async function patchGroup({ providerId, body, actorUserId = null }) {
       groupName = op.value.trim();
     }
     if (op.path === "members" || (op.path && op.path.startsWith("members"))) {
-      const value = Array.isArray(op.value) ? op.value : [];
+      const value: ScimMember[] = Array.isArray(op.value) ? (op.value as ScimMember[]) : [];
       if (opName === "add" || opName === "replace") addMembers = addMembers.concat(value);
       if (opName === "remove") removeMembers = removeMembers.concat(value);
     }
@@ -174,14 +237,6 @@ async function patchGroup({ providerId, body, actorUserId = null }) {
 
 // SCIM Groups list / get are stubbed because we don't persist the group set
 // — return an empty list so IdPs that probe for existence don't error.
-function listGroups() {
+export function listGroups(): ScimErrorResult {
   return { statusCode: 200, body: scimGroupListEmpty() };
 }
-
-module.exports = {
-  SCIM_GROUP_SCHEMA,
-  createOrReplaceGroup,
-  patchGroup,
-  listGroups,
-  applyMembershipDelta
-};

@@ -1,17 +1,74 @@
-const crypto = require("crypto");
-const appDb = require("../lib/appDb");
+import { randomBytes, scryptSync, createHash, timingSafeEqual } from "crypto";
+import appDb = require("../lib/appDb");
 
 const SCRYPT_KEYLEN = 64;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
 const SESSION_TOKEN_BYTES = 32;
 const DEFAULT_SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
-const SESSION_COOKIE_NAME = "rp_session";
-const PASSWORD_MIN_LENGTH = 8;
-const PASSWORD_MAX_LENGTH = 256;
+export const SESSION_COOKIE_NAME = "rp_session";
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 256;
 const EMAIL_MAX_LENGTH = 320;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function getSessionDurationMs() {
+export interface AuthUserRow {
+  id: string;
+  email: string;
+  password_hash: string | null;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+export interface PublicAuthUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+export interface SessionRecord {
+  token: string;
+  sessionId: string;
+  expiresAt: Date | string;
+}
+
+export interface ActiveSession {
+  sessionId: string;
+  expiresAt: Date | string;
+  user: PublicAuthUser;
+}
+
+export interface CreateUserInput {
+  email: unknown;
+  password: unknown;
+  displayName?: unknown;
+}
+
+export interface LoginInput {
+  email: unknown;
+  password: unknown;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+}
+
+export interface LoginSuccess {
+  user: PublicAuthUser;
+  token: string;
+  sessionId: string;
+  expiresAt: Date | string;
+}
+
+export type PasswordPolicyResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string };
+
+export function getSessionDurationMs(): number {
   const raw = Number(process.env.AUTH_SESSION_DURATION_MS);
   if (Number.isFinite(raw) && raw > 0) {
     return raw;
@@ -19,7 +76,7 @@ function getSessionDurationMs() {
   return DEFAULT_SESSION_DURATION_MS;
 }
 
-function normalizeEmail(value) {
+export function normalizeEmail(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -37,7 +94,7 @@ function normalizeEmail(value) {
 // ones most often shown up in password-spray attempts against this app's
 // length minimum. Kept short on purpose — we lean on length + char-class
 // coverage for entropy, not on a giant denylist.
-const BANNED_PASSWORDS = new Set([
+export const BANNED_PASSWORDS: ReadonlySet<string> = new Set([
   "password",
   "password1",
   "password!",
@@ -52,7 +109,7 @@ const BANNED_PASSWORDS = new Set([
   "iloveyou1"
 ]);
 
-function passwordCharClasses(value) {
+function passwordCharClasses(value: string): number {
   let classes = 0;
   if (/[a-z]/.test(value)) classes += 1;
   if (/[A-Z]/.test(value)) classes += 1;
@@ -65,7 +122,7 @@ function passwordCharClasses(value) {
 // Returns { ok: true } or { ok: false, code, message } with a stable error
 // code so the API can map it onto a `400` response and the frontend onto a
 // specific message.
-function checkPasswordPolicy(value, { email = null } = {}) {
+export function checkPasswordPolicy(value: unknown, { email = null }: { email?: string | null } = {}): PasswordPolicyResult {
   if (typeof value !== "string") {
     return { ok: false, code: "invalid_password", message: "password must be a string" };
   }
@@ -111,13 +168,13 @@ function checkPasswordPolicy(value, { email = null } = {}) {
   return { ok: true };
 }
 
-function validatePassword(value, options = {}) {
+export function validatePassword(value: unknown, options: { email?: string | null } = {}): boolean {
   return checkPasswordPolicy(value, options).ok;
 }
 
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16);
-  const derived = crypto.scryptSync(password, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS);
+export function hashPassword(password: unknown): string {
+  const salt = randomBytes(16);
+  const derived = scryptSync(password as string, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS);
   return [
     "scrypt",
     SCRYPT_PARAMS.N,
@@ -128,7 +185,7 @@ function hashPassword(password) {
   ].join("$");
 }
 
-function verifyPassword(password, encoded) {
+export function verifyPassword(password: unknown, encoded: unknown): boolean {
   if (typeof password !== "string" || typeof encoded !== "string") {
     return false;
   }
@@ -142,8 +199,8 @@ function verifyPassword(password, encoded) {
   if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p)) {
     return false;
   }
-  let salt;
-  let expected;
+  let salt: Buffer;
+  let expected: Buffer;
   try {
     salt = Buffer.from(parts[4], "hex");
     expected = Buffer.from(parts[5], "hex");
@@ -153,27 +210,27 @@ function verifyPassword(password, encoded) {
   if (expected.length === 0) {
     return false;
   }
-  let derived;
+  let derived: Buffer;
   try {
-    derived = crypto.scryptSync(password, salt, expected.length, { N, r, p });
+    derived = scryptSync(password, salt, expected.length, { N, r, p });
   } catch {
     return false;
   }
   if (derived.length !== expected.length) {
     return false;
   }
-  return crypto.timingSafeEqual(derived, expected);
+  return timingSafeEqual(derived, expected);
 }
 
-function generateSessionToken() {
-  return crypto.randomBytes(SESSION_TOKEN_BYTES).toString("hex");
+export function generateSessionToken(): string {
+  return randomBytes(SESSION_TOKEN_BYTES).toString("hex");
 }
 
-function hashSessionToken(token) {
-  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
-function rowToUser(row) {
+export function rowToUser(row: AuthUserRow | null | undefined): PublicAuthUser | null {
   if (!row) {
     return null;
   }
@@ -188,47 +245,48 @@ function rowToUser(row) {
   };
 }
 
-async function findUserByEmail(email) {
+export async function findUserByEmail(email: unknown): Promise<AuthUserRow | null> {
   const normalized = normalizeEmail(email);
   if (!normalized) {
     return null;
   }
-  const result = await appDb.query(
+  const result = await appDb.query<AuthUserRow>(
     "SELECT id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at FROM users WHERE lower(email) = $1",
     [normalized]
   );
   return result.rows[0] || null;
 }
 
-async function findUserById(id) {
+export async function findUserById(id: unknown): Promise<AuthUserRow | null> {
   if (typeof id !== "string" || !id) {
     return null;
   }
-  const result = await appDb.query(
+  const result = await appDb.query<AuthUserRow>(
     "SELECT id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at FROM users WHERE id = $1",
     [id]
   );
   return result.rows[0] || null;
 }
 
-async function createUser({ email, password, displayName = null }) {
+export async function createUser({ email, password, displayName = null }: CreateUserInput): Promise<AuthUserRow> {
   const normalized = normalizeEmail(email);
   if (!normalized) {
-    const err = new Error("invalid email");
+    const err = new Error("invalid email") as Error & { code: string };
     err.code = "invalid_email";
     throw err;
   }
   const policy = checkPasswordPolicy(password, { email: normalized });
-  if (!policy.ok) {
-    const err = new Error(policy.message);
-    err.code = policy.code;
+  if (policy.ok !== true) {
+    const { code, message } = policy;
+    const err = new Error(message) as Error & { code: string };
+    err.code = code;
     throw err;
   }
   const passwordHash = hashPassword(password);
   const trimmedDisplayName = typeof displayName === "string" && displayName.trim()
     ? displayName.trim()
     : null;
-  const result = await appDb.query(
+  const result = await appDb.query<AuthUserRow>(
     `
       INSERT INTO users (email, password_hash, display_name)
       VALUES ($1, $2, $3)
@@ -239,13 +297,13 @@ async function createUser({ email, password, displayName = null }) {
   return result.rows[0];
 }
 
-async function createSession(userId, { userAgent = null, ipAddress = null } = {}) {
+export async function createSession(userId: string, { userAgent = null, ipAddress = null }: { userAgent?: string | null; ipAddress?: string | null } = {}): Promise<SessionRecord> {
   const token = generateSessionToken();
   const tokenHash = hashSessionToken(token);
   const expiresAt = new Date(Date.now() + getSessionDurationMs());
   const trimmedAgent = typeof userAgent === "string" ? userAgent.slice(0, 1024) : null;
   const trimmedIp = typeof ipAddress === "string" ? ipAddress.slice(0, 64) : null;
-  const result = await appDb.query(
+  const result = await appDb.query<{ id: string; expires_at: Date | string }>(
     `
       INSERT INTO user_sessions (user_id, token_hash, user_agent, ip_address, expires_at)
       VALUES ($1, $2, $3, $4, $5)
@@ -260,12 +318,16 @@ async function createSession(userId, { userAgent = null, ipAddress = null } = {}
   };
 }
 
-async function findActiveSession(token) {
+export async function findActiveSession(token: unknown): Promise<ActiveSession | null> {
   if (typeof token !== "string" || !token) {
     return null;
   }
   const tokenHash = hashSessionToken(token);
-  const result = await appDb.query(
+  const result = await appDb.query<AuthUserRow & {
+    session_id: string;
+    expires_at: Date | string;
+    revoked_at: Date | string | null;
+  }>(
     `
       SELECT
         s.id AS session_id,
@@ -295,18 +357,18 @@ async function findActiveSession(token) {
   return {
     sessionId: row.session_id,
     expiresAt: row.expires_at,
-    user: rowToUser(row)
+    user: rowToUser(row) as PublicAuthUser
   };
 }
 
-async function touchSession(sessionId) {
+export async function touchSession(sessionId: string): Promise<void> {
   await appDb.query(
     "UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1",
     [sessionId]
   );
 }
 
-async function revokeSessionByToken(token) {
+export async function revokeSessionByToken(token: unknown): Promise<boolean> {
   if (typeof token !== "string" || !token) {
     return false;
   }
@@ -315,10 +377,10 @@ async function revokeSessionByToken(token) {
     "UPDATE user_sessions SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL",
     [tokenHash]
   );
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
-async function loginWithPassword({ email, password, userAgent, ipAddress }) {
+export async function loginWithPassword({ email, password, userAgent, ipAddress }: LoginInput): Promise<LoginSuccess | null> {
   const user = await findUserByEmail(email);
   if (!user || !user.password_hash || !user.is_active) {
     return null;
@@ -329,33 +391,9 @@ async function loginWithPassword({ email, password, userAgent, ipAddress }) {
   const session = await createSession(user.id, { userAgent, ipAddress });
   await appDb.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
   return {
-    user: rowToUser(user),
+    user: rowToUser(user) as PublicAuthUser,
     token: session.token,
     sessionId: session.sessionId,
     expiresAt: session.expiresAt
   };
 }
-
-module.exports = {
-  SESSION_COOKIE_NAME,
-  PASSWORD_MIN_LENGTH,
-  PASSWORD_MAX_LENGTH,
-  BANNED_PASSWORDS,
-  normalizeEmail,
-  validatePassword,
-  checkPasswordPolicy,
-  hashPassword,
-  verifyPassword,
-  generateSessionToken,
-  hashSessionToken,
-  findUserByEmail,
-  findUserById,
-  createUser,
-  createSession,
-  findActiveSession,
-  touchSession,
-  revokeSessionByToken,
-  loginWithPassword,
-  rowToUser,
-  getSessionDurationMs
-};

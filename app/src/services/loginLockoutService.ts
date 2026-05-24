@@ -22,21 +22,36 @@
 // All constants are overridable via env vars so deployments / tests can
 // dial the behavior without code edits.
 
-const appDb = require("../lib/appDb");
+import appDb = require("../lib/appDb");
 
-const DEFAULTS = {
+export interface LockoutConfig {
+  windowMs: number;
+  emailThreshold: number;
+  ipThreshold: number;
+}
+
+export interface CheckLockoutInput {
+  email?: string | null;
+  ipAddress?: string | null;
+}
+
+export type CheckLockoutResult =
+  | { locked: false }
+  | { locked: true; reason: string; retryAfterSeconds: number };
+
+export const DEFAULTS: LockoutConfig = {
   windowMs: 15 * 60 * 1000,
   emailThreshold: 5,
   ipThreshold: 20
 };
 
-function readPositiveInt(name, fallback) {
+function readPositiveInt(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
   if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
   return fallback;
 }
 
-function getConfig() {
+export function getConfig(): LockoutConfig {
   return {
     windowMs: readPositiveInt("AUTH_LOCKOUT_WINDOW_MS", DEFAULTS.windowMs),
     emailThreshold: readPositiveInt("AUTH_LOCKOUT_EMAIL_THRESHOLD", DEFAULTS.emailThreshold),
@@ -44,21 +59,26 @@ function getConfig() {
   };
 }
 
-function normalizeEmail(email) {
+function normalizeEmail(email: unknown): string | null {
   if (typeof email !== "string") return null;
   const trimmed = email.trim().toLowerCase();
   return trimmed || null;
 }
 
-function normalizeIp(ipAddress) {
+function normalizeIp(ipAddress: unknown): string | null {
   if (typeof ipAddress !== "string") return null;
   const trimmed = ipAddress.trim();
   return trimmed || null;
 }
 
+interface FailureCountRow {
+  failures: number;
+  last_failure_at: Date | string | null;
+}
+
 // Returns `{ locked: false }` when the request may proceed, or
 // `{ locked: true, reason, retryAfterSeconds }` when it must be rejected.
-async function checkLockout({ email, ipAddress } = {}) {
+export async function checkLockout({ email, ipAddress }: CheckLockoutInput = {}): Promise<CheckLockoutResult> {
   const config = getConfig();
   const normalizedEmail = normalizeEmail(email);
   const normalizedIp = normalizeIp(ipAddress);
@@ -71,7 +91,7 @@ async function checkLockout({ email, ipAddress } = {}) {
   if (normalizedEmail) {
     // Count failures since the most recent success (so a successful login
     // clears the email-side strike count).
-    const result = await appDb.query(
+    const result = await appDb.query<FailureCountRow>(
       `
         WITH recent AS (
           SELECT outcome, created_at
@@ -96,14 +116,14 @@ async function checkLockout({ email, ipAddress } = {}) {
       `,
       [normalizedEmail, sinceIso]
     );
-    const row = result.rows[0] || { failures: 0, last_failure_at: null };
+    const row: FailureCountRow = result.rows[0] || { failures: 0, last_failure_at: null };
     if (row.failures >= config.emailThreshold) {
       return buildLocked("too_many_failed_logins", row.last_failure_at, config.windowMs);
     }
   }
 
   if (normalizedIp) {
-    const result = await appDb.query(
+    const result = await appDb.query<FailureCountRow>(
       `
         SELECT
           COUNT(*)::int AS failures,
@@ -116,7 +136,7 @@ async function checkLockout({ email, ipAddress } = {}) {
       `,
       [normalizedIp, sinceIso]
     );
-    const row = result.rows[0] || { failures: 0, last_failure_at: null };
+    const row: FailureCountRow = result.rows[0] || { failures: 0, last_failure_at: null };
     if (row.failures >= config.ipThreshold) {
       return buildLocked("ip_throttled", row.last_failure_at, config.windowMs);
     }
@@ -125,7 +145,7 @@ async function checkLockout({ email, ipAddress } = {}) {
   return { locked: false };
 }
 
-function buildLocked(reason, lastFailureAt, windowMs) {
+function buildLocked(reason: string, lastFailureAt: Date | string | null, windowMs: number): CheckLockoutResult {
   let retryAfterSeconds = Math.ceil(windowMs / 1000);
   if (lastFailureAt) {
     const last = lastFailureAt instanceof Date
@@ -138,9 +158,3 @@ function buildLocked(reason, lastFailureAt, windowMs) {
   }
   return { locked: true, reason, retryAfterSeconds };
 }
-
-module.exports = {
-  DEFAULTS,
-  getConfig,
-  checkLockout
-};

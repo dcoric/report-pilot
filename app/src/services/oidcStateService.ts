@@ -17,17 +17,29 @@
 //   pruneExpired()
 //     Exposed for tests / a future scheduled sweep. Safe to call any time.
 
-const crypto = require("crypto");
-const appDb = require("../lib/appDb");
+import { createHash } from "crypto";
+import appDb = require("../lib/appDb");
 
 const DEFAULT_GRACE_MS = 60 * 1000;
 
-function hashState(state) {
-  if (typeof state !== "string" || !state) return null;
-  return crypto.createHash("sha256").update(state, "utf8").digest("hex");
+export interface RecordUsedStateInput {
+  state: string;
+  providerId: string | null;
+  expiresAt: Date | number | string;
 }
 
-async function recordUsedState({ state, providerId, expiresAt }) {
+export interface RecordUsedStateResult {
+  replayed: boolean;
+  ok: boolean;
+  reason?: string;
+}
+
+export function hashState(state: unknown): string | null {
+  if (typeof state !== "string" || !state) return null;
+  return createHash("sha256").update(state, "utf8").digest("hex");
+}
+
+export async function recordUsedState({ state, providerId, expiresAt }: RecordUsedStateInput): Promise<RecordUsedStateResult> {
   const hash = hashState(state);
   if (!hash) {
     return { replayed: false, ok: false, reason: "invalid_state" };
@@ -46,7 +58,7 @@ async function recordUsedState({ state, providerId, expiresAt }) {
       [hash, providerId || null, expiry.toISOString()]
     );
   } catch (err) {
-    if (err && err.code === "23505") {
+    if (err && (err as { code?: string }).code === "23505") {
       return { replayed: true, ok: false, reason: "state_replayed" };
     }
     throw err;
@@ -58,12 +70,6 @@ async function recordUsedState({ state, providerId, expiresAt }) {
   return { replayed: false, ok: true };
 }
 
-async function pruneExpired() {
+export async function pruneExpired(): Promise<void> {
   await appDb.query("DELETE FROM oidc_used_states WHERE expires_at < NOW()");
 }
-
-module.exports = {
-  hashState,
-  recordUsedState,
-  pruneExpired
-};
