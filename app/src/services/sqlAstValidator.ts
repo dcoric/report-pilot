@@ -1,8 +1,27 @@
-const { Parser } = require("node-sql-parser");
+import { Parser } from "node-sql-parser";
+import type { SqlDialect } from "./sqlGenerator";
+
+export interface SchemaObjectAllowlistEntry {
+  schema_name: string;
+  object_name: string;
+  [key: string]: unknown;
+}
+
+export interface ParsedRef {
+  schema: string;
+  object: string;
+  raw: string;
+}
+
+export interface ValidateAstReadOnlyResult {
+  ok: boolean;
+  errors: string[];
+  refs: ParsedRef[];
+}
 
 const parser = new Parser();
 
-function normalizeIdentifier(identifier) {
+function normalizeIdentifier(identifier: unknown): string {
   return String(identifier || "")
     .replace(/^"+|"+$/g, "")
     .replace(/^\[+|\]+$/g, "")
@@ -10,20 +29,24 @@ function normalizeIdentifier(identifier) {
     .toLowerCase();
 }
 
-function parserDialectsFor(dialect) {
+function parserDialectsFor(dialect: SqlDialect | string): string[] {
   if (dialect === "mssql") {
     return ["TransactSQL", "MSSQL", "TSQL"];
   }
   return ["Postgresql"];
 }
 
-function parseAst(sql, dialect = "postgres") {
-  let lastError = null;
+interface ParseAstFailure {
+  error: string;
+}
+
+function parseAst(sql: string, dialect: SqlDialect | string = "postgres"): unknown | ParseAstFailure {
+  let lastError: Error | null = null;
   for (const parserDialect of parserDialectsFor(dialect)) {
     try {
       return parser.astify(sql, { database: parserDialect });
     } catch (err) {
-      lastError = err;
+      lastError = err as Error;
     }
   }
   return {
@@ -31,13 +54,13 @@ function parseAst(sql, dialect = "postgres") {
   };
 }
 
-function validateSingleSelect(ast) {
+function validateSingleSelect(ast: unknown): { ok: boolean; errors: string[] } {
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1) {
     return { ok: false, errors: ["Only one SQL statement is allowed"] };
   }
 
-  const statement = statements[0];
+  const statement = statements[0] as { type?: string } | null;
   if (!statement || statement.type !== "select") {
     return { ok: false, errors: ["Only SELECT queries are allowed"] };
   }
@@ -45,8 +68,8 @@ function validateSingleSelect(ast) {
   return { ok: true, errors: [] };
 }
 
-function extractRefsFromTableList(sql, dialect = "postgres") {
-  let rawRefs = [];
+function extractRefsFromTableList(sql: string, dialect: SqlDialect | string = "postgres"): ParsedRef[] {
+  let rawRefs: string[] = [];
   for (const parserDialect of parserDialectsFor(dialect)) {
     try {
       rawRefs = parser.tableList(sql, { database: parserDialect });
@@ -72,10 +95,14 @@ function extractRefsFromTableList(sql, dialect = "postgres") {
       const object = normalizeIdentifier(objectPart);
       return { schema, object, raw: `${schema}.${object}` };
     })
-    .filter(Boolean);
+    .filter((entry): entry is ParsedRef => entry !== null);
 }
 
-function validateAllowlistedObjects(sql, schemaObjects, dialect = "postgres") {
+function validateAllowlistedObjects(
+  sql: string,
+  schemaObjects: SchemaObjectAllowlistEntry[] | unknown,
+  dialect: SqlDialect | string = "postgres"
+): ValidateAstReadOnlyResult {
   const refs = extractRefsFromTableList(sql, dialect);
 
   if (!Array.isArray(schemaObjects) || schemaObjects.length === 0) {
@@ -83,7 +110,7 @@ function validateAllowlistedObjects(sql, schemaObjects, dialect = "postgres") {
   }
 
   const allowSet = new Set(
-    (schemaObjects || []).map((obj) => `${obj.schema_name.toLowerCase()}.${obj.object_name.toLowerCase()}`)
+    schemaObjects.map((obj) => `${obj.schema_name.toLowerCase()}.${obj.object_name.toLowerCase()}`)
   );
 
   const unknown = refs.filter((ref) => !allowSet.has(`${ref.schema}.${ref.object}`));
@@ -103,10 +130,10 @@ function validateAllowlistedObjects(sql, schemaObjects, dialect = "postgres") {
   };
 }
 
-function extractRefsWithRegex(sql) {
-  const refs = [];
+function extractRefsWithRegex(sql: string): ParsedRef[] {
+  const refs: ParsedRef[] = [];
   const pattern = /\b(?:from|join)\s+([a-z0-9_\[\]."]+)/gi;
-  let match;
+  let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(sql)) !== null) {
     const normalized = normalizeObjectRef(match[1]);
@@ -119,7 +146,7 @@ function extractRefsWithRegex(sql) {
   return refs;
 }
 
-function normalizeObjectRef(rawRef) {
+function normalizeObjectRef(rawRef: unknown): ParsedRef | null {
   const cleaned = String(rawRef || "")
     .replace(/[;,]+$/g, "")
     .trim();
@@ -144,7 +171,10 @@ function normalizeObjectRef(rawRef) {
   return { schema, object, raw: `${schema}.${object}` };
 }
 
-function validateMssqlReadOnlyFallback(sql, schemaObjects) {
+function validateMssqlReadOnlyFallback(
+  sql: unknown,
+  schemaObjects: SchemaObjectAllowlistEntry[] | unknown
+): ValidateAstReadOnlyResult {
   const text = String(sql || "").trim();
   if (!/^\s*(select|with)\b/i.test(text)) {
     return { ok: false, errors: ["Only SELECT queries are allowed"], refs: [] };
@@ -175,13 +205,17 @@ function validateMssqlReadOnlyFallback(sql, schemaObjects) {
   return { ok: true, errors: [], refs };
 }
 
-function validateAstReadOnly(sql, schemaObjects, dialect = "postgres") {
+export function validateAstReadOnly(
+  sql: string,
+  schemaObjects: SchemaObjectAllowlistEntry[] | unknown,
+  dialect: SqlDialect | string = "postgres"
+): ValidateAstReadOnlyResult {
   const parsed = parseAst(sql, dialect);
-  if (parsed.error) {
+  if ((parsed as ParseAstFailure).error) {
     if (dialect === "mssql") {
       return validateMssqlReadOnlyFallback(sql, schemaObjects);
     }
-    return { ok: false, errors: [parsed.error], refs: [] };
+    return { ok: false, errors: [(parsed as ParseAstFailure).error], refs: [] };
   }
 
   const statementCheck = validateSingleSelect(parsed);
@@ -191,7 +225,3 @@ function validateAstReadOnly(sql, schemaObjects, dialect = "postgres") {
 
   return validateAllowlistedObjects(sql, schemaObjects, dialect);
 }
-
-module.exports = {
-  validateAstReadOnly
-};

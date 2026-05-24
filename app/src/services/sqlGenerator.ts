@@ -1,4 +1,17 @@
-function generateSqlFromQuestion(question, schemaObjects, maxRows, dialect = "postgres") {
+export type SqlDialect = "postgres" | "mssql";
+
+export interface SchemaObjectLite {
+  schema_name: string;
+  object_name: string;
+  [key: string]: unknown;
+}
+
+export function generateSqlFromQuestion(
+  question: unknown,
+  schemaObjects: SchemaObjectLite[],
+  maxRows: unknown,
+  dialect: SqlDialect = "postgres"
+): string {
   const normalizedQuestion = String(question || "").toLowerCase();
   const limit = Number.isFinite(Number(maxRows)) ? Number(maxRows) : 1000;
 
@@ -19,7 +32,7 @@ function generateSqlFromQuestion(question, schemaObjects, maxRows, dialect = "po
   return `SELECT * FROM ${qualifiedTable} LIMIT ${limit};`;
 }
 
-function isCountQuestion(question) {
+function isCountQuestion(question: string): boolean {
   return (
     question.includes("count") ||
     question.includes("how many") ||
@@ -27,7 +40,7 @@ function isCountQuestion(question) {
   );
 }
 
-function pickObjectFromQuestion(question, schemaObjects) {
+function pickObjectFromQuestion(question: string, schemaObjects: SchemaObjectLite[]): SchemaObjectLite | undefined {
   return schemaObjects.find((obj) => {
     const fullName = `${obj.schema_name}.${obj.object_name}`.toLowerCase();
     const simpleName = String(obj.object_name).toLowerCase();
@@ -35,13 +48,9 @@ function pickObjectFromQuestion(question, schemaObjects) {
   });
 }
 
-function quoteIdentifier(identifier, dialect = "postgres") {
+function quoteIdentifier(identifier: string, dialect: SqlDialect = "postgres"): string {
   if (dialect === "mssql") {
     return `[${String(identifier).replace(/]/g, "]]")}]`;
   }
   return `"${String(identifier).replace(/"/g, "\"\"")}"`;
 }
-
-module.exports = {
-  generateSqlFromQuestion
-};

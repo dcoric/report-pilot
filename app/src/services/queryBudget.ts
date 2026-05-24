@@ -1,14 +1,35 @@
-function extractRootPlan(explainRows) {
+export interface ExplainPlanNode {
+  "Total Cost"?: number;
+  "Plan Rows"?: number;
+  Plans?: ExplainPlanNode[];
+  [key: string]: unknown;
+}
+
+export interface ExplainBudgetMetrics {
+  maxTotalCost: number;
+  maxPlanRows: number;
+}
+
+export type EvaluateExplainBudgetResult =
+  | { ok: true; errors: []; metrics: ExplainBudgetMetrics }
+  | { ok: false; errors: string[]; metrics: ExplainBudgetMetrics | null };
+
+export interface ExplainBudgetOptions {
+  maxTotalCost?: number;
+  maxPlanRows?: number;
+}
+
+function extractRootPlan(explainRows: unknown): ExplainPlanNode | null {
   if (!Array.isArray(explainRows) || explainRows.length === 0) {
     return null;
   }
 
-  const first = explainRows[0];
+  const first = explainRows[0] as Record<string, unknown> | undefined;
   if (!first) {
     return null;
   }
 
-  const queryPlan = first["QUERY PLAN"] || first.query_plan;
+  const queryPlan = (first["QUERY PLAN"] || first.query_plan) as Array<{ Plan?: ExplainPlanNode }> | undefined;
   if (!Array.isArray(queryPlan) || queryPlan.length === 0) {
     return null;
   }
@@ -16,7 +37,7 @@ function extractRootPlan(explainRows) {
   return queryPlan[0]?.Plan || null;
 }
 
-function walkPlans(plan, fn) {
+function walkPlans(plan: ExplainPlanNode | null | undefined, fn: (node: ExplainPlanNode) => void): void {
   if (!plan) {
     return;
   }
@@ -27,8 +48,8 @@ function walkPlans(plan, fn) {
   }
 }
 
-function collectPlanMetrics(rootPlan) {
-  const metrics = {
+function collectPlanMetrics(rootPlan: ExplainPlanNode): ExplainBudgetMetrics {
+  const metrics: ExplainBudgetMetrics = {
     maxTotalCost: 0,
     maxPlanRows: 0
   };
@@ -48,7 +69,7 @@ function collectPlanMetrics(rootPlan) {
   return metrics;
 }
 
-function evaluateExplainBudget(explainRows, opts = {}) {
+export function evaluateExplainBudget(explainRows: unknown, opts: ExplainBudgetOptions = {}): EvaluateExplainBudgetResult {
   const rootPlan = extractRootPlan(explainRows);
   if (!rootPlan) {
     return {
@@ -62,7 +83,7 @@ function evaluateExplainBudget(explainRows, opts = {}) {
   const maxTotalCost = Number(opts.maxTotalCost || 500000);
   const maxPlanRows = Number(opts.maxPlanRows || 1000000);
 
-  const errors = [];
+  const errors: string[] = [];
   if (metrics.maxTotalCost > maxTotalCost) {
     errors.push(`Estimated total cost ${metrics.maxTotalCost} exceeds budget ${maxTotalCost}`);
   }
@@ -72,11 +93,7 @@ function evaluateExplainBudget(explainRows, opts = {}) {
 
   return {
     ok: errors.length === 0,
-    errors,
+    errors: errors as never,
     metrics
   };
 }
-
-module.exports = {
-  evaluateExplainBudget
-};

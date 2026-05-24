@@ -14,7 +14,7 @@ const { postJson, extractJsonObject } = require("./httpClient");
  * variables to satisfy OpenRouter's attribution guidelines. Embeddings are not
  * exposed by this provider, so `embed()` throws.
  */
-class OpenRouterAdapter implements LlmAdapter {
+export class OpenRouterAdapter implements LlmAdapter {
   readonly provider: string;
   apiKey: string;
   defaultModel: string;

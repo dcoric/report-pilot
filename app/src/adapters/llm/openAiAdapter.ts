@@ -10,7 +10,7 @@ import type {
 const { postJson, extractJsonObject } = require("./httpClient");
 
 /** Adapter for OpenAI's REST API (chat completions + embeddings). */
-class OpenAiAdapter implements LlmAdapter {
+export class OpenAiAdapter implements LlmAdapter {
   readonly provider: string;
   apiKey: string;
   defaultModel: string;

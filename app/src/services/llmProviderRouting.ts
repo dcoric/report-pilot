@@ -1,16 +1,36 @@
-const appDb = require("../lib/appDb");
-const { OpenAiAdapter } = require("../adapters/llm/openAiAdapter");
-const { GeminiAdapter } = require("../adapters/llm/geminiAdapter");
-const { DeepSeekAdapter } = require("../adapters/llm/deepSeekAdapter");
-const { OpenRouterAdapter } = require("../adapters/llm/openRouterAdapter");
-const { CustomAdapter } = require("../adapters/llm/customAdapter");
-const { resolveApiKey } = require("../adapters/llm/httpClient");
+import appDb = require("../lib/appDb");
+import { OpenAiAdapter } from "../adapters/llm/openAiAdapter";
+import { GeminiAdapter } from "../adapters/llm/geminiAdapter";
+import { DeepSeekAdapter } from "../adapters/llm/deepSeekAdapter";
+import { OpenRouterAdapter } from "../adapters/llm/openRouterAdapter";
+import { CustomAdapter } from "../adapters/llm/customAdapter";
+import { resolveApiKey } from "../adapters/llm/httpClient";
+import type { LlmAdapter } from "../adapters/llm/types";
 
-const DEFAULT_PROVIDER_ORDER = ["openai", "gemini", "deepseek", "openrouter"];
+const DEFAULT_PROVIDER_ORDER = ["openai", "gemini", "deepseek", "openrouter"] as const;
 
-function buildProviderOrder(requestedProvider, routingRule, providerConfigs) {
+export interface ProviderConfigRow {
+  provider: string;
+  api_key_ref: string | null;
+  default_model: string | null;
+  base_url: string | null;
+  display_name: string | null;
+  enabled: boolean;
+}
+
+export interface RoutingRule {
+  primary_provider: string | null;
+  fallback_providers: string[] | null;
+  strategy: string | null;
+}
+
+export function buildProviderOrder(
+  requestedProvider: string | null | undefined,
+  routingRule: RoutingRule | null | undefined,
+  providerConfigs: Map<string, ProviderConfigRow>
+): string[] {
   if (requestedProvider) {
-    const order = [requestedProvider];
+    const order: string[] = [requestedProvider];
     const fallback = routingRule?.fallback_providers || [];
     for (const provider of fallback) {
       if (!order.includes(provider)) {
@@ -26,7 +46,7 @@ function buildProviderOrder(requestedProvider, routingRule, providerConfigs) {
   }
 
   if (routingRule?.primary_provider) {
-    const order = [routingRule.primary_provider];
+    const order: string[] = [routingRule.primary_provider];
     for (const provider of routingRule.fallback_providers || []) {
       if (!order.includes(provider)) {
         order.push(provider);
@@ -40,13 +60,17 @@ function buildProviderOrder(requestedProvider, routingRule, providerConfigs) {
     return filterEnabled(order, providerConfigs);
   }
 
-  return filterEnabled(DEFAULT_PROVIDER_ORDER.slice(), providerConfigs);
+  return filterEnabled([...DEFAULT_PROVIDER_ORDER], providerConfigs);
 }
 
-function buildAdapter(provider, providerConfig, requestedModel) {
+export function buildAdapter(
+  provider: string,
+  providerConfig: ProviderConfigRow | null | undefined,
+  requestedModel: string | null | undefined
+): LlmAdapter {
   const opts = {
-    apiKey: resolveProviderApiKey(provider, providerConfig?.api_key_ref),
-    defaultModel: requestedModel || providerConfig?.default_model
+    apiKey: resolveProviderApiKey(provider, providerConfig?.api_key_ref ?? null),
+    defaultModel: requestedModel || providerConfig?.default_model || undefined
   };
 
   if (provider === "openai") {
@@ -71,22 +95,22 @@ function buildAdapter(provider, providerConfig, requestedModel) {
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-async function loadProviderConfigs() {
-  const result = await appDb.query(
+export async function loadProviderConfigs(): Promise<Map<string, ProviderConfigRow>> {
+  const result = await appDb.query<ProviderConfigRow>(
     `
       SELECT provider, api_key_ref, default_model, base_url, display_name, enabled
       FROM llm_providers
     `
   );
-  const map = new Map();
+  const map = new Map<string, ProviderConfigRow>();
   for (const row of result.rows) {
     map.set(row.provider, row);
   }
   return map;
 }
 
-async function loadRoutingRule(dataSourceId) {
-  const result = await appDb.query(
+export async function loadRoutingRule(dataSourceId: string): Promise<RoutingRule | null> {
+  const result = await appDb.query<RoutingRule>(
     `
       SELECT primary_provider, fallback_providers, strategy
       FROM llm_routing_rules
@@ -97,7 +121,7 @@ async function loadRoutingRule(dataSourceId) {
   return result.rows[0] || null;
 }
 
-function filterEnabled(order, providerConfigs) {
+function filterEnabled(order: string[], providerConfigs: Map<string, ProviderConfigRow>): string[] {
   const enabled = order.filter((provider) => {
     const config = providerConfigs.get(provider);
     if (!config) {
@@ -105,10 +129,10 @@ function filterEnabled(order, providerConfigs) {
     }
     return config.enabled;
   });
-  return enabled.length > 0 ? enabled : DEFAULT_PROVIDER_ORDER.slice();
+  return enabled.length > 0 ? enabled : [...DEFAULT_PROVIDER_ORDER];
 }
 
-function resolveProviderApiKey(provider, ref) {
+function resolveProviderApiKey(provider: string, ref: string | null | undefined): string | undefined {
   if (provider === "openai") {
     return resolveApiKey(ref, "OPENAI_API_KEY");
   }
@@ -123,10 +147,3 @@ function resolveProviderApiKey(provider, ref) {
   }
   return resolveApiKey(ref, null);
 }
-
-module.exports = {
-  buildAdapter,
-  buildProviderOrder,
-  loadProviderConfigs,
-  loadRoutingRule
-};

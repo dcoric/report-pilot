@@ -1,4 +1,56 @@
-function buildSqlPrompt(context) {
+import type { SqlDialect } from "./sqlGenerator";
+
+export interface PromptSchemaObject {
+  schema_name: string;
+  object_name: string;
+  object_type: string;
+}
+
+export interface PromptSchemaColumn {
+  schema_name: string;
+  object_name: string;
+  column_name: string;
+  data_type: string;
+}
+
+export interface PromptSemanticEntity {
+  business_name: string;
+  target_ref: string;
+  entity_type: string;
+}
+
+export interface PromptMetricDefinition {
+  business_name: string;
+  sql_expression: string;
+}
+
+export interface PromptJoinPolicy {
+  left_ref: string;
+  join_type: string;
+  right_ref: string;
+  on_clause: string;
+}
+
+export interface PromptRagDocument {
+  doc_type: string;
+  ref_id: string;
+  content: string;
+  score?: number;
+}
+
+export interface SqlPromptContext {
+  dialect?: SqlDialect | string;
+  question: string;
+  maxRows: number;
+  schemaObjects?: PromptSchemaObject[];
+  columns?: PromptSchemaColumn[];
+  semanticEntities?: PromptSemanticEntity[];
+  metricDefinitions?: PromptMetricDefinition[];
+  joinPolicies?: PromptJoinPolicy[];
+  ragDocuments?: PromptRagDocument[];
+}
+
+export function buildSqlPrompt(context: SqlPromptContext): string {
   const dialect = String(context.dialect || "postgres").toLowerCase();
   const dialectLabel = dialect === "mssql" ? "Microsoft SQL Server (T-SQL)" : "PostgreSQL";
 
@@ -68,7 +120,7 @@ function buildSqlPrompt(context) {
   ].join("\n");
 }
 
-function buildSqlSystemPrompt(dialect) {
+export function buildSqlSystemPrompt(dialect: SqlDialect | string | null | undefined): string {
   const normalized = String(dialect || "postgres").toLowerCase();
   if (normalized === "mssql") {
     return "Generate a single Microsoft SQL Server (T-SQL) SELECT query for reporting. Output only SQL, no explanation.";
@@ -76,15 +128,10 @@ function buildSqlSystemPrompt(dialect) {
   return "Generate a single PostgreSQL SELECT query for reporting. Output only SQL, no explanation.";
 }
 
-function indent(text, spaces) {
+function indent(text: unknown, spaces: number): string {
   const prefix = " ".repeat(spaces);
   return String(text || "")
     .split("\n")
     .map((line) => `${prefix}${line}`)
     .join("\n");
 }
-
-module.exports = {
-  buildSqlPrompt,
-  buildSqlSystemPrompt
-};

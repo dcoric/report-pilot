@@ -1,19 +1,33 @@
-const { OpenAiAdapter } = require("../adapters/llm/openAiAdapter");
-const { GeminiAdapter } = require("../adapters/llm/geminiAdapter");
-const { resolveApiKey } = require("../adapters/llm/httpClient");
-const { EMBEDDING_MODEL: LOCAL_EMBEDDING_MODEL, embedText } = require("./localEmbedding");
+import { OpenAiAdapter } from "../adapters/llm/openAiAdapter";
+import { GeminiAdapter } from "../adapters/llm/geminiAdapter";
+import { resolveApiKey } from "../adapters/llm/httpClient";
+import { EMBEDDING_MODEL as LOCAL_EMBEDDING_MODEL, embedText } from "./localEmbedding";
 
 const OPENAI_DEFAULT_EMBED_MODEL = process.env.RAG_EMBED_MODEL_OPENAI || "text-embedding-3-small";
 const GEMINI_DEFAULT_EMBED_MODEL = process.env.RAG_EMBED_MODEL_GEMINI || "text-embedding-004";
 
-function buildEmbeddingModelId(provider, model) {
+export type EmbeddingProvider = "local" | "openai" | "gemini" | "auto" | string;
+
+export interface EmbedTextsResult {
+  provider: EmbeddingProvider;
+  embeddingModel: string;
+  vectors: number[][];
+}
+
+export interface EmbedOptions {
+  provider?: EmbeddingProvider;
+}
+
+export { LOCAL_EMBEDDING_MODEL };
+
+export function buildEmbeddingModelId(provider: EmbeddingProvider, model: string | null | undefined): string {
   if (provider === "local") {
     return LOCAL_EMBEDDING_MODEL;
   }
   return `${provider}:${model}`;
 }
 
-function parseEmbeddingModelId(embeddingModel) {
+export function parseEmbeddingModelId(embeddingModel: unknown): { provider: EmbeddingProvider; model: string } {
   const text = String(embeddingModel || "").trim();
   if (!text || text === LOCAL_EMBEDDING_MODEL) {
     return { provider: "local", model: LOCAL_EMBEDDING_MODEL };
@@ -30,11 +44,11 @@ function parseEmbeddingModelId(embeddingModel) {
   };
 }
 
-function embedTextsLocal(texts) {
+function embedTextsLocal(texts: string[]): number[][] {
   return texts.map((text) => embedText(text));
 }
 
-async function embedTextsForIndexing(texts, opts = {}) {
+export async function embedTextsForIndexing(texts: string[], opts: EmbedOptions = {}): Promise<EmbedTextsResult> {
   if (!Array.isArray(texts) || texts.length === 0) {
     return {
       provider: "local",
@@ -58,7 +72,7 @@ async function embedTextsForIndexing(texts, opts = {}) {
     try {
       const response = await embedTextsWithProvider(provider, texts);
       return response;
-    } catch (err) {
+    } catch {
       // try next provider
     }
   }
@@ -70,7 +84,7 @@ async function embedTextsForIndexing(texts, opts = {}) {
   };
 }
 
-async function embedQueryForModel(question, embeddingModel) {
+export async function embedQueryForModel(question: string, embeddingModel: string): Promise<number[] | null> {
   const parsed = parseEmbeddingModelId(embeddingModel);
   if (parsed.provider === "local") {
     return embedText(question);
@@ -84,7 +98,7 @@ async function embedQueryForModel(question, embeddingModel) {
   }
 }
 
-async function embedTextsWithProvider(provider, texts, modelOverride) {
+async function embedTextsWithProvider(provider: string, texts: string[], modelOverride?: string): Promise<EmbedTextsResult> {
   if (provider === "openai") {
     const apiKey = resolveApiKey(process.env.RAG_EMBED_API_KEY_REF_OPENAI || "env:OPENAI_API_KEY", "OPENAI_API_KEY");
     if (!apiKey) {
@@ -124,7 +138,7 @@ async function embedTextsWithProvider(provider, texts, modelOverride) {
   throw new Error(`Unsupported embedding provider: ${provider}`);
 }
 
-function providerOrder(preferred) {
+function providerOrder(preferred: string): string[] {
   if (preferred === "openai") {
     return ["openai", "local"];
   }
@@ -136,11 +150,3 @@ function providerOrder(preferred) {
   }
   return ["openai", "gemini", "local"];
 }
-
-module.exports = {
-  LOCAL_EMBEDDING_MODEL,
-  buildEmbeddingModelId,
-  parseEmbeddingModelId,
-  embedTextsForIndexing,
-  embedQueryForModel
-};
