@@ -1,12 +1,14 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { logEvent } = require("../lib/observability");
-const { isUuid, groupByKey, validateDataSourceImportPayload } = require("../lib/validation");
-const { isSupportedDbType } = require("../adapters/dbAdapterFactory");
-const { reindexRagDocuments } = require("../services/ragService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import { json, badRequest, readJsonBody } from "../lib/http";
+import { logEvent } from "../lib/observability";
+import { isUuid, groupByKey, validateDataSourceImportPayload } from "../lib/validation";
+import { isSupportedDbType } from "../adapters/dbAdapterFactory";
+import ragService = require("../services/ragService");
+import { enforceDataSourceAccess } from "../lib/authGate";
+import type { ServerResponse } from "http";
+import type { AuthedRequest } from "../lib/authGate";
 
-async function handleExportDataSource(req, res, dataSourceId) {
+async function handleExportDataSource(req: AuthedRequest, res: ServerResponse, dataSourceId: string): Promise<void> {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "dataSourceId must be a valid UUID");
   }
@@ -185,11 +187,11 @@ async function handleExportDataSource(req, res, dataSourceId) {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Disposition": `attachment; filename="${filename}"`
   });
-  return res.end(JSON.stringify(payload, null, 2));
+  res.end(JSON.stringify(payload, null, 2));
 }
 
-async function handleImportDataSource(req, res) {
-  const body = await readJsonBody(req);
+async function handleImportDataSource(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as any;
 
   const validationError = validateDataSourceImportPayload(body);
   if (validationError) {
@@ -311,12 +313,12 @@ async function handleImportDataSource(req, res) {
   });
 
   try {
-    await reindexRagDocuments(dataSourceId);
+    await ragService.reindexRagDocuments(dataSourceId);
   } catch (err) {
-    logEvent("data_source_import_reindex_failed", { data_source_id: dataSourceId, error: err.message }, "error");
+    logEvent("data_source_import_reindex_failed", { data_source_id: dataSourceId, error: (err as Error).message }, "error");
     return json(res, 500, {
       error: "internal_error",
-      message: `Data source was imported but RAG reindex failed: ${err.message}`,
+      message: `Data source was imported but RAG reindex failed: ${(err as Error).message}`,
       data_source_id: dataSourceId
     });
   }
@@ -324,7 +326,7 @@ async function handleImportDataSource(req, res) {
   return json(res, 201, { ok: true, data_source_id: dataSourceId });
 }
 
-module.exports = {
+export {
   handleExportDataSource,
   handleImportDataSource
 };

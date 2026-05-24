@@ -5,43 +5,45 @@
 // PUT, DELETE) — the same permissions AUTH-006 granted to every system
 // role. Ownership for mutate verbs is enforced inside the service.
 
-const { json, readJsonBody } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const promptPresetService = require("../services/promptPresetService");
+import type { ServerResponse } from "http";
+import type { AuthedRequest } from "../lib/authGate";
+import { json, readJsonBody } from "../lib/http";
+import { isUuid } from "../lib/validation";
+import { listForUser, createPreset, updatePreset, deletePreset } from "../services/promptPresetService";
 
-async function handleList(req, res) {
+async function handleList(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const userId = req.user && req.user.id;
-  const items = await promptPresetService.listForUser({ userId, includeShared: true });
+  const items = await listForUser({ userId, includeShared: true });
   return json(res, 200, { items });
 }
 
-async function handleCreate(req, res) {
+async function handleCreate(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const userId = req.user && req.user.id;
   const body = await readJsonBody(req).catch(() => null);
-  const result = await promptPresetService.createPreset({ ownerUserId: userId, body });
+  const result = await createPreset({ ownerUserId: userId, body });
   return json(res, result.statusCode, result.body);
 }
 
-async function handleUpdate(req, res, id) {
+async function handleUpdate(req: AuthedRequest, res: ServerResponse, id: string): Promise<void> {
   if (!isUuid(id)) {
     return json(res, 400, { error: "bad_request", message: "preset id must be a uuid" });
   }
   const userId = req.user && req.user.id;
   const body = await readJsonBody(req).catch(() => null);
-  const result = await promptPresetService.updatePreset({ ownerUserId: userId, id, body });
+  const result = await updatePreset({ ownerUserId: userId, id, body });
   return json(res, result.statusCode, result.body);
 }
 
-async function handleDelete(req, res, id) {
+async function handleDelete(req: AuthedRequest, res: ServerResponse, id: string): Promise<void> {
   if (!isUuid(id)) {
     return json(res, 400, { error: "bad_request", message: "preset id must be a uuid" });
   }
   const userId = req.user && req.user.id;
-  const result = await promptPresetService.deletePreset({ ownerUserId: userId, id });
+  const result = await deletePreset({ ownerUserId: userId, id });
   return json(res, result.statusCode, result.body);
 }
 
-module.exports = {
+export {
   handleList,
   handleCreate,
   handleUpdate,

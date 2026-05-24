@@ -1,15 +1,17 @@
-const { json, readJsonBody, badRequest } = require("../lib/http");
-const {
+import type { ServerResponse } from "http";
+import type { AuthedRequest } from "../lib/authGate";
+import { json, readJsonBody, badRequest } from "../lib/http";
+import {
   buildSessionCookie,
   buildClearSessionCookie,
   readSessionToken
-} = require("../lib/sessionCookie");
-const authService = require("../services/authService");
-const auditService = require("../services/auditService");
-const loginLockoutService = require("../services/loginLockoutService");
-const roleService = require("../services/roleService");
+} from "../lib/sessionCookie";
+import * as authService from "../services/authService";
+import * as auditService from "../services/auditService";
+import * as loginLockoutService from "../services/loginLockoutService";
+import * as roleService from "../services/roleService";
 
-function clientAddress(req) {
+function clientAddress(req: AuthedRequest): string | null {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length > 0) {
     const first = forwarded.split(",")[0];
@@ -20,7 +22,7 @@ function clientAddress(req) {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null;
 }
 
-function publicUser(user, { roles = [], permissions = [] } = {}) {
+function publicUser(user: any, { roles = [], permissions = [] } = {}) {
   if (!user) {
     return null;
   }
@@ -36,7 +38,7 @@ function publicUser(user, { roles = [], permissions = [] } = {}) {
   };
 }
 
-async function loadAuthorization(userId) {
+async function loadAuthorization(userId: string) {
   const [roles, permissions] = await Promise.all([
     roleService.listRoleNamesForUser(userId),
     roleService.listPermissionNamesForUser(userId)
@@ -44,8 +46,8 @@ async function loadAuthorization(userId) {
   return { roles, permissions };
 }
 
-async function handleLogin(req, res) {
-  const body = await readJsonBody(req);
+async function handleLogin(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
 
@@ -61,7 +63,7 @@ async function handleLogin(req, res) {
   // brute-force traffic continuing against a locked account.
   const lockout = await loginLockoutService
     .checkLockout({ email, ipAddress })
-    .catch(() => ({ locked: false }));
+    .catch(() => ({ locked: false } as { locked: false }));
   if (lockout.locked) {
     await auditService
       .writeEvent({
@@ -125,7 +127,7 @@ async function handleLogin(req, res) {
   });
 }
 
-async function handleLogout(req, res) {
+async function handleLogout(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const token = readSessionToken(req);
   let session = null;
   if (token) {
@@ -149,7 +151,7 @@ async function handleLogout(req, res) {
   return json(res, 200, { ok: true });
 }
 
-async function handleMe(req, res) {
+async function handleMe(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const token = readSessionToken(req);
   if (!token) {
     return json(res, 401, { error: "unauthenticated" });
@@ -167,7 +169,7 @@ async function handleMe(req, res) {
   });
 }
 
-module.exports = {
+export {
   handleLogin,
   handleLogout,
   handleMe

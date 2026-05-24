@@ -1,23 +1,38 @@
-const appDb = require("../lib/appDb");
-const { json, readJsonBody } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const savedQueryService = require("../services/savedQueryService");
-const auditService = require("../services/auditService");
-const { enforceDataSourceAccess, listAccessibleDataSourceIds } = require("../lib/authGate");
+import type { ServerResponse } from "http";
+import type { URL } from "url";
+import type { AuthedRequest } from "../lib/authGate";
+import appDb = require("../lib/appDb");
+import { json, readJsonBody } from "../lib/http";
+import { isUuid } from "../lib/validation";
+import {
+  createSavedQuery,
+  listSavedQueries,
+  getSavedQuery,
+  updateSavedQuery,
+  deleteSavedQuery,
+  validateSavedQueryParams,
+  executeSavedQuery,
+  shareSavedQuery,
+  getSavedQueryAccess,
+  listSavedQueryVersions,
+  restoreSavedQueryVersion
+} from "../services/savedQueryService";
+import { writeEvent } from "../services/auditService";
+import { enforceDataSourceAccess, listAccessibleDataSourceIds } from "../lib/authGate";
 
-function callerId(req) {
+function callerId(req: AuthedRequest): string | null {
   return (req.user && req.user.id) || null;
 }
 
-function requestClientIp(req) {
+function requestClientIp(req: AuthedRequest): string | null {
   return (req.socket && req.socket.remoteAddress) || null;
 }
 
-function writeResult(res, result) {
+function writeResult(res: ServerResponse, result: { statusCode: number; body: unknown }): void {
   return json(res, result.statusCode, result.body);
 }
 
-async function loadSavedQueryDataSourceId(savedQueryId) {
+async function loadSavedQueryDataSourceId(savedQueryId: string): Promise<string | null> {
   if (!isUuid(savedQueryId)) return null;
   const result = await appDb.query(
     "SELECT data_source_id FROM saved_queries WHERE id = $1",
@@ -26,20 +41,20 @@ async function loadSavedQueryDataSourceId(savedQueryId) {
   return result.rowCount > 0 ? result.rows[0].data_source_id : null;
 }
 
-async function dataSourceExists(dataSourceId) {
+async function dataSourceExists(dataSourceId: string): Promise<boolean> {
   if (!isUuid(dataSourceId)) return false;
   const result = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
   return result.rowCount > 0;
 }
 
-async function handleCreateSavedQuery(req, res) {
-  const body = await readJsonBody(req);
-  if (body && body.data_source_id && await dataSourceExists(body.data_source_id)) {
-    if (!(await enforceDataSourceAccess(req, res, body.data_source_id))) {
+async function handleCreateSavedQuery(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
+  if (body && body.data_source_id && await dataSourceExists(body.data_source_id as string)) {
+    if (!(await enforceDataSourceAccess(req, res, body.data_source_id as string))) {
       return undefined;
     }
   }
-  const result = await savedQueryService.createSavedQuery({
+  const result = await createSavedQuery({
     ownerId: callerId(req),
     name: body.name,
     description: body.description,
@@ -53,49 +68,46 @@ async function handleCreateSavedQuery(req, res) {
   return writeResult(res, result);
 }
 
-async function handleListSavedQueries(req, res, requestUrl) {
+async function handleListSavedQueries(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (dataSourceId && isUuid(dataSourceId) && !(await enforceDataSourceAccess(req, res, dataSourceId))) {
     return undefined;
   }
   const accessible = await listAccessibleDataSourceIds(req);
-  const result = await savedQueryService.listSavedQueries(
+  const result = await listSavedQueries(
     dataSourceId,
     requestUrl.searchParams.get("tag"),
     { callerUserId: callerId(req) }
   );
-  if (accessible !== null && Array.isArray(result.body && result.body.items)) {
+  if (accessible !== null && result.ok && Array.isArray(result.body.items)) {
     const accessibleSet = new Set(accessible);
-    result.body = {
-      ...result.body,
-      items: result.body.items.filter((item) => accessibleSet.has(item.data_source_id))
-    };
+    result.body.items = result.body.items.filter((item) => accessibleSet.has(item.data_source_id));
   }
   return writeResult(res, result);
 }
 
-async function handleGetSavedQuery(req, res, savedQueryId) {
+async function handleGetSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.getSavedQuery(savedQueryId, { callerUserId: callerId(req) });
+  const result = await getSavedQuery(savedQueryId, { callerUserId: callerId(req) });
   return writeResult(res, result);
 }
 
-async function handleUpdateSavedQuery(req, res, savedQueryId) {
+async function handleUpdateSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req);
+  const body = await readJsonBody(req) as Record<string, unknown>;
   if (body && body.data_source_id && body.data_source_id !== dsId
-      && await dataSourceExists(body.data_source_id)) {
-    if (!(await enforceDataSourceAccess(req, res, body.data_source_id))) {
+      && await dataSourceExists(body.data_source_id as string)) {
+    if (!(await enforceDataSourceAccess(req, res, body.data_source_id as string))) {
       return undefined;
     }
   }
-  const result = await savedQueryService.updateSavedQuery(savedQueryId, {
+  const result = await updateSavedQuery(savedQueryId, {
     name: body.name,
     description: body.description,
     dataSourceId: body.data_source_id,
@@ -109,34 +121,34 @@ async function handleUpdateSavedQuery(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
-async function handleDeleteSavedQuery(req, res, savedQueryId) {
+async function handleDeleteSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.deleteSavedQuery(savedQueryId, { callerUserId: callerId(req) });
+  const result = await deleteSavedQuery(savedQueryId, { callerUserId: callerId(req) });
   return writeResult(res, result);
 }
 
-async function handleValidateParams(req, res, savedQueryId) {
+async function handleValidateParams(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req);
-  const result = await savedQueryService.validateSavedQueryParams(savedQueryId, body.params, {
+  const body = await readJsonBody(req) as Record<string, unknown>;
+  const result = await validateSavedQueryParams(savedQueryId, body.params, {
     callerUserId: callerId(req)
   });
   return writeResult(res, result);
 }
 
-async function handleRunSavedQuery(req, res, savedQueryId) {
+async function handleRunSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req);
-  const result = await savedQueryService.executeSavedQuery(savedQueryId, {
+  const body = await readJsonBody(req) as Record<string, unknown>;
+  const result = await executeSavedQuery(savedQueryId, {
     params: body.params,
     maxRows: body.max_rows,
     timeoutMs: body.timeout_ms,
@@ -145,13 +157,13 @@ async function handleRunSavedQuery(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
-async function handleShareSavedQuery(req, res, savedQueryId) {
+async function handleShareSavedQuery(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const body = await readJsonBody(req);
-  const result = await savedQueryService.shareSavedQuery(savedQueryId, {
+  const body = await readJsonBody(req) as Record<string, unknown>;
+  const result = await shareSavedQuery(savedQueryId, {
     callerUserId: callerId(req),
     visibility: body.visibility,
     shares: body.shares
@@ -159,11 +171,19 @@ async function handleShareSavedQuery(req, res, savedQueryId) {
 
   if (result.ok) {
     const actor = callerId(req);
-    const summary = result.body;
+    const summary = result.body as {
+      previous_visibility: string;
+      visibility: string;
+      diff: {
+        added: Array<{ user_id: string; permission: string }>;
+        updated: Array<{ user_id: string; previous_permission: string; permission: string }>;
+        removed: Array<{ user_id: string; permission: string }>;
+      };
+    };
     const ip = requestClientIp(req);
     const userAgent = req.headers["user-agent"] || null;
     if (summary.previous_visibility !== summary.visibility) {
-      auditService.writeEvent({
+      writeEvent({
         actorUserId: actor,
         action: "saved_query.visibility.changed",
         details: {
@@ -176,7 +196,7 @@ async function handleShareSavedQuery(req, res, savedQueryId) {
       }).catch(() => {});
     }
     for (const entry of summary.diff.added) {
-      auditService.writeEvent({
+      writeEvent({
         actorUserId: actor,
         targetUserId: entry.user_id,
         action: "saved_query.share.granted",
@@ -186,7 +206,7 @@ async function handleShareSavedQuery(req, res, savedQueryId) {
       }).catch(() => {});
     }
     for (const entry of summary.diff.updated) {
-      auditService.writeEvent({
+      writeEvent({
         actorUserId: actor,
         targetUserId: entry.user_id,
         action: "saved_query.share.updated",
@@ -200,7 +220,7 @@ async function handleShareSavedQuery(req, res, savedQueryId) {
       }).catch(() => {});
     }
     for (const entry of summary.diff.removed) {
-      auditService.writeEvent({
+      writeEvent({
         actorUserId: actor,
         targetUserId: entry.user_id,
         action: "saved_query.share.revoked",
@@ -214,45 +234,45 @@ async function handleShareSavedQuery(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
-async function handleGetSavedQueryAccess(req, res, savedQueryId) {
+async function handleGetSavedQueryAccess(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.getSavedQueryAccess(savedQueryId, {
+  const result = await getSavedQueryAccess(savedQueryId, {
     callerUserId: callerId(req)
   });
   return writeResult(res, result);
 }
 
-async function handleListSavedQueryVersions(req, res, savedQueryId) {
+async function handleListSavedQueryVersions(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.listSavedQueryVersions(savedQueryId, {
+  const result = await listSavedQueryVersions(savedQueryId, {
     callerUserId: callerId(req)
   });
   return writeResult(res, result);
 }
 
-async function handleRestoreSavedQueryVersion(req, res, savedQueryId, versionId) {
+async function handleRestoreSavedQueryVersion(req: AuthedRequest, res: ServerResponse, savedQueryId: string, versionId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) {
     return undefined;
   }
-  const result = await savedQueryService.restoreSavedQueryVersion(savedQueryId, versionId, {
+  const result = await restoreSavedQueryVersion(savedQueryId, versionId, {
     callerUserId: callerId(req)
   });
 
   if (result.ok) {
-    auditService.writeEvent({
+    writeEvent({
       actorUserId: callerId(req),
       action: "saved_query.version.restored",
       details: {
         saved_query_id: savedQueryId,
-        restored_from_version_number: result.body.restored_from_version_number,
-        new_version_number: result.body.new_version.version_number
+        restored_from_version_number: (result.body as { restored_from_version_number: number }).restored_from_version_number,
+        new_version_number: (result.body as { new_version: { version_number: number } }).new_version.version_number
       },
       ipAddress: requestClientIp(req),
       userAgent: req.headers["user-agent"] || null
@@ -262,7 +282,7 @@ async function handleRestoreSavedQueryVersion(req, res, savedQueryId, versionId)
   return writeResult(res, result);
 }
 
-module.exports = {
+export {
   handleCreateSavedQuery,
   handleListSavedQueries,
   handleGetSavedQuery,

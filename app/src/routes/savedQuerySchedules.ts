@@ -1,34 +1,35 @@
 // QUERY-007: routes for managing scheduled saved-query delivery.
 
-const appDb = require("../lib/appDb");
-const { json, readJsonBody } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const scheduleService = require("../services/savedQueryScheduleService");
-const auditService = require("../services/auditService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import type { ServerResponse } from "http";
+import { enforceDataSourceAccess, type AuthedRequest } from "../lib/authGate";
+import { json, readJsonBody } from "../lib/http";
+import { isUuid } from "../lib/validation";
+import * as scheduleService from "../services/savedQueryScheduleService";
+import * as auditService from "../services/auditService";
 
-function callerId(req) {
+function callerId(req: AuthedRequest): string | null {
   return (req.user && req.user.id) || null;
 }
 
-function requestClientIp(req) {
+function requestClientIp(req: AuthedRequest): string | null {
   return (req.socket && req.socket.remoteAddress) || null;
 }
 
-function writeResult(res, result) {
+function writeResult(res: ServerResponse, result: { statusCode: number; body: unknown }): void {
   return json(res, result.statusCode, result.body);
 }
 
-async function loadSavedQueryDataSourceId(savedQueryId) {
+async function loadSavedQueryDataSourceId(savedQueryId: string): Promise<string | null> {
   if (!isUuid(savedQueryId)) return null;
   const result = await appDb.query(
     "SELECT data_source_id FROM saved_queries WHERE id = $1",
     [savedQueryId]
   );
-  return result.rowCount > 0 ? result.rows[0].data_source_id : null;
+  return result.rowCount > 0 ? (result.rows[0] as { data_source_id: string | null }).data_source_id : null;
 }
 
-function emitScheduleAudit(req, action, savedQueryId, details = {}) {
+function emitScheduleAudit(req: AuthedRequest, action: string, savedQueryId: string, details: Record<string, unknown> = {}) {
   auditService
     .writeEvent({
       actorUserId: callerId(req),
@@ -40,10 +41,10 @@ function emitScheduleAudit(req, action, savedQueryId, details = {}) {
     .catch(() => {});
 }
 
-async function handleCreateSchedule(req, res, savedQueryId) {
+async function handleCreateSchedule(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
-  const body = await readJsonBody(req);
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const result = await scheduleService.createSchedule(savedQueryId, body, {
     callerUserId: callerId(req)
   });
@@ -60,7 +61,7 @@ async function handleCreateSchedule(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
-async function handleListSchedules(req, res, savedQueryId) {
+async function handleListSchedules(req: AuthedRequest, res: ServerResponse, savedQueryId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.listSchedules(savedQueryId, {
@@ -69,10 +70,10 @@ async function handleListSchedules(req, res, savedQueryId) {
   return writeResult(res, result);
 }
 
-async function handleUpdateSchedule(req, res, savedQueryId, scheduleId) {
+async function handleUpdateSchedule(req: AuthedRequest, res: ServerResponse, savedQueryId: string, scheduleId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
-  const body = await readJsonBody(req);
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const result = await scheduleService.updateSchedule(savedQueryId, scheduleId, body, {
     callerUserId: callerId(req)
   });
@@ -90,7 +91,7 @@ async function handleUpdateSchedule(req, res, savedQueryId, scheduleId) {
   return writeResult(res, result);
 }
 
-async function handleDeleteSchedule(req, res, savedQueryId, scheduleId) {
+async function handleDeleteSchedule(req: AuthedRequest, res: ServerResponse, savedQueryId: string, scheduleId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.deleteSchedule(savedQueryId, scheduleId, {
@@ -104,7 +105,7 @@ async function handleDeleteSchedule(req, res, savedQueryId, scheduleId) {
   return writeResult(res, result);
 }
 
-async function handleRetrySchedule(req, res, savedQueryId, scheduleId) {
+async function handleRetrySchedule(req: AuthedRequest, res: ServerResponse, savedQueryId: string, scheduleId: string): Promise<void> {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.retryFailedRun(savedQueryId, scheduleId, {
@@ -120,7 +121,7 @@ async function handleRetrySchedule(req, res, savedQueryId, scheduleId) {
   return writeResult(res, result);
 }
 
-module.exports = {
+export {
   handleCreateSchedule,
   handleListSchedules,
   handleUpdateSchedule,

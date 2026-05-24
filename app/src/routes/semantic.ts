@@ -1,11 +1,13 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { ENTITY_TYPES } = require("../lib/constants");
-const { triggerRagReindexAsync } = require("../services/ragService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import { json, badRequest, readJsonBody } from "../lib/http";
+import { ENTITY_TYPES } from "../lib/constants";
+import ragService = require("../services/ragService");
+import { enforceDataSourceAccess } from "../lib/authGate";
+import type { ServerResponse } from "http";
+import type { AuthedRequest } from "../lib/authGate";
 
-async function handleUpsertSemanticEntity(req, res) {
-  const body = await readJsonBody(req);
+async function handleUpsertSemanticEntity(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as any;
   const {
     id,
     data_source_id: dataSourceId,
@@ -50,7 +52,7 @@ async function handleUpsertSemanticEntity(req, res) {
     if (updateResult.rowCount === 0) {
       return json(res, 404, { error: "not_found", message: "Semantic entity not found" });
     }
-    triggerRagReindexAsync(dataSourceId);
+    ragService.triggerRagReindexAsync(dataSourceId);
     return json(res, 200, updateResult.rows[0]);
   }
 
@@ -70,12 +72,12 @@ async function handleUpsertSemanticEntity(req, res) {
     [dataSourceId, entityType, targetRef, businessName, description || null, owner || null, active]
   );
 
-  triggerRagReindexAsync(dataSourceId);
+  ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
 }
 
-async function handleUpsertMetricDefinition(req, res) {
-  const body = await readJsonBody(req);
+async function handleUpsertMetricDefinition(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as any;
   const { id, semantic_entity_id: semanticEntityId, sql_expression: sqlExpression, grain, filters_json: filtersJson } = body;
 
   if (!semanticEntityId || !sqlExpression) {
@@ -122,7 +124,7 @@ async function handleUpsertMetricDefinition(req, res) {
       return json(res, 404, { error: "not_found", message: "Metric definition not found" });
     }
     const dataSourceId = sourceResult.rows[0]?.data_source_id || null;
-    triggerRagReindexAsync(dataSourceId);
+    ragService.triggerRagReindexAsync(dataSourceId);
     return json(res, 200, updateResult.rows[0]);
   }
 
@@ -141,12 +143,12 @@ async function handleUpsertMetricDefinition(req, res) {
     [semanticEntityId, sqlExpression, grain || null, filtersJson || null]
   );
 
-  triggerRagReindexAsync(dataSourceId);
+  ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
 }
 
-async function handleUpsertJoinPolicy(req, res) {
-  const body = await readJsonBody(req);
+async function handleUpsertJoinPolicy(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as any;
   const {
     id,
     data_source_id: dataSourceId,
@@ -186,7 +188,7 @@ async function handleUpsertJoinPolicy(req, res) {
     if (updateResult.rowCount === 0) {
       return json(res, 404, { error: "not_found", message: "Join policy not found" });
     }
-    triggerRagReindexAsync(dataSourceId);
+    ragService.triggerRagReindexAsync(dataSourceId);
     return json(res, 200, updateResult.rows[0]);
   }
 
@@ -206,11 +208,11 @@ async function handleUpsertJoinPolicy(req, res) {
     [dataSourceId, leftRef, rightRef, joinType, onClause, approved, notes || null]
   );
 
-  triggerRagReindexAsync(dataSourceId);
+  ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
 }
 
-module.exports = {
+export {
   handleUpsertSemanticEntity,
   handleUpsertMetricDefinition,
   handleUpsertJoinPolicy

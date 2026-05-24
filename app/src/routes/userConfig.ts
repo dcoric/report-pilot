@@ -5,26 +5,28 @@
 // guaranteed to be populated by lib/authGate.enforcePolicy before these
 // handlers run.
 
-const { json, readJsonBody } = require("../lib/http");
-const userConfigService = require("../services/userConfigService");
+import type { ServerResponse } from "http";
+import type { AuthedRequest } from "../lib/authGate";
+import { json, readJsonBody } from "../lib/http";
+import { getConfig, putConfig } from "../services/userConfigService";
 
-async function handleGetConfig(req, res) {
+async function handleGetConfig(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const userId = req.user && req.user.id;
-  const config = await userConfigService.getConfig(userId);
+  const config = await getConfig(userId);
   return json(res, 200, { config });
 }
 
-async function handlePutConfig(req, res) {
+async function handlePutConfig(req: AuthedRequest, res: ServerResponse): Promise<void> {
   const userId = req.user && req.user.id;
   const body = await readJsonBody(req).catch(() => null);
-  const result = await userConfigService.putConfig(userId, body);
+  const result = await putConfig(userId, body);
   if (result.statusCode === 200) {
     return json(res, 200, { config: result.body });
   }
   return json(res, result.statusCode, result.body);
 }
 
-module.exports = {
+export {
   handleGetConfig,
   handlePutConfig
 };

@@ -1,18 +1,21 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const {
+import appDb = require("../lib/appDb");
+import type { ServerResponse } from "http";
+import type { IncomingMessage } from "http";
+import type { URL } from "url";
+import { json, badRequest, readJsonBody } from "../lib/http";
+import {
   buildObservabilityMetrics,
   loadLatestBenchmarkReleaseGates,
   buildBenchmarkCommand
-} = require("../services/observabilityService");
+} from "../services/observabilityService";
 
-async function handleObservabilityMetrics(req, res, requestUrl) {
+async function handleObservabilityMetrics(req: IncomingMessage, res: ServerResponse, requestUrl: URL): Promise<void> {
   const windowHours = Number(requestUrl.searchParams.get("window_hours") || 24);
   const metrics = await buildObservabilityMetrics({ windowHours });
   return json(res, 200, metrics);
 }
 
-async function handleReleaseGates(_req, res) {
+async function handleReleaseGates(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const payload = await loadLatestBenchmarkReleaseGates();
   if (!payload.found) {
     return json(res, 404, {
@@ -23,13 +26,13 @@ async function handleReleaseGates(_req, res) {
   return json(res, 200, payload);
 }
 
-async function handleBenchmarkCommand(_req, res) {
+async function handleBenchmarkCommand(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const payload = buildBenchmarkCommand();
   return json(res, 200, payload);
 }
 
-async function handleCreateBenchmarkReport(req, res) {
-  const body = await readJsonBody(req);
+async function handleCreateBenchmarkReport(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const {
     run_date: runDate,
     dataset_file: datasetFile,
@@ -62,7 +65,7 @@ async function handleCreateBenchmarkReport(req, res) {
   return json(res, 201, inserted.rows[0]);
 }
 
-module.exports = {
+export {
   handleObservabilityMetrics,
   handleReleaseGates,
   handleBenchmarkCommand,

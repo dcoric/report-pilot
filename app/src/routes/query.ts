@@ -1,13 +1,15 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { clamp, isUuid } = require("../lib/validation");
-const { validateAndNormalizeSql } = require("../services/sqlSafety");
-const { triggerRagReindexAsync } = require("../services/ragService");
-const { orchestrateQueryRun } = require("../services/queryOrchestrationService");
-const { enforceDataSourceAccess, listAccessibleDataSourceIds } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import type { ServerResponse } from "http";
+import type { URL } from "url";
+import { json, badRequest, readJsonBody } from "../lib/http";
+import { clamp, isUuid } from "../lib/validation";
+import { validateAndNormalizeSql } from "../services/sqlSafety";
+import ragService = require("../services/ragService");
+import { orchestrateQueryRun } from "../services/queryOrchestrationService";
+import { enforceDataSourceAccess, listAccessibleDataSourceIds, type AuthedRequest } from "../lib/authGate";
 
-async function handleCreateSession(req, res) {
-  const body = await readJsonBody(req);
+async function handleCreateSession(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const { data_source_id: dataSourceId, question } = body;
 
   if (!dataSourceId || !question) {
@@ -19,7 +21,7 @@ async function handleCreateSession(req, res) {
     return json(res, 404, { error: "not_found", message: "Data source not found" });
   }
 
-  if (!(await enforceDataSourceAccess(req, res, dataSourceId))) {
+  if (!(await enforceDataSourceAccess(req, res, dataSourceId as string))) {
     return undefined;
   }
 
@@ -36,7 +38,7 @@ async function handleCreateSession(req, res) {
   return json(res, 201, { session_id: sessionResult.rows[0].id, status: "created" });
 }
 
-async function handlePromptHistory(req, res, requestUrl) {
+async function handlePromptHistory(req: AuthedRequest, res: ServerResponse, requestUrl: URL): Promise<void> {
   const userId = req.user && req.user.id ? req.user.id : "anonymous";
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   const search = (requestUrl.searchParams.get("q") || "").trim();
@@ -86,7 +88,7 @@ async function handlePromptHistory(req, res, requestUrl) {
   return json(res, 200, { items: result.rows });
 }
 
-async function handleRunSession(req, res, sessionId) {
+async function handleRunSession(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
   const sessionLookup = await appDb.query(
     "SELECT data_source_id FROM query_sessions WHERE id = $1",
     [sessionId]
@@ -98,19 +100,19 @@ async function handleRunSession(req, res, sessionId) {
     return undefined;
   }
 
-  const body = await readJsonBody(req);
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const requestedProvider = body.llm_provider || null;
   const requestedModel = body.model || null;
   const noExecute = body.no_execute === true;
-  const sqlOverride = typeof body.sql_override === "string" && body.sql_override.trim() ? body.sql_override.trim() : null;
+  const sqlOverride = typeof body.sql_override === "string" && (body.sql_override as string).trim() ? (body.sql_override as string).trim() : null;
   const maxRows = clamp(Number(body.max_rows || 1000), 1, 100000);
   const timeoutMs = clamp(Number(body.timeout_ms || 20000), 1000, 120000);
 
   const result = await orchestrateQueryRun({
     sessionId,
     requestId: req.requestId || null,
-    requestedProvider,
-    requestedModel,
+    requestedProvider: requestedProvider as string | null,
+    requestedModel: requestedModel as string | null,
     sqlOverride,
     maxRows,
     timeoutMs,
@@ -120,11 +122,11 @@ async function handleRunSession(req, res, sessionId) {
   return json(res, result.statusCode, result.body);
 }
 
-async function handleFeedback(req, res, sessionId) {
-  const body = await readJsonBody(req);
+async function handleFeedback(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const { rating, corrected_sql: correctedSql, comment } = body;
 
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+  if (!Number.isInteger(rating) || (rating as number) < 1 || (rating as number) > 5) {
     return badRequest(res, "rating must be an integer between 1 and 5");
   }
 
@@ -172,7 +174,7 @@ async function handleFeedback(req, res, sessionId) {
       [session.data_source_id]
     );
 
-    const normalized = validateAndNormalizeSql(correctedSql, {
+    const normalized = validateAndNormalizeSql(correctedSql as string, {
       maxRows: 1000,
       schemaObjects: schemaObjectsResult.rows,
       dialect: session.db_type === "mssql" ? "mssql" : "postgres"
@@ -191,17 +193,17 @@ async function handleFeedback(req, res, sessionId) {
             source
           ) VALUES ($1, $2, $3, $4, 'feedback')
         `,
-        [session.data_source_id, session.question, normalized.sql, rating / 5]
+        [session.data_source_id, session.question, normalized.sql, (rating as number) / 5]
       );
       exampleSaved = true;
-      triggerRagReindexAsync(session.data_source_id);
+      ragService.triggerRagReindexAsync(session.data_source_id);
     }
   }
 
   return json(res, 200, { ok: true, example_saved: exampleSaved, example_reason: exampleReason });
 }
 
-module.exports = {
+export {
   handleCreateSession,
   handlePromptHistory,
   handleRunSession,

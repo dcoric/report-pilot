@@ -1,10 +1,11 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, internalError, readJsonBody } = require("../lib/http");
-const { exportQueryResult, SUPPORTED_FORMATS } = require("../services/exportService");
-const { createDelivery, getDeliveryStatus } = require("../services/deliveryService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import type { ServerResponse } from "http";
+import { json, badRequest, internalError, readJsonBody } from "../lib/http";
+import { exportQueryResult, SUPPORTED_FORMATS } from "../services/exportService";
+import { createDelivery, getDeliveryStatus } from "../services/deliveryService";
+import { enforceDataSourceAccess, type AuthedRequest } from "../lib/authGate";
 
-async function loadSessionDataSourceId(sessionId) {
+async function loadSessionDataSourceId(sessionId: string): Promise<string | null> {
   const result = await appDb.query(
     "SELECT data_source_id FROM query_sessions WHERE id = $1",
     [sessionId]
@@ -12,8 +13,8 @@ async function loadSessionDataSourceId(sessionId) {
   return result.rowCount > 0 ? result.rows[0].data_source_id : null;
 }
 
-async function handleExportSession(req, res, sessionId) {
-  const body = await readJsonBody(req).catch(() => ({})); // Body optional
+async function handleExportSession(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
+  const body = await readJsonBody(req).catch(() => ({})) as any; // Body optional
   const requestUrl = new URL(req.url, "http://localhost");
   const format = body.format || requestUrl.searchParams.get("format") || "json";
 
@@ -46,8 +47,8 @@ async function handleExportSession(req, res, sessionId) {
   }
 }
 
-async function handleExportDeliver(req, res, sessionId) {
-  const body = await readJsonBody(req);
+async function handleExportDeliver(req: AuthedRequest, res: ServerResponse, sessionId: string): Promise<void> {
+  const body = await readJsonBody(req) as any;
   const { delivery_mode: deliveryMode, format = "json", recipients } = body;
 
   if (!deliveryMode || !["download", "email"].includes(deliveryMode)) {
@@ -68,13 +69,15 @@ async function handleExportDeliver(req, res, sessionId) {
     const delivery = await createDelivery({ sessionId, deliveryMode, format, recipients, requestedBy });
 
     if (deliveryMode === "download") {
+      const dl = delivery as any;
       res.writeHead(200, {
-        "Content-Type": delivery.contentType,
-        "Content-Disposition": `attachment; filename="${delivery.filename}"`,
-        "Content-Length": delivery.buffer.length,
-        "x-export-id": delivery.id
+        "Content-Type": dl.contentType,
+        "Content-Disposition": `attachment; filename="${dl.filename}"`,
+        "Content-Length": dl.buffer.length,
+        "x-export-id": dl.id
       });
-      return res.end(delivery.buffer);
+      res.end(dl.buffer);
+      return;
     }
 
     // Email mode: return accepted with tracking ID
@@ -84,18 +87,19 @@ async function handleExportDeliver(req, res, sessionId) {
       delivery_mode: delivery.delivery_mode
     });
   } catch (err) {
-    if (err.statusCode === 400) {
-      return badRequest(res, err.message);
+    const e = err as any;
+    if (e.statusCode === 400) {
+      return badRequest(res, e.message);
     }
-    if (err.message === "Session not found" || err.message === "No successful query attempts found for this session") {
-      return json(res, 404, { error: "not_found", message: err.message });
+    if (e.message === "Session not found" || e.message === "No successful query attempts found for this session") {
+      return json(res, 404, { error: "not_found", message: e.message });
     }
     console.error("[export/deliver] failed:", err);
     return internalError(res);
   }
 }
 
-async function handleExportStatus(req, res, exportId) {
+async function handleExportStatus(req: AuthedRequest, res: ServerResponse, exportId: string): Promise<void> {
   const delivery = await getDeliveryStatus(exportId);
   if (!delivery) {
     return json(res, 404, { error: "not_found", message: "Export delivery not found" });
@@ -107,7 +111,7 @@ async function handleExportStatus(req, res, exportId) {
   return json(res, 200, delivery);
 }
 
-module.exports = {
+export {
   handleExportSession,
   handleExportDeliver,
   handleExportStatus

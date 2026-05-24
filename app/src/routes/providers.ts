@@ -1,15 +1,17 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { LLM_PROVIDERS, ROUTING_STRATEGIES } = require("../lib/constants");
-const { normalizeProviderUpsertInput } = require("../services/providerConfigService");
-const { OpenAiAdapter } = require("../adapters/llm/openAiAdapter");
-const { GeminiAdapter } = require("../adapters/llm/geminiAdapter");
-const { DeepSeekAdapter } = require("../adapters/llm/deepSeekAdapter");
-const { OpenRouterAdapter } = require("../adapters/llm/openRouterAdapter");
-const { CustomAdapter } = require("../adapters/llm/customAdapter");
-const { resolveApiKey } = require("../adapters/llm/httpClient");
+import appDb = require("../lib/appDb");
+import type { ServerResponse } from "http";
+import type { IncomingMessage } from "http";
+import { json, badRequest, readJsonBody } from "../lib/http";
+import { LLM_PROVIDERS, ROUTING_STRATEGIES } from "../lib/constants";
+import { normalizeProviderUpsertInput } from "../services/providerConfigService";
+import { OpenAiAdapter } from "../adapters/llm/openAiAdapter";
+import { GeminiAdapter } from "../adapters/llm/geminiAdapter";
+import { DeepSeekAdapter } from "../adapters/llm/deepSeekAdapter";
+import { OpenRouterAdapter } from "../adapters/llm/openRouterAdapter";
+import { CustomAdapter } from "../adapters/llm/customAdapter";
+import { resolveApiKey } from "../adapters/llm/httpClient";
 
-function buildHealthAdapter(provider, apiKeyRef, defaultModel, baseUrl) {
+function buildHealthAdapter(provider: string, apiKeyRef: string | null, defaultModel: string | null, baseUrl: string | null) {
   if (provider === "openai") {
     return new OpenAiAdapter({
       apiKey: resolveApiKey(apiKeyRef, "OPENAI_API_KEY"),
@@ -45,18 +47,18 @@ function buildHealthAdapter(provider, apiKeyRef, defaultModel, baseUrl) {
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-async function loadSupportedProviderSet() {
+async function loadSupportedProviderSet(): Promise<Set<string>> {
   const result = await appDb.query("SELECT provider FROM llm_providers");
-  const providers = new Set(LLM_PROVIDERS);
+  const providers = new Set<string>(LLM_PROVIDERS);
   for (const row of result.rows) {
     if (row.provider) {
-      providers.add(row.provider);
+      providers.add(row.provider as string);
     }
   }
   return providers;
 }
 
-async function handleProviderList(_req, res) {
+async function handleProviderList(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const result = await appDb.query(
     `SELECT id, provider, default_model, base_url, display_name, enabled, created_at, updated_at
      FROM llm_providers
@@ -65,8 +67,8 @@ async function handleProviderList(_req, res) {
   return json(res, 200, { items: result.rows });
 }
 
-async function handleProviderUpsert(req, res) {
-  const body = await readJsonBody(req);
+async function handleProviderUpsert(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const provider = typeof body.provider === "string" ? body.provider.trim() : "";
 
   const existingResult = await appDb.query(
@@ -107,8 +109,8 @@ async function handleProviderUpsert(req, res) {
   return json(res, 200, result.rows[0]);
 }
 
-async function handleRoutingRuleUpsert(req, res) {
-  const body = await readJsonBody(req);
+async function handleRoutingRuleUpsert(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req) as Record<string, unknown>;
   const {
     data_source_id: dataSourceId,
     primary_provider: primaryProvider,
@@ -122,15 +124,15 @@ async function handleRoutingRuleUpsert(req, res) {
 
   const supportedProviders = await loadSupportedProviderSet();
 
-  if (!supportedProviders.has(primaryProvider)) {
+  if (!supportedProviders.has(primaryProvider as string)) {
     return badRequest(res, "Invalid primary_provider");
   }
 
-  if (!ROUTING_STRATEGIES.has(strategy)) {
+  if (!ROUTING_STRATEGIES.has(strategy as string)) {
     return badRequest(res, "Invalid strategy");
   }
 
-  const invalidFallback = fallbackProviders.find((provider) => !supportedProviders.has(provider));
+  const invalidFallback = (fallbackProviders as string[]).find((provider: string) => !supportedProviders.has(provider));
   if (invalidFallback) {
     return badRequest(res, `Invalid fallback provider: ${invalidFallback}`);
   }
@@ -163,7 +165,7 @@ async function handleRoutingRuleUpsert(req, res) {
   return json(res, 200, result.rows[0]);
 }
 
-async function handleProviderHealth(_req, res) {
+async function handleProviderHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   const result = await appDb.query(
     `
       SELECT provider, api_key_ref, default_model, base_url, enabled
@@ -186,7 +188,7 @@ async function handleProviderHealth(_req, res) {
     }
 
     try {
-      const adapter = buildHealthAdapter(row.provider, row.api_key_ref, row.default_model, row.base_url);
+      const adapter = buildHealthAdapter(row.provider as string, row.api_key_ref as string | null, row.default_model as string | null, row.base_url as string | null);
       await adapter.healthCheck();
       items.push({
         provider: row.provider,
@@ -198,7 +200,7 @@ async function handleProviderHealth(_req, res) {
         provider: row.provider,
         status: "degraded",
         checked_at: checkedAt,
-        reason: err.message
+        reason: (err as Error).message
       });
     }
   }
@@ -206,7 +208,7 @@ async function handleProviderHealth(_req, res) {
   return json(res, 200, { items });
 }
 
-module.exports = {
+export {
   handleProviderList,
   handleProviderUpsert,
   handleRoutingRuleUpsert,
