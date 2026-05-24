@@ -10,17 +10,27 @@
 // are the owner's responsibility. Shared/granted recipients cannot schedule
 // other people's queries, matching the QUERY-006 share semantics.
 
-const appDb = require("../lib/appDb");
-const { isUuid } = require("../lib/validation");
-const { isCronExpressionValid, isTimezoneValid, computeNextRun } = require("./cronExpression");
-const { SUPPORTED_FORMATS } = require("./exportService");
-const { sendExportEmail } = require("./emailService");
-const { createDatabaseAdapter, isSupportedDbType } = require("../adapters/dbAdapterFactory");
-const { ensureLimit, sanitizeGeneratedSql, validateAndNormalizeSql } = require("./sqlSafety");
-const {
+import appDb = require("../lib/appDb");
+import { isUuid } from "../lib/validation";
+import { isCronExpressionValid, isTimezoneValid, computeNextRun } from "./cronExpression";
+import { SUPPORTED_FORMATS } from "./exportService";
+import emailService = require("./emailService");
+import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
+import { ensureLimit, sanitizeGeneratedSql, validateAndNormalizeSql } from "./sqlSafety";
+import {
   validateParameterValues,
   substitutePlaceholdersForValidation
-} = require("./queryParameterService");
+} from "./queryParameterService";
+import type {
+  SavedQueryScheduleDeliveryMode,
+  SavedQueryScheduleFormat,
+  SavedQueryScheduleStatus,
+  SavedQueryScheduleRunStatus,
+  SavedQuerySchedule,
+  SavedQueryScheduleRun,
+  SavedQueryParameter
+} from "../types/domain";
+import type { ParameterSchemaEntry } from "./queryParameterParser";
 
 const SCHEDULE_COLUMNS = `
   id,
@@ -59,23 +69,65 @@ const RUN_COLUMNS = `
   error_message
 `;
 
-const ALLOWED_DELIVERY_MODES = new Set(["email", "download_artifact"]);
-const ALLOWED_FORMATS = new Set(["json", "csv", "tsv", "xlsx", "parquet"]);
-const ALLOWED_STATUSES = new Set(["active", "paused"]);
+const ALLOWED_DELIVERY_MODES: ReadonlySet<SavedQueryScheduleDeliveryMode> = new Set<SavedQueryScheduleDeliveryMode>(["email", "download_artifact"]);
+const ALLOWED_FORMATS: ReadonlySet<SavedQueryScheduleFormat> = new Set<SavedQueryScheduleFormat>(["json", "csv", "tsv", "xlsx", "parquet"]);
+const ALLOWED_STATUSES: ReadonlySet<SavedQueryScheduleStatus> = new Set<SavedQueryScheduleStatus>(["active", "paused"]);
 const MAX_RECIPIENTS = 25;
 const MAX_NAME_LENGTH = 200;
-const MAX_ATTEMPTS = 3;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const MAX_ATTEMPTS = 3;
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function success(body, statusCode = 200) {
+export interface ServiceSuccess<T> {
+  ok: true;
+  statusCode: number;
+  body: T;
+}
+export interface ServiceFailure<T = unknown> {
+  ok: false;
+  statusCode: number;
+  body: T;
+}
+export type ServiceResult<TSuccess, TFailure = unknown> = ServiceSuccess<TSuccess> | ServiceFailure<TFailure>;
+
+interface ErrorBody {
+  error: string;
+  message?: string;
+}
+
+function success<T>(body: T, statusCode = 200): ServiceSuccess<T> {
   return { ok: true, statusCode, body };
 }
-function failure(statusCode, body) {
+function failure<T>(statusCode: number, body: T): ServiceFailure<T> {
   return { ok: false, statusCode, body };
 }
 
-async function loadSavedQuery(savedQueryId) {
-  const result = await appDb.query(
+interface SavedQueryRow {
+  id: string;
+  owner_id: string;
+  sql: string;
+  data_source_id: string;
+  default_run_params: Record<string, unknown>;
+  parameter_schema: ParameterSchemaEntry[];
+}
+
+interface ExecutableSavedQueryRow extends SavedQueryRow {
+  name: string;
+  description: string | null;
+  tags: string[];
+  visibility: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+  connection_ref: string;
+  db_type: string;
+}
+
+interface SchemaObjectMinimal {
+  schema_name: string;
+  object_name: string;
+}
+
+async function loadSavedQuery(savedQueryId: string): Promise<SavedQueryRow | null> {
+  const result = await appDb.query<SavedQueryRow>(
     `SELECT id, owner_id, sql, data_source_id, default_run_params, parameter_schema
        FROM saved_queries WHERE id = $1`,
     [savedQueryId]
@@ -83,15 +135,19 @@ async function loadSavedQuery(savedQueryId) {
   return result.rows[0] || null;
 }
 
-async function loadSchedule(scheduleId) {
-  const result = await appDb.query(
+async function loadSchedule(scheduleId: string): Promise<SavedQuerySchedule | null> {
+  const result = await appDb.query<SavedQuerySchedule>(
     `SELECT ${SCHEDULE_COLUMNS} FROM saved_query_schedules WHERE id = $1`,
     [scheduleId]
   );
   return result.rows[0] || null;
 }
 
-function normalizeRecipients(value, deliveryMode) {
+type ValidationOk<T> = { ok: true; value: T };
+type ValidationErr = { ok: false; message: string };
+type Validation<T> = ValidationOk<T> | ValidationErr;
+
+function normalizeRecipients(value: unknown, deliveryMode: SavedQueryScheduleDeliveryMode | string): Validation<string[]> {
   if (value === undefined || value === null) {
     if (deliveryMode === "email") {
       return { ok: false, message: "recipients are required for email delivery" };
@@ -101,8 +157,8 @@ function normalizeRecipients(value, deliveryMode) {
   if (!Array.isArray(value)) {
     return { ok: false, message: "recipients must be an array of email strings" };
   }
-  const cleaned = [];
-  const seen = new Set();
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string") {
       return { ok: false, message: "recipients must be an array of email strings" };
@@ -126,7 +182,7 @@ function normalizeRecipients(value, deliveryMode) {
   return { ok: true, value: cleaned };
 }
 
-function normalizeParameterOverrides(value) {
+function normalizeParameterOverrides(value: unknown): Validation<Record<string, unknown>> {
   if (value === undefined || value === null) {
     return { ok: true, value: {} };
   }
@@ -141,35 +197,50 @@ function normalizeParameterOverrides(value) {
   } catch {
     return { ok: false, message: "parameter_overrides is not JSON-serialisable" };
   }
-  return { ok: true, value };
+  return { ok: true, value: value as Record<string, unknown> };
 }
 
-function validateSchedulePayload(payload, { isUpdate = false } = {}) {
-  const out = {};
-  if (!isUpdate || payload.name !== undefined) {
-    if (typeof payload.name !== "string" || !payload.name.trim()) {
+interface ValidatedSchedulePayload {
+  name?: string;
+  cron_expression?: string;
+  timezone?: string;
+  delivery_mode?: SavedQueryScheduleDeliveryMode;
+  format?: SavedQueryScheduleFormat;
+  recipients?: string[];
+  parameter_overrides?: Record<string, unknown>;
+  status?: SavedQueryScheduleStatus;
+}
+
+export type ValidateSchedulePayloadResult = Validation<ValidatedSchedulePayload>;
+
+export function validateSchedulePayload(payload: Record<string, unknown> | null | undefined, { isUpdate = false }: { isUpdate?: boolean } = {}): ValidateSchedulePayloadResult {
+  const out: ValidatedSchedulePayload = {};
+  const input = (payload || {}) as Record<string, unknown>;
+
+  if (!isUpdate || input.name !== undefined) {
+    if (typeof input.name !== "string" || !input.name.trim()) {
       return { ok: false, message: "name is required" };
     }
-    if (payload.name.length > MAX_NAME_LENGTH) {
+    if (input.name.length > MAX_NAME_LENGTH) {
       return { ok: false, message: `name cannot exceed ${MAX_NAME_LENGTH} characters` };
     }
-    out.name = payload.name.trim();
+    out.name = input.name.trim();
   }
-  if (!isUpdate || payload.cron_expression !== undefined) {
-    if (!isCronExpressionValid(payload.cron_expression)) {
+  if (!isUpdate || input.cron_expression !== undefined) {
+    if (!isCronExpressionValid(input.cron_expression)) {
       return { ok: false, message: "cron_expression is not a valid 5-field cron" };
     }
-    out.cron_expression = String(payload.cron_expression).trim().replace(/\s+/g, " ");
+    out.cron_expression = String(input.cron_expression).trim().replace(/\s+/g, " ");
   }
-  if (!isUpdate || payload.timezone !== undefined) {
-    const tz = payload.timezone === undefined ? "UTC" : payload.timezone;
+  if (!isUpdate || input.timezone !== undefined) {
+    const tz = input.timezone === undefined ? "UTC" : input.timezone;
     if (!isTimezoneValid(tz)) {
       return { ok: false, message: `timezone is not a valid IANA name: ${tz}` };
     }
     out.timezone = tz;
   }
-  if (!isUpdate || payload.delivery_mode !== undefined) {
-    const mode = payload.delivery_mode === undefined ? "email" : payload.delivery_mode;
+  if (!isUpdate || input.delivery_mode !== undefined) {
+    const mode = (input.delivery_mode === undefined ? "email" : input.delivery_mode) as SavedQueryScheduleDeliveryMode;
     if (!ALLOWED_DELIVERY_MODES.has(mode)) {
       return {
         ok: false,
@@ -178,26 +249,26 @@ function validateSchedulePayload(payload, { isUpdate = false } = {}) {
     }
     out.delivery_mode = mode;
   }
-  if (!isUpdate || payload.format !== undefined) {
-    const fmt = payload.format === undefined ? "csv" : payload.format;
+  if (!isUpdate || input.format !== undefined) {
+    const fmt = (input.format === undefined ? "csv" : input.format) as SavedQueryScheduleFormat;
     if (!ALLOWED_FORMATS.has(fmt) || !SUPPORTED_FORMATS.has(fmt)) {
       return { ok: false, message: `format must be one of: ${[...ALLOWED_FORMATS].join(", ")}` };
     }
     out.format = fmt;
   }
-  if (!isUpdate || payload.recipients !== undefined) {
-    const deliveryMode = out.delivery_mode || payload.delivery_mode || "email";
-    const recipients = normalizeRecipients(payload.recipients, deliveryMode);
-    if (!recipients.ok) return recipients;
+  if (!isUpdate || input.recipients !== undefined) {
+    const deliveryMode = out.delivery_mode || (input.delivery_mode as SavedQueryScheduleDeliveryMode | undefined) || "email";
+    const recipients = normalizeRecipients(input.recipients, deliveryMode);
+    if (recipients.ok !== true) return { ok: false, message: recipients.message };
     out.recipients = recipients.value;
   }
-  if (!isUpdate || payload.parameter_overrides !== undefined) {
-    const overrides = normalizeParameterOverrides(payload.parameter_overrides);
-    if (!overrides.ok) return overrides;
+  if (!isUpdate || input.parameter_overrides !== undefined) {
+    const overrides = normalizeParameterOverrides(input.parameter_overrides);
+    if (overrides.ok !== true) return { ok: false, message: overrides.message };
     out.parameter_overrides = overrides.value;
   }
-  if (!isUpdate || payload.status !== undefined) {
-    const status = payload.status === undefined ? "active" : payload.status;
+  if (!isUpdate || input.status !== undefined) {
+    const status = (input.status === undefined ? "active" : input.status) as SavedQueryScheduleStatus;
     if (!ALLOWED_STATUSES.has(status)) {
       return { ok: false, message: `status must be one of: ${[...ALLOWED_STATUSES].join(", ")}` };
     }
@@ -206,7 +277,11 @@ function validateSchedulePayload(payload, { isUpdate = false } = {}) {
   return { ok: true, value: out };
 }
 
-async function createSchedule(savedQueryId, payload, { callerUserId }) {
+export interface CallerOptions {
+  callerUserId?: string | null;
+}
+
+export async function createSchedule(savedQueryId: string, payload: Record<string, unknown> | null | undefined, { callerUserId }: CallerOptions): Promise<ServiceResult<SavedQuerySchedule, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -224,7 +299,7 @@ async function createSchedule(savedQueryId, payload, { callerUserId }) {
     });
   }
   const validation = validateSchedulePayload(payload, { isUpdate: false });
-  if (!validation.ok) {
+  if (validation.ok !== true) {
     return failure(400, { error: "bad_request", message: validation.message });
   }
   const v = validation.value;
@@ -232,9 +307,9 @@ async function createSchedule(savedQueryId, payload, { callerUserId }) {
   // next matching minute and not retroactively for past minutes.
   const nextRunAt = v.status === "paused"
     ? null
-    : computeNextRun(v.cron_expression, v.timezone, new Date());
+    : computeNextRun(v.cron_expression!, v.timezone!, new Date());
 
-  const result = await appDb.query(
+  const result = await appDb.query<SavedQuerySchedule>(
     `
       INSERT INTO saved_query_schedules (
         saved_query_id, owner_user_id, name, cron_expression, timezone,
@@ -261,7 +336,11 @@ async function createSchedule(savedQueryId, payload, { callerUserId }) {
   return success(result.rows[0], 201);
 }
 
-async function listSchedules(savedQueryId, { callerUserId }) {
+interface ScheduleWithRuns extends SavedQuerySchedule {
+  recent_runs: SavedQueryScheduleRun[];
+}
+
+export async function listSchedules(savedQueryId: string, { callerUserId }: CallerOptions): Promise<ServiceResult<{ items: ScheduleWithRuns[] }, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -277,7 +356,7 @@ async function listSchedules(savedQueryId, { callerUserId }) {
       message: "Only the owner can view schedules for this saved query"
     });
   }
-  const result = await appDb.query(
+  const result = await appDb.query<SavedQuerySchedule>(
     `SELECT ${SCHEDULE_COLUMNS} FROM saved_query_schedules
       WHERE saved_query_id = $1
       ORDER BY created_at ASC`,
@@ -287,7 +366,7 @@ async function listSchedules(savedQueryId, { callerUserId }) {
   // "last delivered" / retry context without a second round trip.
   if (result.rows.length === 0) return success({ items: [] });
   const scheduleIds = result.rows.map((row) => row.id);
-  const runsResult = await appDb.query(
+  const runsResult = await appDb.query<SavedQueryScheduleRun>(
     `
       SELECT ${RUN_COLUMNS}
         FROM saved_query_schedule_runs
@@ -297,20 +376,20 @@ async function listSchedules(savedQueryId, { callerUserId }) {
     `,
     [scheduleIds]
   );
-  const runsBySchedule = new Map();
+  const runsBySchedule = new Map<string, SavedQueryScheduleRun[]>();
   for (const run of runsResult.rows) {
     if (!runsBySchedule.has(run.schedule_id)) runsBySchedule.set(run.schedule_id, []);
-    const list = runsBySchedule.get(run.schedule_id);
+    const list = runsBySchedule.get(run.schedule_id)!;
     if (list.length < 10) list.push(run);
   }
-  const items = result.rows.map((row) => ({
+  const items: ScheduleWithRuns[] = result.rows.map((row) => ({
     ...row,
     recent_runs: runsBySchedule.get(row.id) || []
   }));
   return success({ items });
 }
 
-async function updateSchedule(savedQueryId, scheduleId, payload, { callerUserId }) {
+export async function updateSchedule(savedQueryId: string, scheduleId: string, payload: Record<string, unknown> | null | undefined, { callerUserId }: CallerOptions): Promise<ServiceResult<SavedQuerySchedule, ErrorBody>> {
   if (!isUuid(savedQueryId) || !isUuid(scheduleId)) {
     return failure(400, { error: "bad_request", message: "Both ids must be valid UUIDs" });
   }
@@ -328,7 +407,7 @@ async function updateSchedule(savedQueryId, scheduleId, payload, { callerUserId 
   if (!existing || existing.saved_query_id !== savedQueryId) {
     return failure(404, { error: "not_found", message: "Schedule not found" });
   }
-  const merged = {
+  const merged: Record<string, unknown> = {
     name: existing.name,
     cron_expression: existing.cron_expression,
     timezone: existing.timezone,
@@ -337,16 +416,16 @@ async function updateSchedule(savedQueryId, scheduleId, payload, { callerUserId 
     format: existing.format,
     parameter_overrides: existing.parameter_overrides,
     status: existing.status,
-    ...payload
+    ...(payload || {})
   };
   const validation = validateSchedulePayload(merged, { isUpdate: false });
-  if (!validation.ok) {
+  if (validation.ok !== true) {
     return failure(400, { error: "bad_request", message: validation.message });
   }
   const v = validation.value;
   // Recompute next_run_at whenever cron / timezone / status changes, or when
   // resuming from paused. Always recompute on edit to keep semantics simple.
-  let nextRunAt = existing.next_run_at;
+  let nextRunAt: Date | string | null = existing.next_run_at;
   if (v.status === "paused") {
     nextRunAt = null;
   } else if (
@@ -355,10 +434,10 @@ async function updateSchedule(savedQueryId, scheduleId, payload, { callerUserId 
     || existing.status === "paused"
     || nextRunAt === null
   ) {
-    nextRunAt = computeNextRun(v.cron_expression, v.timezone, new Date());
+    nextRunAt = computeNextRun(v.cron_expression!, v.timezone!, new Date());
   }
 
-  const result = await appDb.query(
+  const result = await appDb.query<SavedQuerySchedule>(
     `
       UPDATE saved_query_schedules
          SET name = $2,
@@ -390,7 +469,7 @@ async function updateSchedule(savedQueryId, scheduleId, payload, { callerUserId 
   return success(result.rows[0]);
 }
 
-async function deleteSchedule(savedQueryId, scheduleId, { callerUserId }) {
+export async function deleteSchedule(savedQueryId: string, scheduleId: string, { callerUserId }: CallerOptions): Promise<ServiceResult<{ ok: true; id: string }, ErrorBody>> {
   if (!isUuid(savedQueryId) || !isUuid(scheduleId)) {
     return failure(400, { error: "bad_request", message: "Both ids must be valid UUIDs" });
   }
@@ -408,18 +487,18 @@ async function deleteSchedule(savedQueryId, scheduleId, { callerUserId }) {
   if (!existing || existing.saved_query_id !== savedQueryId) {
     return failure(404, { error: "not_found", message: "Schedule not found" });
   }
-  const result = await appDb.query(
+  const result = await appDb.query<{ id: string }>(
     `DELETE FROM saved_query_schedules WHERE id = $1 RETURNING id`,
     [scheduleId]
   );
   if (result.rowCount === 0) {
     return failure(404, { error: "not_found", message: "Schedule not found" });
   }
-  return success({ ok: true, id: result.rows[0].id });
+  return success({ ok: true as const, id: result.rows[0].id });
 }
 
-async function loadSavedQueryForExecution(savedQueryId) {
-  const result = await appDb.query(
+async function loadSavedQueryForExecution(savedQueryId: string): Promise<ExecutableSavedQueryRow | null> {
+  const result = await appDb.query<ExecutableSavedQueryRow>(
     `
       SELECT
         sq.id,
@@ -445,8 +524,8 @@ async function loadSavedQueryForExecution(savedQueryId) {
   return result.rows[0] || null;
 }
 
-async function loadSchemaObjects(dataSourceId) {
-  const result = await appDb.query(
+async function loadSchemaObjects(dataSourceId: string): Promise<SchemaObjectMinimal[]> {
+  const result = await appDb.query<SchemaObjectMinimal>(
     `
       SELECT schema_name, object_name
       FROM schema_objects
@@ -459,10 +538,17 @@ async function loadSchemaObjects(dataSourceId) {
   return result.rows;
 }
 
+interface RenderedExport {
+  buffer: Buffer;
+  contentType: string;
+  filename: string;
+  rowCount: number;
+}
+
 // Execute the saved query with the schedule's parameter overrides, render the
 // chosen format, and return a buffer+filename. Mirrors the manual /run + /export
 // path but is self-contained so manual flows stay untouched.
-async function runScheduledQuery(savedQueryId, parameterOverrides, format) {
+async function runScheduledQuery(savedQueryId: string, parameterOverrides: Record<string, unknown>, format: SavedQueryScheduleFormat): Promise<RenderedExport> {
   const savedQuery = await loadSavedQueryForExecution(savedQueryId);
   if (!savedQuery) {
     throw new Error(`Saved query not found: ${savedQueryId}`);
@@ -474,21 +560,22 @@ async function runScheduledQuery(savedQueryId, parameterOverrides, format) {
     savedQuery.parameter_schema,
     parameterOverrides || {}
   );
-  if (!parameterValidation.ok) {
+  if (parameterValidation.ok !== true) {
     throw new Error(
-      `Invalid scheduled parameters: ${parameterValidation.errors.map((e) => e.message || e).join("; ")}`
+      `Invalid scheduled parameters: ${parameterValidation.errors.map((e) => e.message || String(e)).join("; ")}`
     );
   }
   const dialect = savedQuery.db_type === "mssql" ? "mssql" : "postgres";
+  const defaults = (savedQuery.default_run_params || {}) as { max_rows?: number; timeout_ms?: number };
   const maxRows = Math.min(
-    Number(savedQuery.default_run_params?.max_rows) > 0
-      ? Number(savedQuery.default_run_params.max_rows)
+    Number(defaults.max_rows) > 0
+      ? Number(defaults.max_rows)
       : 10000,
     100000
   );
   const timeoutMs = Math.min(
-    Number(savedQuery.default_run_params?.timeout_ms) > 0
-      ? Number(savedQuery.default_run_params.timeout_ms)
+    Number(defaults.timeout_ms) > 0
+      ? Number(defaults.timeout_ms)
       : 60000,
     120000
   );
@@ -503,9 +590,9 @@ async function runScheduledQuery(savedQueryId, parameterOverrides, format) {
   if (!normalized.ok) {
     throw new Error(`SQL safety check failed: ${normalized.errors.join("; ")}`);
   }
-  let adapter = null;
-  let rows;
-  let columns;
+  let adapter: ReturnType<typeof createDatabaseAdapter> | null = null;
+  let rows: Record<string, unknown>[];
+  let columns: string[];
   try {
     adapter = createDatabaseAdapter(savedQuery.db_type, savedQuery.connection_ref);
     const adapterValidation = await adapter.validateSql(normalized.sql);
@@ -530,12 +617,12 @@ async function runScheduledQuery(savedQueryId, parameterOverrides, format) {
 // through exportService.exportQueryResult, because that helper rehydrates from
 // a query_session that scheduled runs do not have. Same dependencies, same
 // supported formats.
-async function renderExportInline(rows, columns, queryName, format) {
-  const { stringify } = require("csv-stringify/sync");
-  const xlsx = require("xlsx");
+async function renderExportInline(rows: Record<string, unknown>[], columns: string[] | undefined, queryName: string, format: SavedQueryScheduleFormat): Promise<RenderedExport> {
+  const { stringify } = require("csv-stringify/sync") as typeof import("csv-stringify/sync");
+  const xlsx = require("xlsx") as typeof import("xlsx");
   const safeName = String(queryName || "scheduled_report").replace(/[^a-z0-9]/gi, "_").slice(0, 50);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const columnOrder = Array.isArray(columns) && columns.length > 0
+  const columnOrder: string[] = Array.isArray(columns) && columns.length > 0
     ? columns
     : (rows[0] ? Object.keys(rows[0]) : []);
 
@@ -582,28 +669,28 @@ async function renderExportInline(rows, columns, queryName, format) {
       };
     }
     const parquet = require("parquetjs-lite");
-    const fs = require("fs/promises");
-    const os = require("os");
-    const path = require("path");
-    const schemaDefinition = {};
+    const fs = require("fs/promises") as typeof import("fs/promises");
+    const os = require("os") as typeof import("os");
+    const path = require("path") as typeof import("path");
+    const schemaDefinition: Record<string, { type: string; optional: boolean }> = {};
     for (const column of columnOrder) {
       schemaDefinition[column] = { type: "UTF8", optional: true };
     }
     const schema = new parquet.ParquetSchema(schemaDefinition);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "report-pilot-schedule-"));
     const filePath = path.join(tempDir, `export-${Date.now()}.parquet`);
-    let writer;
+    let writer: { appendRow: (row: Record<string, unknown>) => Promise<void>; close: () => Promise<void> } | null = null;
     try {
       writer = await parquet.ParquetWriter.openFile(schema, filePath);
       for (const row of rows) {
-        const normalizedRow = {};
+        const normalizedRow: Record<string, string | null> = {};
         for (const column of columnOrder) {
           const v = row[column];
           normalizedRow[column] = v === null || v === undefined ? null : String(v);
         }
-        await writer.appendRow(normalizedRow);
+        await writer!.appendRow(normalizedRow);
       }
-      await writer.close();
+      await writer!.close();
       writer = null;
       const buffer = await fs.readFile(filePath);
       return {
@@ -625,12 +712,25 @@ async function renderExportInline(rows, columns, queryName, format) {
   };
 }
 
+export interface DispatchScheduleOptions {
+  scheduledFor?: Date | string | null;
+  attempt?: number;
+}
+
+export interface DispatchScheduleResult {
+  ok: boolean;
+  runId: string;
+  filename?: string;
+  rowCount?: number;
+  error?: string;
+}
+
 // One full dispatch: insert a run row, attempt delivery, update both the run +
 // the schedule's next_run_at. Used by the dispatcher and by the retry endpoint.
-async function dispatchSchedule(schedule, { scheduledFor = null, attempt = 1 } = {}) {
+export async function dispatchSchedule(schedule: SavedQuerySchedule, { scheduledFor = null, attempt = 1 }: DispatchScheduleOptions = {}): Promise<DispatchScheduleResult> {
   const now = new Date();
   const runScheduledFor = scheduledFor || schedule.next_run_at || now;
-  const runResult = await appDb.query(
+  const runResult = await appDb.query<SavedQueryScheduleRun>(
     `
       INSERT INTO saved_query_schedule_runs (
         schedule_id, saved_query_id, scheduled_for, started_at, status, attempt,
@@ -661,7 +761,7 @@ async function dispatchSchedule(schedule, { scheduledFor = null, attempt = 1 } =
       schedule.format
     );
     if (schedule.delivery_mode === "email") {
-      await sendExportEmail({
+      await emailService.sendExportEmail({
         recipients: schedule.recipients,
         subject: `Report Pilot Scheduled Report: ${schedule.name}`,
         textBody:
@@ -706,7 +806,7 @@ async function dispatchSchedule(schedule, { scheduledFor = null, attempt = 1 } =
     );
     return { ok: true, runId: run.id, filename: rendered.filename, rowCount: rendered.rowCount };
   } catch (err) {
-    const errMessage = err && err.message ? String(err.message).slice(0, 2000) : "unknown error";
+    const errMessage = (err && (err as Error).message) ? String((err as Error).message).slice(0, 2000) : "unknown error";
     await appDb.query(
       `
         UPDATE saved_query_schedule_runs
@@ -736,8 +836,8 @@ async function dispatchSchedule(schedule, { scheduledFor = null, attempt = 1 } =
   }
 }
 
-async function listDueSchedules(now = new Date(), limit = 50) {
-  const result = await appDb.query(
+export async function listDueSchedules(now: Date = new Date(), limit = 50): Promise<SavedQuerySchedule[]> {
+  const result = await appDb.query<SavedQuerySchedule>(
     `
       SELECT ${SCHEDULE_COLUMNS}
         FROM saved_query_schedules
@@ -752,12 +852,18 @@ async function listDueSchedules(now = new Date(), limit = 50) {
   return result.rows;
 }
 
+interface RetryFailedRunResult {
+  ok: boolean;
+  run_id: string;
+  error: string | null;
+}
+
 // Manual retry: re-dispatch the latest run for this schedule. Bumps the
 // `attempt` counter so the runs table reflects the retry chain. Capped at
 // MAX_ATTEMPTS attempts to keep an owner from looping indefinitely on a
 // permanently-broken target — they can edit the schedule (recipients, SQL,
 // etc.) to reset the chain.
-async function retryFailedRun(savedQueryId, scheduleId, { callerUserId }) {
+export async function retryFailedRun(savedQueryId: string, scheduleId: string, { callerUserId }: CallerOptions): Promise<ServiceResult<RetryFailedRunResult, ErrorBody>> {
   if (!isUuid(savedQueryId) || !isUuid(scheduleId)) {
     return failure(400, { error: "bad_request", message: "Both ids must be valid UUIDs" });
   }
@@ -772,7 +878,7 @@ async function retryFailedRun(savedQueryId, scheduleId, { callerUserId }) {
   if (!schedule || schedule.saved_query_id !== savedQueryId) {
     return failure(404, { error: "not_found", message: "Schedule not found" });
   }
-  const latest = await appDb.query(
+  const latest = await appDb.query<{ attempt: number; status: SavedQueryScheduleRunStatus }>(
     `SELECT attempt, status FROM saved_query_schedule_runs
       WHERE schedule_id = $1 ORDER BY scheduled_for DESC LIMIT 1`,
     [scheduleId]
@@ -788,15 +894,5 @@ async function retryFailedRun(savedQueryId, scheduleId, { callerUserId }) {
   return success({ ok: dispatch.ok, run_id: dispatch.runId, error: dispatch.error || null });
 }
 
-module.exports = {
-  createSchedule,
-  listSchedules,
-  updateSchedule,
-  deleteSchedule,
-  dispatchSchedule,
-  listDueSchedules,
-  retryFailedRun,
-  validateSchedulePayload,
-  EMAIL_REGEX,
-  MAX_ATTEMPTS
-};
+// Mirror the JS shape for type imports; nothing else.
+export type ScheduleParameterSchema = SavedQueryParameter[];

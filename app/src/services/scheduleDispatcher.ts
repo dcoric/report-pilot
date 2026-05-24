@@ -16,13 +16,20 @@
 // Disable in tests by leaving `SCHEDULE_DISPATCHER_ENABLED` unset (default
 // "false"). Enable in prod by setting it to "true" in the environment.
 
-const scheduleService = require("./savedQueryScheduleService");
-const { logEvent } = require("../lib/observability");
+import * as scheduleService from "./savedQueryScheduleService";
+import { logEvent } from "../lib/observability";
 
-let intervalHandle = null;
+let intervalHandle: NodeJS.Timeout | null = null;
 let runningTick = false;
 
-async function tickOnce() {
+export interface TickResult {
+  skipped?: boolean;
+  dispatched?: number;
+  succeeded?: number;
+  failed?: number;
+}
+
+export async function tickOnce(): Promise<TickResult> {
   if (runningTick) return { skipped: true };
   runningTick = true;
   try {
@@ -42,7 +49,7 @@ async function tickOnce() {
         logEvent("schedule_dispatch_error", {
           schedule_id: schedule.id,
           saved_query_id: schedule.saved_query_id,
-          error: err && err.message ? err.message : String(err)
+          error: (err && (err as Error).message) ? (err as Error).message : String(err)
         }, "error");
       }
     }
@@ -57,12 +64,12 @@ async function tickOnce() {
   }
 }
 
-function startDispatcher({ tickIntervalMs = 60_000 } = {}) {
+export function startDispatcher({ tickIntervalMs = 60_000 }: { tickIntervalMs?: number } = {}): NodeJS.Timeout {
   if (intervalHandle) return intervalHandle;
   intervalHandle = setInterval(() => {
-    tickOnce().catch((err) => {
+    tickOnce().catch((err: unknown) => {
       logEvent("schedule_dispatcher_tick_error", {
-        error: err && err.message ? err.message : String(err)
+        error: (err && (err as Error).message) ? (err as Error).message : String(err)
       }, "error");
     });
   }, tickIntervalMs);
@@ -73,20 +80,13 @@ function startDispatcher({ tickIntervalMs = 60_000 } = {}) {
   return intervalHandle;
 }
 
-function stopDispatcher() {
+export function stopDispatcher(): void {
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
   }
 }
 
-function isEnabled() {
+export function isEnabled(): boolean {
   return String(process.env.SCHEDULE_DISPATCHER_ENABLED || "false") === "true";
 }
-
-module.exports = {
-  startDispatcher,
-  stopDispatcher,
-  tickOnce,
-  isEnabled
-};

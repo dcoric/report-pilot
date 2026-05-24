@@ -17,11 +17,11 @@
 //   folder's parent (NULL if it was a root folder). The reparent + delete
 //   happen in a single transaction so the move is atomic.
 
-const appDb = require("../lib/appDb");
-const { isUuid, isPgUniqueViolation } = require("../lib/validation");
+import appDb = require("../lib/appDb");
+import { isUuid, isPgUniqueViolation } from "../lib/validation";
 
-const FOLDER_NAME_MAX_LENGTH = 120;
-const MAX_FOLDER_DEPTH = 10;
+export const FOLDER_NAME_MAX_LENGTH = 120 as const;
+export const MAX_FOLDER_DEPTH = 10 as const;
 
 const FOLDER_COLUMNS = `
   id,
@@ -32,20 +32,52 @@ const FOLDER_COLUMNS = `
   updated_at
 `;
 
-function success(body, statusCode = 200) {
+export interface FolderRow {
+  id: string;
+  owner_id: string;
+  parent_id: string | null;
+  name: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+interface FolderNode extends FolderRow {
+  children: FolderNode[];
+}
+
+export interface ServiceSuccess<T> {
+  ok: true;
+  statusCode: number;
+  body: T;
+}
+export interface ServiceFailure<T = unknown> {
+  ok: false;
+  statusCode: number;
+  body: T;
+}
+export type ServiceResult<TSuccess, TFailure = unknown> = ServiceSuccess<TSuccess> | ServiceFailure<TFailure>;
+
+interface ErrorBody {
+  error: string;
+  message?: string;
+}
+
+function success<T>(body: T, statusCode = 200): ServiceSuccess<T> {
   return { ok: true, statusCode, body };
 }
 
-function failure(statusCode, body) {
+function failure<T>(statusCode: number, body: T): ServiceFailure<T> {
   return { ok: false, statusCode, body };
 }
 
-function normalizeName(value) {
+function normalizeName(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.trim();
 }
 
-function normalizeParentId(value) {
+type ParentIdValidation = { ok: true; value: string | null | undefined } | { ok: false; message: string };
+
+function normalizeParentId(value: unknown): ParentIdValidation {
   if (value === undefined) return { ok: true, value: undefined };
   if (value === null) return { ok: true, value: null };
   if (typeof value === "string" && value.trim() === "") return { ok: true, value: null };
@@ -55,9 +87,9 @@ function normalizeParentId(value) {
   return { ok: true, value };
 }
 
-async function loadFolder(folderId) {
+async function loadFolder(folderId: string): Promise<FolderRow | null> {
   if (!isUuid(folderId)) return null;
-  const result = await appDb.query(
+  const result = await appDb.query<FolderRow>(
     `SELECT ${FOLDER_COLUMNS} FROM saved_query_folders WHERE id = $1`,
     [folderId]
   );
@@ -66,9 +98,9 @@ async function loadFolder(folderId) {
 
 // Returns the path from root → folder as an array of ids (inclusive).
 // Used both for depth checking and cycle detection on move.
-async function loadAncestorChain(folderId) {
+async function loadAncestorChain(folderId: string): Promise<string[]> {
   if (!isUuid(folderId)) return [];
-  const result = await appDb.query(
+  const result = await appDb.query<{ id: string }>(
     `
       WITH RECURSIVE chain AS (
         SELECT id, parent_id, 1 AS depth
@@ -88,7 +120,7 @@ async function loadAncestorChain(folderId) {
   return result.rows.map((row) => row.id);
 }
 
-async function isDescendantOf(candidateId, ancestorId) {
+async function isDescendantOf(candidateId: string, ancestorId: string): Promise<boolean> {
   // True if `candidateId` lives somewhere under `ancestorId`.
   if (!isUuid(candidateId) || !isUuid(ancestorId)) return false;
   if (candidateId === ancestorId) return true;
@@ -104,10 +136,18 @@ async function isDescendantOf(candidateId, ancestorId) {
     `,
     [ancestorId, candidateId]
   );
-  return result.rowCount > 0;
+  return result.rowCount! > 0;
 }
 
-async function validateParent(ownerId, parentId, { folderBeingMoved = null } = {}) {
+type ParentCheck =
+  | { ok: true; value: string | null }
+  | { ok: false; statusCode: number; message: string };
+
+async function validateParent(
+  ownerId: string,
+  parentId: string | null | undefined,
+  { folderBeingMoved = null }: { folderBeingMoved?: string | null } = {}
+): Promise<ParentCheck> {
   if (parentId === null || parentId === undefined) {
     return { ok: true, value: null };
   }
@@ -144,7 +184,13 @@ async function validateParent(ownerId, parentId, { folderBeingMoved = null } = {
   return { ok: true, value: parent.id };
 }
 
-async function createFolder({ ownerId, name, parentId }) {
+export interface CreateFolderInput {
+  ownerId: string | null | undefined;
+  name: unknown;
+  parentId?: unknown;
+}
+
+export async function createFolder({ ownerId, name, parentId }: CreateFolderInput): Promise<ServiceResult<FolderRow, ErrorBody>> {
   const ownerTrimmed = String(ownerId || "").trim();
   if (!ownerTrimmed) {
     return failure(401, { error: "unauthenticated" });
@@ -160,16 +206,16 @@ async function createFolder({ ownerId, name, parentId }) {
     });
   }
   const parentValidation = normalizeParentId(parentId);
-  if (!parentValidation.ok) {
+  if (parentValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: parentValidation.message });
   }
   const parentCheck = await validateParent(ownerTrimmed, parentValidation.value);
-  if (!parentCheck.ok) {
+  if (parentCheck.ok !== true) {
     return failure(parentCheck.statusCode, { error: "bad_request", message: parentCheck.message });
   }
 
   try {
-    const insertResult = await appDb.query(
+    const insertResult = await appDb.query<FolderRow>(
       `
         INSERT INTO saved_query_folders (owner_id, parent_id, name)
         VALUES ($1, $2, $3)
@@ -189,12 +235,17 @@ async function createFolder({ ownerId, name, parentId }) {
   }
 }
 
-async function listFolders({ ownerId }) {
+export interface ListFoldersResult {
+  items: FolderRow[];
+  tree: FolderNode[];
+}
+
+export async function listFolders({ ownerId }: { ownerId: string | null | undefined }): Promise<ServiceResult<ListFoldersResult, ErrorBody>> {
   const ownerTrimmed = String(ownerId || "").trim();
   if (!ownerTrimmed) {
     return failure(401, { error: "unauthenticated" });
   }
-  const result = await appDb.query(
+  const result = await appDb.query<FolderRow>(
     `
       SELECT ${FOLDER_COLUMNS}
         FROM saved_query_folders
@@ -209,15 +260,15 @@ async function listFolders({ ownerId }) {
   // tree. Each node carries a `children` array of folder nodes. Saved-query
   // membership lives on the saved-queries response (`folder_id`), so the
   // sidebar can join them in a single render pass.
-  const byId = new Map();
+  const byId = new Map<string, FolderNode>();
   for (const row of rows) {
     byId.set(row.id, { ...row, children: [] });
   }
-  const tree = [];
+  const tree: FolderNode[] = [];
   for (const row of rows) {
-    const node = byId.get(row.id);
+    const node = byId.get(row.id)!;
     if (row.parent_id && byId.has(row.parent_id)) {
-      byId.get(row.parent_id).children.push(node);
+      byId.get(row.parent_id)!.children.push(node);
     } else {
       tree.push(node);
     }
@@ -226,7 +277,13 @@ async function listFolders({ ownerId }) {
   return success({ items: rows, tree });
 }
 
-async function updateFolder(folderId, { ownerId, name, parentId }) {
+export interface UpdateFolderInput {
+  ownerId: string | null | undefined;
+  name?: unknown;
+  parentId?: unknown;
+}
+
+export async function updateFolder(folderId: string, { ownerId, name, parentId }: UpdateFolderInput): Promise<ServiceResult<FolderRow, ErrorBody>> {
   if (!isUuid(folderId)) {
     return failure(400, { error: "bad_request", message: "folderId must be a valid UUID" });
   }
@@ -259,20 +316,20 @@ async function updateFolder(folderId, { ownerId, name, parentId }) {
   let nextParentId = existing.parent_id;
   if (parentId !== undefined) {
     const parentValidation = normalizeParentId(parentId);
-    if (!parentValidation.ok) {
+    if (parentValidation.ok !== true) {
       return failure(400, { error: "bad_request", message: parentValidation.message });
     }
     const parentCheck = await validateParent(ownerTrimmed, parentValidation.value, {
       folderBeingMoved: folderId
     });
-    if (!parentCheck.ok) {
+    if (parentCheck.ok !== true) {
       return failure(parentCheck.statusCode, { error: "bad_request", message: parentCheck.message });
     }
     nextParentId = parentCheck.value;
   }
 
   try {
-    const updateResult = await appDb.query(
+    const updateResult = await appDb.query<FolderRow>(
       `
         UPDATE saved_query_folders
            SET name = $2,
@@ -298,7 +355,15 @@ async function updateFolder(folderId, { ownerId, name, parentId }) {
   }
 }
 
-async function deleteFolder(folderId, { ownerId }) {
+export interface DeleteFolderResult {
+  ok: true;
+  id: string;
+  reassigned_to: string | null;
+  reassigned_folder_ids: string[];
+  reassigned_saved_query_ids: string[];
+}
+
+export async function deleteFolder(folderId: string, { ownerId }: { ownerId: string | null | undefined }): Promise<ServiceResult<DeleteFolderResult, ErrorBody>> {
   if (!isUuid(folderId)) {
     return failure(400, { error: "bad_request", message: "folderId must be a valid UUID" });
   }
@@ -320,7 +385,7 @@ async function deleteFolder(folderId, { ownerId }) {
   // half-rewritten.
   const reassignedTo = existing.parent_id; // may be null (root)
   const summary = await appDb.withTransaction(async (client) => {
-    const childFolders = await client.query(
+    const childFolders = await client.query<{ id: string }>(
       `
         UPDATE saved_query_folders
            SET parent_id = $2,
@@ -330,7 +395,7 @@ async function deleteFolder(folderId, { ownerId }) {
       `,
       [folderId, reassignedTo]
     );
-    const childQueries = await client.query(
+    const childQueries = await client.query<{ id: string }>(
       `
         UPDATE saved_queries
            SET folder_id = $2,
@@ -351,13 +416,24 @@ async function deleteFolder(folderId, { ownerId }) {
     };
   });
 
-  return success({ ok: true, id: folderId, ...summary });
+  return success({ ok: true as const, id: folderId, ...summary });
+}
+
+export interface MoveSavedQueryInput {
+  ownerId: string | null | undefined;
+  folderId: unknown;
+}
+
+export interface MoveSavedQueryResult {
+  saved_query: unknown;
+  previous_folder_id: string | null;
+  folder_id: string | null;
 }
 
 // QUERY-008: move a saved query into a folder (or to root). Returns the
 // updated saved-query row plus the resolved folder reference so the sidebar
 // tree can patch state without a follow-up GET.
-async function moveSavedQuery(savedQueryId, { ownerId, folderId }) {
+export async function moveSavedQuery(savedQueryId: string, { ownerId, folderId }: MoveSavedQueryInput): Promise<ServiceResult<MoveSavedQueryResult, ErrorBody>> {
   if (!isUuid(savedQueryId)) {
     return failure(400, { error: "bad_request", message: "savedQueryId must be a valid UUID" });
   }
@@ -366,13 +442,13 @@ async function moveSavedQuery(savedQueryId, { ownerId, folderId }) {
     return failure(401, { error: "unauthenticated" });
   }
   const folderValidation = normalizeParentId(folderId);
-  if (!folderValidation.ok) {
+  if (folderValidation.ok !== true) {
     return failure(400, { error: "bad_request", message: folderValidation.message.replace("parent_id", "folder_id") });
   }
 
   // Load the saved query and verify ownership. Folders are per-owner so a
   // recipient of a share grant cannot relocate someone else's query.
-  const queryRow = await appDb.query(
+  const queryRow = await appDb.query<{ id: string; owner_id: string; folder_id: string | null }>(
     `SELECT id, owner_id, folder_id FROM saved_queries WHERE id = $1`,
     [savedQueryId]
   );
@@ -384,7 +460,7 @@ async function moveSavedQuery(savedQueryId, { ownerId, folderId }) {
     return failure(403, { error: "forbidden", message: "Only the owner can move this saved query" });
   }
 
-  let resolvedFolderId = null;
+  let resolvedFolderId: string | null = null;
   if (folderValidation.value) {
     const folder = await loadFolder(folderValidation.value);
     if (!folder) {
@@ -426,13 +502,3 @@ async function moveSavedQuery(savedQueryId, { ownerId, folderId }) {
     folder_id: resolvedFolderId
   });
 }
-
-module.exports = {
-  createFolder,
-  listFolders,
-  updateFolder,
-  deleteFolder,
-  moveSavedQuery,
-  FOLDER_NAME_MAX_LENGTH,
-  MAX_FOLDER_DEPTH
-};
