@@ -1,8 +1,28 @@
-const appDb = require("../lib/appDb");
-const { LOCAL_EMBEDDING_MODEL, embedQueryForModel } = require("./embeddingRouter");
-const { cosineSimilarity } = require("./localEmbedding");
+import appDb = require("../lib/appDb");
+import { LOCAL_EMBEDDING_MODEL, embedQueryForModel } from "./embeddingRouter";
+import { cosineSimilarity } from "./localEmbedding";
 
-async function retrieveRagContext(dataSourceId, question, opts = {}) {
+export interface RagRetrievalDoc {
+  id: string;
+  doc_type: string;
+  ref_id: string;
+  content: string;
+  metadata_json: Record<string, unknown> | null;
+  vector_json: number[] | null;
+  score: number;
+  embedding_model: string;
+  rerank_score?: number;
+}
+
+export interface RetrieveRagContextOptions {
+  limit?: number;
+}
+
+export async function retrieveRagContext(
+  dataSourceId: string,
+  question: string,
+  opts: RetrieveRagContextOptions = {}
+): Promise<RagRetrievalDoc[]> {
   const limit = Number(opts.limit || 12);
   const q = String(question || "").trim();
 
@@ -11,7 +31,14 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
   }
 
   const embeddingModel = await selectEmbeddingModel(dataSourceId);
-  const result = await appDb.query(
+  const result = await appDb.query<{
+    id: string;
+    doc_type: string;
+    ref_id: string;
+    content: string;
+    metadata_json: Record<string, unknown> | null;
+    vector_json: number[] | null;
+  }>(
     `
       SELECT
         rd.id,
@@ -33,7 +60,7 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
 
   const tokens = tokenize(q);
   const qVector = await embedQueryForModel(q, embeddingModel);
-  const ranked = result.rows
+  const ranked: RagRetrievalDoc[] = result.rows
     .map((row) => ({
       ...row,
       score: computeHybridScore(q, tokens, qVector, row.content, row.vector_json),
@@ -48,7 +75,7 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
   }
 
   const usedIds = new Set(reranked.map((row) => row.id));
-  const fill = result.rows
+  const fill: RagRetrievalDoc[] = result.rows
     .filter((row) => !usedIds.has(row.id))
     .slice(0, Math.max(0, limit - reranked.length))
     .map((row) => ({ ...row, score: 0, embedding_model: embeddingModel, rerank_score: 0 }));
@@ -56,8 +83,8 @@ async function retrieveRagContext(dataSourceId, question, opts = {}) {
   return reranked.concat(fill);
 }
 
-async function selectEmbeddingModel(dataSourceId) {
-  const result = await appDb.query(
+async function selectEmbeddingModel(dataSourceId: string): Promise<string> {
+  const result = await appDb.query<{ embedding_model: string; doc_count: number | string }>(
     `
       SELECT re.embedding_model, COUNT(*) AS doc_count
       FROM rag_embeddings re
@@ -73,7 +100,7 @@ async function selectEmbeddingModel(dataSourceId) {
   return result.rows[0]?.embedding_model || LOCAL_EMBEDDING_MODEL;
 }
 
-function tokenize(text) {
+function tokenize(text: unknown): string[] {
   return String(text || "")
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, " ")
@@ -82,13 +109,19 @@ function tokenize(text) {
     .filter((t) => t.length >= 2);
 }
 
-function computeHybridScore(question, tokens, qVector, content, vectorJson) {
+function computeHybridScore(
+  question: string,
+  tokens: string[],
+  qVector: number[] | null,
+  content: string,
+  vectorJson: number[] | null
+): number {
   const lexical = computeLexicalScore(question, tokens, content);
   const vector = computeVectorScore(qVector, vectorJson);
   return Number((lexical + (vector * 2)).toFixed(4));
 }
 
-function rerankDocuments(question, tokens, rows) {
+function rerankDocuments(question: string, tokens: string[], rows: RagRetrievalDoc[]): RagRetrievalDoc[] {
   const q = String(question || "").toLowerCase();
   return rows
     .map((row) => {
@@ -102,10 +135,10 @@ function rerankDocuments(question, tokens, rows) {
         rerank_score: rerankScore
       };
     })
-    .sort((a, b) => b.rerank_score - a.rerank_score);
+    .sort((a, b) => (b.rerank_score || 0) - (a.rerank_score || 0));
 }
 
-function tokenCoverage(tokens, content) {
+function tokenCoverage(tokens: string[], content: string): number {
   if (!tokens || tokens.length === 0) {
     return 0;
   }
@@ -119,7 +152,7 @@ function tokenCoverage(tokens, content) {
   return hits / set.size;
 }
 
-function docTypeBoost(docType) {
+function docTypeBoost(docType: string): number {
   if (docType === "semantic") {
     return 0.9;
   }
@@ -132,7 +165,7 @@ function docTypeBoost(docType) {
   return 0.2;
 }
 
-function computeLexicalScore(question, tokens, content) {
+function computeLexicalScore(question: string, tokens: string[], content: string): number {
   const haystack = String(content || "").toLowerCase();
   if (!haystack) {
     return 0;
@@ -154,7 +187,7 @@ function computeLexicalScore(question, tokens, content) {
   return score;
 }
 
-function computeVectorScore(queryVector, vectorJson) {
+function computeVectorScore(queryVector: number[] | null, vectorJson: number[] | null): number {
   if (!Array.isArray(queryVector) || queryVector.length === 0) {
     return 0;
   }
@@ -168,7 +201,3 @@ function computeVectorScore(queryVector, vectorJson) {
   }
   return cosine;
 }
-
-module.exports = {
-  retrieveRagContext
-};

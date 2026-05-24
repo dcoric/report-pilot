@@ -3,26 +3,67 @@
  * produced by mssqlAdapter.introspectSchema().
  */
 
-function parseSchemaFromDdl(ddlText) {
+interface DdlObject {
+  schemaName: string;
+  objectName: string;
+  objectType: "table" | "view";
+}
+
+interface DdlColumn {
+  schemaName: string;
+  objectName: string;
+  columnName: string;
+  dataType: string;
+  nullable: boolean;
+  isPk: boolean;
+  ordinalPosition: number;
+}
+
+interface DdlRelationship {
+  fromSchema: string;
+  fromObject: string;
+  fromColumn: string;
+  toSchema: string;
+  toObject: string;
+  toColumn: string;
+  relationshipType: "fk";
+}
+
+interface DdlIndex {
+  schemaName: string;
+  objectName: string;
+  indexName: string;
+  columns: string[];
+  isUnique: boolean;
+}
+
+export interface DdlSnapshot {
+  objects: DdlObject[];
+  columns: DdlColumn[];
+  relationships: DdlRelationship[];
+  indexes: DdlIndex[];
+}
+
+export function parseSchemaFromDdl(ddlText: unknown): DdlSnapshot {
   // Strip BOM, null bytes (residual UTF-16 if client didn't decode properly),
   // and normalize line endings
   const text = String(ddlText || "")
-    .replace(/^\uFEFF/, "")
+    .replace(/^﻿/, "")
     .replace(/\0/g, "")
     .replace(/\r\n/g, "\n");
-  const objects = [];
-  const columns = [];
-  const relationships = [];
-  const indexes = [];
+  const objects: DdlObject[] = [];
+  const columns: DdlColumn[] = [];
+  const relationships: DdlRelationship[] = [];
+  const indexes: DdlIndex[] = [];
 
   // Track which columns are PKs (populated by inline and out-of-line constraints)
-  const pkSet = new Set();
+  const pkSet = new Set<string>();
 
   // ── 1. Parse CREATE TABLE statements (balanced-paren extraction) ──
   const createTableHeaderRe =
     /CREATE\s+TABLE\s+(\[?[\w.]+\]?\.?\[?[\w.]+\]?)\s*\(/gi;
 
-  let headerMatch;
+  let headerMatch: RegExpExecArray | null;
   while ((headerMatch = createTableHeaderRe.exec(text)) !== null) {
     const rawName = headerMatch[1];
     const bodyStart = headerMatch.index + headerMatch[0].length;
@@ -34,7 +75,7 @@ function parseSchemaFromDdl(ddlText) {
     objects.push({
       schemaName: schema,
       objectName: name,
-      objectType: "table",
+      objectType: "table"
     });
 
     parseTableBody(schema, name, body, columns, pkSet, relationships);
@@ -44,13 +85,13 @@ function parseSchemaFromDdl(ddlText) {
   const createViewRe =
     /CREATE\s+VIEW\s+(\[?[\w.]+\]?\.?\[?[\w.]+\]?)\s/gi;
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = createViewRe.exec(text)) !== null) {
     const { schema, name } = parseQualifiedName(match[1]);
     objects.push({
       schemaName: schema,
       objectName: name,
-      objectType: "view",
+      objectType: "view"
     });
   }
 
@@ -72,7 +113,7 @@ function parseSchemaFromDdl(ddlText) {
         toSchema: to.schema,
         toObject: to.name,
         toColumn: toCols[i] || fromCols[i],
-        relationshipType: "fk",
+        relationshipType: "fk"
       });
     }
   }
@@ -103,7 +144,7 @@ function parseSchemaFromDdl(ddlText) {
       objectName: tbl.name,
       indexName: unquote(match[2]),
       columns: idxCols,
-      isUnique,
+      isUnique
     });
   }
 
@@ -123,7 +164,7 @@ function parseSchemaFromDdl(ddlText) {
  * Starting right after an opening '(', extract everything up to the
  * matching closing ')' respecting nested parens.
  */
-function extractBalancedBody(text, startIndex) {
+function extractBalancedBody(text: string, startIndex: number): string | null {
   let depth = 1;
   let i = startIndex;
   while (i < text.length && depth > 0) {
@@ -135,7 +176,14 @@ function extractBalancedBody(text, startIndex) {
   return text.slice(startIndex, i);
 }
 
-function parseTableBody(schema, tableName, body, columns, pkSet, relationships) {
+function parseTableBody(
+  schema: string,
+  tableName: string,
+  body: string,
+  columns: DdlColumn[],
+  pkSet: Set<string>,
+  relationships: DdlRelationship[]
+): void {
   const lines = splitTableBody(body);
   let ordinal = 0;
 
@@ -171,7 +219,7 @@ function parseTableBody(schema, tableName, body, columns, pkSet, relationships) 
             toSchema: to.schema,
             toObject: to.name,
             toColumn: toCols[i] || fromCols[i],
-            relationshipType: "fk",
+            relationshipType: "fk"
           });
         }
       }
@@ -206,13 +254,13 @@ function parseTableBody(schema, tableName, body, columns, pkSet, relationships) 
       dataType,
       nullable: isInlinePk ? false : !hasNotNull,
       isPk: false, // will be set in step 6
-      ordinalPosition: ordinal,
+      ordinalPosition: ordinal
     });
   }
 }
 
-function splitTableBody(body) {
-  const lines = [];
+function splitTableBody(body: string): string[] {
+  const lines: string[] = [];
   let current = "";
   let depth = 0;
 
@@ -232,27 +280,27 @@ function splitTableBody(body) {
   return lines;
 }
 
-function parseQualifiedName(raw) {
+function parseQualifiedName(raw: unknown): { schema: string; name: string } {
   const cleaned = String(raw || "").trim();
   // Handle [schema].[name] or schema.name
   const parts = cleaned.split(".");
   if (parts.length >= 2) {
     return {
       schema: unquote(parts[parts.length - 2]),
-      name: unquote(parts[parts.length - 1]),
+      name: unquote(parts[parts.length - 1])
     };
   }
   return { schema: "dbo", name: unquote(parts[0]) };
 }
 
-function unquote(s) {
+function unquote(s: unknown): string {
   return String(s || "")
     .trim()
     .replace(/^\[/, "")
     .replace(/\]$/, "");
 }
 
-function normalizeDataType(raw) {
+function normalizeDataType(raw: unknown): string {
   return String(raw || "")
     .trim()
     .replace(/\[([^\]]+)\]/g, "$1")
@@ -260,13 +308,13 @@ function normalizeDataType(raw) {
     .toLowerCase();
 }
 
-function dedupeSnapshot(snapshot) {
-  const objects = [];
-  const columns = [];
-  const relationships = [];
-  const indexes = [];
+function dedupeSnapshot(snapshot: DdlSnapshot): DdlSnapshot {
+  const objects: DdlObject[] = [];
+  const columns: DdlColumn[] = [];
+  const relationships: DdlRelationship[] = [];
+  const indexes: DdlIndex[] = [];
 
-  const objectKeys = new Set();
+  const objectKeys = new Set<string>();
   for (const object of snapshot.objects || []) {
     const key = `${String(object.schemaName || "").toLowerCase()}.${String(object.objectName || "").toLowerCase()}`;
     if (objectKeys.has(key)) continue;
@@ -274,7 +322,7 @@ function dedupeSnapshot(snapshot) {
     objects.push(object);
   }
 
-  const columnKeys = new Set();
+  const columnKeys = new Set<string>();
   for (const column of snapshot.columns || []) {
     const key = [
       String(column.schemaName || "").toLowerCase(),
@@ -286,7 +334,7 @@ function dedupeSnapshot(snapshot) {
     columns.push(column);
   }
 
-  const relationshipKeys = new Set();
+  const relationshipKeys = new Set<string>();
   for (const relationship of snapshot.relationships || []) {
     const key = [
       String(relationship.fromSchema || "").toLowerCase(),
@@ -302,7 +350,7 @@ function dedupeSnapshot(snapshot) {
     relationships.push(relationship);
   }
 
-  const indexKeys = new Set();
+  const indexKeys = new Set<string>();
   for (const index of snapshot.indexes || []) {
     const key = [
       String(index.schemaName || "").toLowerCase(),
@@ -317,7 +365,7 @@ function dedupeSnapshot(snapshot) {
   return { objects, columns, relationships, indexes };
 }
 
-function splitColumnList(raw) {
+function splitColumnList(raw: unknown): string[] {
   return String(raw || "")
     .split(",")
     .map((s) => {
@@ -326,7 +374,3 @@ function splitColumnList(raw) {
     })
     .filter(Boolean);
 }
-
-module.exports = {
-  parseSchemaFromDdl,
-};

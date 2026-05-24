@@ -255,13 +255,13 @@ export async function orchestrateQueryRun({
       metricDefinitions: context.metricDefinitions,
       joinPolicies: context.joinPolicies
     }) as Citations;
-    citations.rag_documents = ragDocuments.map((doc: Record<string, unknown>) => ({
-      id: doc.id as string,
-      doc_type: doc.doc_type as string,
-      ref_id: doc.ref_id as string,
+    citations.rag_documents = ragDocuments.map((doc) => ({
+      id: doc.id,
+      doc_type: doc.doc_type,
+      ref_id: doc.ref_id,
       score: Number(doc.score || 0),
       rerank_score: Number(doc.rerank_score || 0),
-      embedding_model: (doc.embedding_model as string | null) || null
+      embedding_model: doc.embedding_model || null
     }));
 
     const confidence = computeConfidence({

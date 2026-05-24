@@ -1,8 +1,16 @@
-const crypto = require("crypto");
-const { createDatabaseAdapter } = require("../adapters/dbAdapterFactory");
-const appDb = require("../lib/appDb");
+import { createHash } from "crypto";
+import type { PoolClient } from "pg";
+import { createDatabaseAdapter } from "../adapters/dbAdapterFactory";
+import appDb = require("../lib/appDb");
+import type { SchemaIntrospection } from "../adapters/types";
 
-async function runIntrospection(dataSource) {
+export interface IntrospectionDataSource {
+  id: string;
+  db_type: string;
+  connection_ref: string;
+}
+
+export async function runIntrospection(dataSource: IntrospectionDataSource): Promise<SchemaIntrospection> {
   const adapter = createDatabaseAdapter(dataSource.db_type, dataSource.connection_ref);
   try {
     const snapshot = await adapter.introspectSchema();
@@ -13,9 +21,9 @@ async function runIntrospection(dataSource) {
   }
 }
 
-async function persistSnapshot(dataSourceId, snapshot) {
-  await appDb.withTransaction(async (client) => {
-    const existingObjectsResult = await client.query(
+export async function persistSnapshot(dataSourceId: string, snapshot: SchemaIntrospection): Promise<void> {
+  await appDb.withTransaction(async (client: PoolClient) => {
+    const existingObjectsResult = await client.query<{ schema_name: string; object_name: string; is_ignored: boolean }>(
       `
         SELECT schema_name, object_name, is_ignored
         FROM schema_objects
@@ -30,13 +38,13 @@ async function persistSnapshot(dataSourceId, snapshot) {
 
     await client.query("DELETE FROM schema_objects WHERE data_source_id = $1", [dataSourceId]);
 
-    const objectIdByKey = new Map();
+    const objectIdByKey = new Map<string, string>();
 
     for (const object of snapshot.objects) {
       const key = objectKey(object.schemaName, object.objectName);
       const isIgnored = ignoredByObjectKey.get(key) === true;
       const hash = computeObjectHash(object, snapshot.columns, snapshot.relationships);
-      const objectInsert = await client.query(
+      const objectInsert = await client.query<{ id: string }>(
         `
           INSERT INTO schema_objects (
             data_source_id,
@@ -126,11 +134,15 @@ async function persistSnapshot(dataSourceId, snapshot) {
   });
 }
 
-function objectKey(schemaName, objectName) {
+function objectKey(schemaName: string, objectName: string): string {
   return `${schemaName}.${objectName}`.toLowerCase();
 }
 
-function computeObjectHash(object, allColumns, allRelationships) {
+function computeObjectHash(
+  object: SchemaIntrospection["objects"][number],
+  allColumns: SchemaIntrospection["columns"],
+  allRelationships: SchemaIntrospection["relationships"]
+): string {
   const columns = allColumns
     .filter((column) => column.schemaName === object.schemaName && column.objectName === object.objectName)
     .map((column) => `${column.columnName}:${column.dataType}:${column.nullable}:${column.isPk}`)
@@ -145,13 +157,7 @@ function computeObjectHash(object, allColumns, allRelationships) {
     .map((rel) => `${rel.fromColumn}->${rel.toSchema}.${rel.toObject}.${rel.toColumn}`)
     .sort();
 
-  return crypto
-    .createHash("sha256")
+  return createHash("sha256")
     .update(JSON.stringify({ object, columns, relationships }))
     .digest("hex");
 }
-
-module.exports = {
-  runIntrospection,
-  persistSnapshot
-};

@@ -1,6 +1,79 @@
-const appDb = require("../lib/appDb");
+import appDb = require("../lib/appDb");
 
-async function buildRagDocuments(dataSourceId) {
+export interface RagDocument {
+  docType: "schema" | "semantic" | "policy" | "example";
+  refId: string;
+  metadata: Record<string, unknown>;
+  content: string;
+}
+
+interface SchemaObjectRow {
+  id: string;
+  object_type: string;
+  schema_name: string;
+  object_name: string;
+  description: string | null;
+}
+
+interface ColumnRow {
+  id: string;
+  schema_object_id: string;
+  column_name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+}
+
+interface RelationshipRow {
+  id: string;
+  from_object_id: string;
+  from_column: string;
+  to_object_id: string;
+  to_column: string;
+  relationship_type: string;
+}
+
+interface SemanticEntityRow {
+  id: string;
+  entity_type: string;
+  target_ref: string;
+  business_name: string;
+  description: string | null;
+  owner: string | null;
+}
+
+interface MetricDefinitionRow {
+  id: string;
+  semantic_entity_id: string;
+  sql_expression: string;
+  grain: string | null;
+  business_name: string;
+}
+
+interface JoinPolicyRow {
+  id: string;
+  left_ref: string;
+  right_ref: string;
+  join_type: string;
+  on_clause: string;
+  notes: string | null;
+}
+
+interface NlSqlExampleRow {
+  id: string;
+  question: string;
+  sql: string;
+  quality_score: number | null;
+  source: string | null;
+}
+
+interface RagNoteRow {
+  id: string;
+  title: string;
+  content: string;
+}
+
+export async function buildRagDocuments(dataSourceId: string): Promise<RagDocument[]> {
   const [
     schemaObjectsResult,
     columnsResult,
@@ -11,7 +84,7 @@ async function buildRagDocuments(dataSourceId) {
     examplesResult,
     ragNotesResult
   ] = await Promise.all([
-    appDb.query(
+    appDb.query<SchemaObjectRow>(
       `
         SELECT id, object_type, schema_name, object_name, description
         FROM schema_objects
@@ -21,7 +94,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<ColumnRow>(
       `
         SELECT
           c.id,
@@ -38,7 +111,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<RelationshipRow>(
       `
         SELECT
           r.id,
@@ -56,7 +129,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<SemanticEntityRow>(
       `
         SELECT id, entity_type, target_ref, business_name, description, owner
         FROM semantic_entities
@@ -65,7 +138,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<MetricDefinitionRow>(
       `
         SELECT md.id, md.semantic_entity_id, md.sql_expression, md.grain, se.business_name
         FROM metric_definitions md
@@ -75,7 +148,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<JoinPolicyRow>(
       `
         SELECT id, left_ref, right_ref, join_type, on_clause, notes
         FROM join_policies
@@ -84,7 +157,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<NlSqlExampleRow>(
       `
         SELECT id, question, sql, quality_score, source
         FROM nl_sql_examples
@@ -94,7 +167,7 @@ async function buildRagDocuments(dataSourceId) {
       `,
       [dataSourceId]
     ),
-    appDb.query(
+    appDb.query<RagNoteRow>(
       `
         SELECT id, title, content
         FROM rag_notes
@@ -111,7 +184,7 @@ async function buildRagDocuments(dataSourceId) {
     schemaObjectsResult.rows.map((obj) => [obj.id, `${obj.schema_name}.${obj.object_name}`])
   );
 
-  const docs = [];
+  const docs: RagDocument[] = [];
 
   for (const obj of schemaObjectsResult.rows) {
     const columns = columnsByObject.get(obj.id) || [];
@@ -231,18 +304,14 @@ async function buildRagDocuments(dataSourceId) {
   return docs;
 }
 
-function groupBy(rows, keyFn) {
-  const map = new Map();
+function groupBy<T>(rows: T[], keyFn: (row: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>();
   for (const row of rows) {
     const key = keyFn(row);
     if (!map.has(key)) {
       map.set(key, []);
     }
-    map.get(key).push(row);
+    map.get(key)!.push(row);
   }
   return map;
 }
-
-module.exports = {
-  buildRagDocuments
-};

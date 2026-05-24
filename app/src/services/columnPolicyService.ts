@@ -1,3 +1,26 @@
+export interface ForbiddenColumn {
+  schema: string;
+  object: string;
+  column: string;
+  note_id?: string | null;
+}
+
+export interface KnownColumn {
+  schema_name: string;
+  object_name: string;
+  column_name: string;
+}
+
+export interface ParsedRefInput {
+  schema: string;
+  object: string;
+}
+
+export interface ColumnPolicyValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
 const NEGATIVE_KEYWORDS = [
   "do not use",
   "don't use",
@@ -14,9 +37,22 @@ const NEGATIVE_KEYWORDS = [
   "ban"
 ];
 
-function extractForbiddenColumnsFromRagNotes(notes, knownColumns) {
+interface ColumnRef {
+  kind: "two_part" | "three_part";
+  parts: string[];
+}
+
+interface KnownColumnMaps {
+  byFull: Map<string, ForbiddenColumn>;
+  byObjectColumn: Map<string, ForbiddenColumn[]>;
+}
+
+export function extractForbiddenColumnsFromRagNotes(
+  notes: Array<{ id?: string | null; title?: string | null; content?: string | null }> | unknown,
+  knownColumns: KnownColumn[] | unknown
+): ForbiddenColumn[] {
   const normalizedColumns = buildKnownColumnMaps(knownColumns);
-  const dedupe = new Map();
+  const dedupe = new Map<string, ForbiddenColumn>();
 
   for (const note of Array.isArray(notes) ? notes : []) {
     const text = [note?.title, note?.content].filter(Boolean).join("\n");
@@ -43,18 +79,23 @@ function extractForbiddenColumnsFromRagNotes(notes, knownColumns) {
   return [...dedupe.values()];
 }
 
-function validateSqlAgainstForbiddenColumns(sql, forbiddenColumns, refs, dialect = "postgres") {
+export function validateSqlAgainstForbiddenColumns(
+  sql: string,
+  forbiddenColumns: ForbiddenColumn[] | unknown,
+  refs: ParsedRefInput[] | unknown,
+  _dialect: string = "postgres"
+): ColumnPolicyValidationResult {
   if (!Array.isArray(forbiddenColumns) || forbiddenColumns.length === 0) {
     return { ok: true, errors: [] };
   }
 
   const sqlText = String(sql || "");
   const referencedObjects = new Set(
-    (Array.isArray(refs) ? refs : []).map((ref) => `${normalizeIdentifier(ref.schema)}.${normalizeIdentifier(ref.object)}`)
+    (Array.isArray(refs) ? refs as ParsedRefInput[] : []).map((ref) => `${normalizeIdentifier(ref.schema)}.${normalizeIdentifier(ref.object)}`)
   );
   const aliasesByObject = extractObjectAliases(sqlText);
 
-  const errors = [];
+  const errors: string[] = [];
   for (const blocked of forbiddenColumns) {
     const schema = normalizeIdentifier(blocked.schema);
     const object = normalizeIdentifier(blocked.object);
@@ -65,7 +106,7 @@ function validateSqlAgainstForbiddenColumns(sql, forbiddenColumns, refs, dialect
       continue;
     }
 
-    const aliasSet = aliasesByObject.get(objectKey) || new Set();
+    const aliasSet = aliasesByObject.get(objectKey) || new Set<string>();
     const hasQualified = sqlMentionsQualifiedColumn(sqlText, schema, object, column, aliasSet);
 
     // Only apply bare-column checks for single-object queries to reduce false positives.
@@ -85,13 +126,13 @@ function validateSqlAgainstForbiddenColumns(sql, forbiddenColumns, refs, dialect
   };
 }
 
-function containsNegativeKeyword(text) {
+function containsNegativeKeyword(text: string): boolean {
   const normalized = String(text || "").toLowerCase();
   return NEGATIVE_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
-function extractColumnRefs(text) {
-  const refs = [];
+function extractColumnRefs(text: string): ColumnRef[] {
+  const refs: ColumnRef[] = [];
   const content = String(text || "");
 
   // schema.object.column (supports bare, quoted, and bracketed identifiers)
@@ -99,7 +140,7 @@ function extractColumnRefs(text) {
   // object.column fallback
   const twoPart = /((?:\[[^\]]+\]|"[^"]+"|[a-z_][\w$]*)\s*\.\s*(?:\[[^\]]+\]|"[^"]+"|[a-z_][\w$]*))/gi;
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = threePart.exec(content)) !== null) {
     const parsed = splitIdentifierPath(match[1]);
     if (parsed.length === 3) {
@@ -118,7 +159,7 @@ function extractColumnRefs(text) {
   return refs;
 }
 
-function resolveColumnRef(ref, knownColumns) {
+function resolveColumnRef(ref: ColumnRef, knownColumns: KnownColumnMaps): ForbiddenColumn | null {
   if (!ref || !Array.isArray(ref.parts)) {
     return null;
   }
@@ -139,9 +180,9 @@ function resolveColumnRef(ref, knownColumns) {
   return null;
 }
 
-function buildKnownColumnMaps(knownColumns) {
-  const byFull = new Map();
-  const byObjectColumn = new Map();
+function buildKnownColumnMaps(knownColumns: KnownColumn[] | unknown): KnownColumnMaps {
+  const byFull = new Map<string, ForbiddenColumn>();
+  const byObjectColumn = new Map<string, ForbiddenColumn[]>();
 
   for (const col of Array.isArray(knownColumns) ? knownColumns : []) {
     const schema = normalizeIdentifier(col.schema_name);
@@ -151,7 +192,7 @@ function buildKnownColumnMaps(knownColumns) {
       continue;
     }
 
-    const normalized = {
+    const normalized: ForbiddenColumn = {
       schema: col.schema_name,
       object: col.object_name,
       column: col.column_name
@@ -164,20 +205,20 @@ function buildKnownColumnMaps(knownColumns) {
     if (!byObjectColumn.has(objectColumnKey)) {
       byObjectColumn.set(objectColumnKey, []);
     }
-    byObjectColumn.get(objectColumnKey).push(normalized);
+    byObjectColumn.get(objectColumnKey)!.push(normalized);
   }
 
   return { byFull, byObjectColumn };
 }
 
-function splitIdentifierPath(value) {
+function splitIdentifierPath(value: unknown): string[] {
   return String(value || "")
     .split(".")
     .map((part) => normalizeIdentifier(part))
     .filter(Boolean);
 }
 
-function normalizeIdentifier(identifier) {
+function normalizeIdentifier(identifier: unknown): string {
   return String(identifier || "")
     .trim()
     .replace(/^\[|\]$/g, "")
@@ -185,16 +226,16 @@ function normalizeIdentifier(identifier) {
     .toLowerCase();
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: unknown): string {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function identifierPattern(identifier) {
+function identifierPattern(identifier: string): string {
   const escaped = escapeRegExp(identifier);
   return `(?:\\[${escaped}\\]|"${escaped}"|${escaped})`;
 }
 
-function sqlMentionsQualifiedColumn(sql, schema, object, column, aliases) {
+function sqlMentionsQualifiedColumn(sql: string, schema: string, object: string, column: string, aliases: Set<string>): boolean {
   const prefixes = [
     `${identifierPattern(schema)}\\s*\\.\\s*${identifierPattern(object)}`,
     identifierPattern(object),
@@ -210,20 +251,20 @@ function sqlMentionsQualifiedColumn(sql, schema, object, column, aliases) {
   return false;
 }
 
-function sqlMentionsColumnToken(sql, column) {
+function sqlMentionsColumnToken(sql: string, column: string): boolean {
   const startsAlpha = /^[a-z_]/i.test(column);
   const bare = startsAlpha ? `|${escapeRegExp(column)}\\b` : "";
   const pattern = new RegExp(`(^|[^\\w])(?:\\[${escapeRegExp(column)}\\]|"${escapeRegExp(column)}"${bare})`, "i");
   return pattern.test(sql);
 }
 
-function extractObjectAliases(sql) {
-  const aliasesByObject = new Map();
+function extractObjectAliases(sql: string): Map<string, Set<string>> {
+  const aliasesByObject = new Map<string, Set<string>>();
   const text = String(sql || "");
   const pattern = /\b(?:from|join)\s+([a-z0-9_\[\]."]+)(?:\s+(?:as\s+)?([a-z0-9_\[\]"]+))?/gi;
   const blockedAliasTokens = new Set(["on", "where", "join", "group", "order", "limit", "top"]);
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     const objectRef = normalizeObjectRef(match[1]);
     if (!objectRef) {
@@ -231,20 +272,20 @@ function extractObjectAliases(sql) {
     }
     const objectKey = `${objectRef.schema}.${objectRef.object}`;
     if (!aliasesByObject.has(objectKey)) {
-      aliasesByObject.set(objectKey, new Set());
+      aliasesByObject.set(objectKey, new Set<string>());
     }
 
     const aliasCandidate = normalizeIdentifier(match[2]);
     if (!aliasCandidate || blockedAliasTokens.has(aliasCandidate)) {
       continue;
     }
-    aliasesByObject.get(objectKey).add(aliasCandidate);
+    aliasesByObject.get(objectKey)!.add(aliasCandidate);
   }
 
   return aliasesByObject;
 }
 
-function normalizeObjectRef(rawRef) {
+function normalizeObjectRef(rawRef: unknown): { schema: string; object: string } | null {
   const cleaned = String(rawRef || "")
     .replace(/[;,]+$/g, "")
     .trim();
@@ -267,15 +308,11 @@ function normalizeObjectRef(rawRef) {
   };
 }
 
-module.exports = {
-  extractForbiddenColumnsFromRagNotes,
-  validateSqlAgainstForbiddenColumns,
-  __private: {
-    containsNegativeKeyword,
-    extractColumnRefs,
-    resolveColumnRef,
-    extractObjectAliases,
-    sqlMentionsColumnToken,
-    sqlMentionsQualifiedColumn
-  }
+export const __private = {
+  containsNegativeKeyword,
+  extractColumnRefs,
+  resolveColumnRef,
+  extractObjectAliases,
+  sqlMentionsColumnToken,
+  sqlMentionsQualifiedColumn
 };
