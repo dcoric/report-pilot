@@ -1,16 +1,30 @@
-const { logEvent } = require("../lib/observability");
+import { logEvent } from "../lib/observability";
 
 const LLM_DEBUG_LOG_ENABLED = String(process.env.LLM_DEBUG_LOG || "false") === "true";
 const LLM_DEBUG_MAX_CHARS = clampPositiveInt(process.env.LLM_DEBUG_MAX_CHARS, 16000);
 
-function normalizeTokenUsage(raw) {
+export interface NormalizedTokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface LlmDebugPayload {
+  prompt?: string;
+  system_prompt?: string;
+  sql?: string;
+  [key: string]: unknown;
+}
+
+export function normalizeTokenUsage(raw: unknown): NormalizedTokenUsage | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
+  const r = raw as Record<string, unknown>;
 
-  const promptTokens = toFiniteNumber(raw.prompt_tokens ?? raw.promptTokenCount);
-  const completionTokens = toFiniteNumber(raw.completion_tokens ?? raw.candidatesTokenCount ?? raw.output_tokens);
-  const totalTokens = toFiniteNumber(raw.total_tokens ?? raw.totalTokenCount);
+  const promptTokens = toFiniteNumber(r.prompt_tokens ?? r.promptTokenCount);
+  const completionTokens = toFiniteNumber(r.completion_tokens ?? r.candidatesTokenCount ?? r.output_tokens);
+  const totalTokens = toFiniteNumber(r.total_tokens ?? r.totalTokenCount);
 
   return {
     prompt_tokens: promptTokens || 0,
@@ -19,16 +33,16 @@ function normalizeTokenUsage(raw) {
   };
 }
 
-function normalizeStatusCode(value) {
+export function normalizeStatusCode(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function logLlmDebug(payload) {
+export function logLlmDebug(payload: LlmDebugPayload): void {
   if (!LLM_DEBUG_LOG_ENABLED) {
     return;
   }
-  const safePayload = Object.assign({}, payload);
+  const safePayload: LlmDebugPayload = Object.assign({}, payload);
   if (typeof safePayload.prompt === "string") {
     safePayload.prompt = truncateText(safePayload.prompt);
   }
@@ -41,12 +55,12 @@ function logLlmDebug(payload) {
   logEvent("llm_debug", safePayload);
 }
 
-function toFiniteNumber(value) {
+function toFiniteNumber(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function truncateText(value) {
+function truncateText(value: unknown): string {
   const text = String(value || "");
   if (text.length <= LLM_DEBUG_MAX_CHARS) {
     return text;
@@ -54,16 +68,10 @@ function truncateText(value) {
   return `${text.slice(0, LLM_DEBUG_MAX_CHARS)}... [truncated ${text.length - LLM_DEBUG_MAX_CHARS} chars]`;
 }
 
-function clampPositiveInt(raw, fallback) {
+function clampPositiveInt(raw: unknown, fallback: number): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
     return fallback;
   }
   return Math.floor(n);
 }
-
-module.exports = {
-  logLlmDebug,
-  normalizeStatusCode,
-  normalizeTokenUsage
-};

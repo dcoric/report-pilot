@@ -15,7 +15,7 @@ const { postJson, extractJsonObject } = require("./httpClient");
  * embeddings use a separate `:embedContent` endpoint and must be requested
  * per-text (unlike OpenAI which batches).
  */
-class GeminiAdapter implements LlmAdapter {
+export class GeminiAdapter implements LlmAdapter {
   readonly provider: string;
   apiKey: string;
   defaultModel: string;

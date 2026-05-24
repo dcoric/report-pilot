@@ -1,14 +1,49 @@
-const { generateSqlFromQuestion } = require("./sqlGenerator");
-const {
+import { generateSqlFromQuestion, type SchemaObjectLite, type SqlDialect } from "./sqlGenerator";
+import {
   buildAdapter,
   buildProviderOrder,
   loadProviderConfigs,
   loadRoutingRule
-} = require("./llmProviderRouting");
-const { buildSqlPrompt, buildSqlSystemPrompt } = require("./llmPromptBuilder");
-const { logLlmDebug, normalizeStatusCode, normalizeTokenUsage } = require("./llmDebug");
+} from "./llmProviderRouting";
+import { buildSqlPrompt, buildSqlSystemPrompt } from "./llmPromptBuilder";
+import { logLlmDebug, normalizeStatusCode, normalizeTokenUsage, type NormalizedTokenUsage } from "./llmDebug";
 
-async function generateSqlWithRouting(input) {
+export interface GenerateSqlWithRoutingInput {
+  dataSourceId: string;
+  question: string;
+  maxRows: number;
+  dialect: SqlDialect | string;
+  requestedProvider?: string | null;
+  requestedModel?: string | null;
+  schemaObjects: SchemaObjectLite[];
+  columns?: unknown[];
+  semanticEntities?: unknown[];
+  metricDefinitions?: unknown[];
+  joinPolicies?: unknown[];
+  ragDocuments?: unknown[];
+  requestId?: string | null;
+}
+
+export interface ProviderAttempt {
+  provider: string;
+  model: string | null;
+  status: "success" | "failed";
+  status_code: number | null;
+  latency_ms: number;
+  usage?: NormalizedTokenUsage | null;
+  error?: string;
+}
+
+export interface GenerateSqlWithRoutingResult {
+  sql: string;
+  provider: string;
+  model: string | null;
+  attempts: ProviderAttempt[];
+  tokenUsage: NormalizedTokenUsage | null;
+  promptVersion: string;
+}
+
+export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput): Promise<GenerateSqlWithRoutingResult> {
   const {
     dataSourceId,
     question,
@@ -32,12 +67,12 @@ async function generateSqlWithRouting(input) {
     dialect,
     question,
     maxRows,
-    schemaObjects,
-    columns,
-    semanticEntities,
-    metricDefinitions,
-    joinPolicies,
-    ragDocuments
+    schemaObjects: schemaObjects as never,
+    columns: columns as never,
+    semanticEntities: semanticEntities as never,
+    metricDefinitions: metricDefinitions as never,
+    joinPolicies: joinPolicies as never,
+    ragDocuments: ragDocuments as never
   });
   logLlmDebug({
     stage: "request_compiled",
@@ -51,7 +86,7 @@ async function generateSqlWithRouting(input) {
     system_prompt: systemPrompt
   });
 
-  const attempts = [];
+  const attempts: ProviderAttempt[] = [];
   for (const provider of providerOrder) {
     const providerConfig = providerConfigs.get(provider) || null;
 
@@ -114,7 +149,8 @@ async function generateSqlWithRouting(input) {
       };
     } catch (err) {
       const latencyMs = Date.now() - startedAt;
-      const statusCode = normalizeStatusCode(err?.statusCode);
+      const e = err as { statusCode?: number | string; message?: string };
+      const statusCode = normalizeStatusCode(e?.statusCode);
       logLlmDebug({
         stage: "provider_error",
         request_id: input.requestId || null,
@@ -122,7 +158,7 @@ async function generateSqlWithRouting(input) {
         model,
         status_code: statusCode,
         latency_ms: latencyMs,
-        error: err.message || String(err)
+        error: e.message || String(err)
       });
       attempts.push({
         provider,
@@ -130,7 +166,7 @@ async function generateSqlWithRouting(input) {
         status: "failed",
         status_code: statusCode,
         latency_ms: latencyMs,
-        error: err.message
+        error: e.message
       });
     }
   }
@@ -141,7 +177,7 @@ async function generateSqlWithRouting(input) {
     throw new Error(`All LLM providers failed. Reasons: ${reasons}`);
   }
 
-  const fallbackSql = generateSqlFromQuestion(question, schemaObjects, maxRows, dialect);
+  const fallbackSql = generateSqlFromQuestion(question, schemaObjects, maxRows, (dialect as SqlDialect) || "postgres");
   attempts.push({
     provider: "local-fallback",
     model: "rule-based-v0",
@@ -167,6 +203,3 @@ async function generateSqlWithRouting(input) {
     promptVersion: "v2-llm-router"
   };
 }
-module.exports = {
-  generateSqlWithRouting
-};

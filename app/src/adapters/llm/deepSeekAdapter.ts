@@ -12,7 +12,7 @@ const { postJson, extractJsonObject } = require("./httpClient");
  * Adapter for DeepSeek's OpenAI-compatible chat-completions endpoint.
  * Embeddings are not yet implemented upstream, so `embed()` throws.
  */
-class DeepSeekAdapter implements LlmAdapter {
+export class DeepSeekAdapter implements LlmAdapter {
   readonly provider: string;
   apiKey: string;
   defaultModel: string;

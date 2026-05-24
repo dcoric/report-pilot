@@ -14,7 +14,7 @@ const { postJson, extractJsonObject } = require("./httpClient");
  * `provider` so this adapter can stand in for any OpenAI-shaped REST endpoint.
  * Embeddings are not assumed to be supported and `embed()` throws.
  */
-class CustomAdapter implements LlmAdapter {
+export class CustomAdapter implements LlmAdapter {
   provider: string;
   apiKey: string;
   defaultModel: string;

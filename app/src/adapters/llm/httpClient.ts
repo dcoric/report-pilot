@@ -66,7 +66,7 @@ async function postJson(
  * fenced code blocks (```json ... ```) and trims to the first/last brace as a
  * last resort. Throws when nothing parseable is found.
  */
-function extractJsonObject(text: unknown): unknown {
+export function extractJsonObject(text: unknown): unknown {
   const raw = String(text || "").trim();
   if (!raw) {
     throw new Error("Model response is empty");
@@ -99,7 +99,7 @@ function extractJsonObject(text: unknown): unknown {
  *
  * If `ref` is empty/missing, falls back to `process.env[defaultEnvKey]`.
  */
-function resolveApiKey(ref?: string | null, defaultEnvKey?: string | null): string {
+export function resolveApiKey(ref?: string | null, defaultEnvKey?: string | null): string {
   const candidates: string[] = [];
   if (ref) {
     candidates.push(ref);

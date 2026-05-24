@@ -1,6 +1,20 @@
-const { validateAstReadOnly } = require("./sqlAstValidator");
+import { validateAstReadOnly } from "./sqlAstValidator";
+import type { SqlDialect } from "./sqlGenerator";
 
-function sanitizeGeneratedSql(raw) {
+export interface SqlSafetyOptions {
+  maxRows?: number;
+  schemaObjects?: unknown[];
+  dialect?: SqlDialect | string;
+}
+
+export interface ValidateAndNormalizeResult {
+  ok: boolean;
+  sql: string;
+  errors: string[];
+  refs: unknown[];
+}
+
+export function sanitizeGeneratedSql(raw: unknown): string {
   let text = String(raw || "").trim();
   if (!text) {
     return "";
@@ -13,33 +27,33 @@ function sanitizeGeneratedSql(raw) {
 
   // If model returns explanation + SQL, keep from first SELECT/WITH onward.
   const startMatch = text.match(/\b(select|with)\b/i);
-  if (startMatch && startMatch.index > 0) {
+  if (startMatch && startMatch.index! > 0) {
     text = text.slice(startMatch.index).trim();
   }
 
   return text;
 }
 
-function stripTrailingSemicolon(sql) {
+function stripTrailingSemicolon(sql: string): string {
   return sql.replace(/;\s*$/, "").trim();
 }
 
-function hasMultipleStatements(sql) {
+function hasMultipleStatements(sql: string): boolean {
   const trimmed = sql.trim();
   const withoutTrailing = trimmed.replace(/;\s*$/, "");
   return withoutTrailing.includes(";");
 }
 
-function hasLimitClause(sql) {
+function hasLimitClause(sql: string): boolean {
   return /\blimit\s+\d+\b/i.test(sql);
 }
 
-function hasTopClause(sql) {
+function hasTopClause(sql: string): boolean {
   return /^\s*select\s+(?:distinct\s+)?top\s+\(?\d+\)?\b/i.test(sql);
 }
 
-function splitTopLevelCsv(selectPart) {
-  const items = [];
+function splitTopLevelCsv(selectPart: string): string[] {
+  const items: string[] = [];
   let current = "";
   let depth = 0;
   for (let i = 0; i < selectPart.length; i += 1) {
@@ -69,7 +83,7 @@ function splitTopLevelCsv(selectPart) {
   return items;
 }
 
-function isSingleRowAggregateQuery(sql) {
+function isSingleRowAggregateQuery(sql: unknown): boolean {
   const text = String(sql || "").trim();
   if (!text) {
     return false;
@@ -113,13 +127,13 @@ function isSingleRowAggregateQuery(sql) {
   return expressions.every((expr) => AGGREGATE_FN.test(expr));
 }
 
-function stripTrailingLimit(sql) {
+function stripTrailingLimit(sql: string): string {
   const noSemi = stripTrailingSemicolon(sql);
   const withoutLimit = noSemi.replace(/\s+limit\s+\d+\s*$/i, "").trim();
   return `${withoutLimit};`;
 }
 
-function ensureLimit(sql, maxRows, dialect = "postgres") {
+export function ensureLimit(sql: string, maxRows: number, dialect: SqlDialect | string = "postgres"): string {
   if (isSingleRowAggregateQuery(sql)) {
     // Aggregate singleton queries (COUNT/SUM/etc.) should not carry LIMIT.
     if (dialect === "postgres") {
@@ -151,7 +165,7 @@ function ensureLimit(sql, maxRows, dialect = "postgres") {
   return `${stripTrailingSemicolon(sql)} LIMIT ${Number(maxRows)};`;
 }
 
-function validateAndNormalizeSql(rawSql, opts = {}) {
+export function validateAndNormalizeSql(rawSql: unknown, opts: SqlSafetyOptions = {}): ValidateAndNormalizeResult {
   const maxRows = Number(opts.maxRows || 1000);
   const schemaObjects = Array.isArray(opts.schemaObjects) ? opts.schemaObjects : [];
   const dialect = String(opts.dialect || "postgres").toLowerCase();
@@ -179,9 +193,3 @@ function validateAndNormalizeSql(rawSql, opts = {}) {
 
   return { ok: true, sql, errors: [], refs: refsCheck.refs };
 }
-
-module.exports = {
-  validateAndNormalizeSql,
-  sanitizeGeneratedSql,
-  ensureLimit
-};

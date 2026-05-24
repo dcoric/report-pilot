@@ -1,9 +1,9 @@
 const DEFAULT_DIM = Number(process.env.RAG_EMBED_DIM || 64);
-const EMBEDDING_MODEL = "local-hash-v1";
+export const EMBEDDING_MODEL = "local-hash-v1";
 
-function embedText(text, dim = DEFAULT_DIM) {
+export function embedText(text: unknown, dim: number = DEFAULT_DIM): number[] {
   const tokens = tokenize(text);
-  const vector = new Array(dim).fill(0);
+  const vector: number[] = new Array(dim).fill(0);
 
   if (tokens.length === 0) {
     return vector;
@@ -17,7 +17,7 @@ function embedText(text, dim = DEFAULT_DIM) {
   return normalize(vector);
 }
 
-function cosineSimilarity(a, b) {
+export function cosineSimilarity(a: number[] | unknown, b: number[] | unknown): number {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
     return 0;
   }
@@ -38,7 +38,7 @@ function cosineSimilarity(a, b) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function tokenize(text) {
+function tokenize(text: unknown): string[] {
   return String(text || "")
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, " ")
@@ -47,7 +47,7 @@ function tokenize(text) {
     .filter((t) => t.length >= 2);
 }
 
-function normalize(vector) {
+function normalize(vector: number[]): number[] {
   const norm = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
   if (!norm) {
     return vector;
@@ -55,7 +55,7 @@ function normalize(vector) {
   return vector.map((v) => v / norm);
 }
 
-function hash(str) {
+function hash(str: string): number {
   let h = 5381;
   for (let i = 0; i < str.length; i += 1) {
     h = ((h << 5) + h) + str.charCodeAt(i);
@@ -63,9 +63,3 @@ function hash(str) {
   }
   return h;
 }
-
-module.exports = {
-  EMBEDDING_MODEL,
-  embedText,
-  cosineSimilarity
-};
