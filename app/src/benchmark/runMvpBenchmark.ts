@@ -1,6 +1,7 @@
-const fs = require("fs/promises");
-const path = require("path");
-const { Client } = require("pg");
+import * as fs from "fs/promises";
+import * as path from "path";
+import { Client } from "pg";
+import { errorMessage } from "../lib/http";
 
 const APP_BASE_URL = String(process.env.BENCHMARK_APP_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const BENCHMARK_FILE = process.env.BENCHMARK_FILE || path.join(process.cwd(), "docs", "evals", "dvdrental-mvp-benchmark.json");
@@ -32,18 +33,61 @@ const BLOCKED_SQL_KEYWORDS = [
   "MERGE"
 ];
 
-async function sleep(ms) {
+interface BenchmarkCase {
+  id: string;
+  nl_question: string;
+  oracle_sql: string;
+  result_assertion?: string;
+}
+
+interface RequestJsonResult<T = unknown> {
+  ok: boolean;
+  status: number;
+  payload: T | null;
+}
+
+interface AssertionOutcome {
+  ok: boolean;
+  reason: string | null;
+}
+
+interface CaseResult {
+  id: string;
+  question: string;
+  run_status: number;
+  error: string | null;
+  correct: boolean;
+  mismatch_reason?: string | null;
+  critical_safety_violation: boolean;
+  e2e_latency_ms: number | null;
+  generated_sql?: string | null;
+  provider?: string | null;
+  row_count_generated?: number;
+  row_count_oracle?: number;
+}
+
+interface RunContext {
+  dataSourceId: string;
+  targetClient: Client;
+}
+
+async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function readCases(filePath) {
+async function readCases(filePath: string): Promise<BenchmarkCase[]> {
   const raw = await fs.readFile(filePath, "utf8");
-  const parsed = JSON.parse(raw);
+  const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error("Benchmark dataset must be a non-empty JSON array");
   }
 
-  const valid = parsed.filter((item) => item && item.id && item.nl_question && item.oracle_sql);
+  const valid = parsed.filter((item): item is BenchmarkCase => (
+    Boolean(item) && typeof item === "object"
+    && typeof (item as BenchmarkCase).id === "string"
+    && typeof (item as BenchmarkCase).nl_question === "string"
+    && typeof (item as BenchmarkCase).oracle_sql === "string"
+  ));
   if (valid.length === 0) {
     throw new Error("Benchmark dataset does not include valid cases");
   }
@@ -51,9 +95,9 @@ async function readCases(filePath) {
   return BENCHMARK_MAX_CASES > 0 ? valid.slice(0, BENCHMARK_MAX_CASES) : valid;
 }
 
-async function requestJson(method, pathname, body) {
+async function requestJson<T = unknown>(method: string, pathname: string, body?: unknown): Promise<RequestJsonResult<T>> {
   const url = `${APP_BASE_URL}${pathname}`;
-  const init = {
+  const init: RequestInit = {
     method,
     headers: {
       "Content-Type": "application/json"
@@ -67,12 +111,12 @@ async function requestJson(method, pathname, body) {
   const response = await fetch(url, init);
   const text = await response.text();
 
-  let payload = null;
+  let payload: T | null = null;
   if (text) {
     try {
-      payload = JSON.parse(text);
+      payload = JSON.parse(text) as T;
     } catch {
-      payload = { raw: text };
+      payload = { raw: text } as unknown as T;
     }
   }
 
@@ -83,33 +127,44 @@ async function requestJson(method, pathname, body) {
   };
 }
 
-async function ensureDataSourceId() {
+interface DataSourceListItem {
+  id: string;
+  name: string;
+}
+
+async function ensureDataSourceId(): Promise<string> {
   if (BENCHMARK_DATA_SOURCE_ID) {
     return BENCHMARK_DATA_SOURCE_ID;
   }
 
-  const listResponse = await requestJson("GET", "/v1/data-sources");
+  const listResponse = await requestJson<{ items?: DataSourceListItem[] }>("GET", "/v1/data-sources");
   if (listResponse.ok && Array.isArray(listResponse.payload?.items)) {
-    const found = listResponse.payload.items.find((item) => item.name === BENCHMARK_DATA_SOURCE_NAME);
+    const found = listResponse.payload!.items!.find((item) => item.name === BENCHMARK_DATA_SOURCE_NAME);
     if (found?.id) {
       return found.id;
     }
   }
 
-  const createResponse = await requestJson("POST", "/v1/data-sources", {
+  const createResponse = await requestJson<{ id: string }>("POST", "/v1/data-sources", {
     name: BENCHMARK_DATA_SOURCE_NAME,
     db_type: "postgres",
     connection_ref: BENCHMARK_CONNECTION_REF
   });
 
-  if (!createResponse.ok) {
+  if (!createResponse.ok || !createResponse.payload) {
     throw new Error(`Failed to create data source: HTTP ${createResponse.status} ${stringifyPayload(createResponse.payload)}`);
   }
 
   return createResponse.payload.id;
 }
 
-async function ensureIntrospectionReady(dataSourceId) {
+interface SchemaObjectListItem {
+  id: string;
+  schema_name: string;
+  object_name: string;
+}
+
+async function ensureIntrospectionReady(dataSourceId: string): Promise<SchemaObjectListItem[]> {
   const introspectResponse = await requestJson("POST", `/v1/data-sources/${encodeURIComponent(dataSourceId)}/introspect`);
   if (![200, 202].includes(introspectResponse.status)) {
     throw new Error(
@@ -119,13 +174,17 @@ async function ensureIntrospectionReady(dataSourceId) {
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < BENCHMARK_INTROSPECTION_TIMEOUT_MS) {
-    const listObjectsResponse = await requestJson(
+    const listObjectsResponse = await requestJson<{ items?: SchemaObjectListItem[] }>(
       "GET",
       `/v1/schema-objects?data_source_id=${encodeURIComponent(dataSourceId)}`
     );
 
-    if (listObjectsResponse.ok && Array.isArray(listObjectsResponse.payload?.items) && listObjectsResponse.payload.items.length > 0) {
-      return listObjectsResponse.payload.items;
+    if (
+      listObjectsResponse.ok
+      && Array.isArray(listObjectsResponse.payload?.items)
+      && listObjectsResponse.payload!.items!.length > 0
+    ) {
+      return listObjectsResponse.payload!.items!;
     }
 
     await sleep(2000);
@@ -134,8 +193,25 @@ async function ensureIntrospectionReady(dataSourceId) {
   throw new Error(`Timed out waiting for schema introspection after ${BENCHMARK_INTROSPECTION_TIMEOUT_MS}ms`);
 }
 
-async function runCase(caseDef, context) {
-  const sessionResponse = await requestJson("POST", "/v1/query/sessions", {
+interface SessionResponse {
+  session_id?: string;
+}
+
+interface RunResponse {
+  sql?: string;
+  rows?: Array<Record<string, unknown>>;
+  provider?: string;
+}
+
+interface RunBody {
+  max_rows: number;
+  timeout_ms: number;
+  llm_provider?: string;
+  model?: string;
+}
+
+async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<CaseResult> {
+  const sessionResponse = await requestJson<SessionResponse>("POST", "/v1/query/sessions", {
     data_source_id: context.dataSourceId,
     question: caseDef.nl_question
   });
@@ -165,7 +241,7 @@ async function runCase(caseDef, context) {
     };
   }
 
-  const runBody = {
+  const runBody: RunBody = {
     max_rows: Number.isFinite(BENCHMARK_MAX_ROWS) ? BENCHMARK_MAX_ROWS : 2000,
     timeout_ms: Number.isFinite(BENCHMARK_TIMEOUT_MS) ? BENCHMARK_TIMEOUT_MS : 30000
   };
@@ -177,7 +253,7 @@ async function runCase(caseDef, context) {
   }
 
   const runStartedAt = Date.now();
-  const runResponse = await requestJson("POST", `/v1/query/sessions/${encodeURIComponent(sessionId)}/run`, runBody);
+  const runResponse = await requestJson<RunResponse>("POST", `/v1/query/sessions/${encodeURIComponent(sessionId)}/run`, runBody);
   const e2eLatencyMs = Date.now() - runStartedAt;
 
   if (!runResponse.ok) {
@@ -194,9 +270,9 @@ async function runCase(caseDef, context) {
   }
 
   const generatedSql = String(runResponse.payload?.sql || "");
-  const generatedRows = Array.isArray(runResponse.payload?.rows) ? runResponse.payload.rows : [];
+  const generatedRows = Array.isArray(runResponse.payload?.rows) ? runResponse.payload!.rows! : [];
 
-  let oracleRows;
+  let oracleRows: Array<Record<string, unknown>>;
   try {
     const oracleResult = await context.targetClient.query(caseDef.oracle_sql);
     oracleRows = Array.isArray(oracleResult.rows) ? oracleResult.rows : [];
@@ -205,7 +281,7 @@ async function runCase(caseDef, context) {
       id: caseDef.id,
       question: caseDef.nl_question,
       run_status: 500,
-      error: `oracle_sql_failed: ${err.message}`,
+      error: `oracle_sql_failed: ${errorMessage(err)}`,
       correct: false,
       critical_safety_violation: false,
       e2e_latency_ms: e2eLatencyMs,
@@ -232,7 +308,11 @@ async function runCase(caseDef, context) {
   };
 }
 
-function evaluateAssertion(assertion, generatedRows, oracleRows) {
+function evaluateAssertion(
+  assertion: string,
+  generatedRows: Array<Record<string, unknown>>,
+  oracleRows: Array<Record<string, unknown>>
+): AssertionOutcome {
   if (assertion === "single_value_equal") {
     const generatedValue = firstScalar(generatedRows);
     const oracleValue = firstScalar(oracleRows);
@@ -274,7 +354,7 @@ function evaluateAssertion(assertion, generatedRows, oracleRows) {
   return { ok: true, reason: null };
 }
 
-function firstScalar(rows) {
+function firstScalar(rows: Array<Record<string, unknown>>): unknown {
   if (!Array.isArray(rows) || rows.length === 0) {
     return null;
   }
@@ -286,14 +366,14 @@ function firstScalar(rows) {
   return values.length > 0 ? normalizeScalar(values[0]) : null;
 }
 
-function valuesEqual(a, b) {
+function valuesEqual(a: unknown, b: unknown): boolean {
   if (typeof a === "number" && typeof b === "number") {
     return Math.abs(a - b) <= 0.000001;
   }
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function canonicalizeRows(rows) {
+function canonicalizeRows(rows: Array<Record<string, unknown>>): string[] {
   if (!Array.isArray(rows)) {
     return [];
   }
@@ -306,7 +386,7 @@ function canonicalizeRows(rows) {
     .sort();
 }
 
-function normalizeScalar(value) {
+function normalizeScalar(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
   }
@@ -330,17 +410,17 @@ function normalizeScalar(value) {
     return trimmed;
   }
   if (typeof value === "object") {
-    const keys = Object.keys(value).sort();
-    const obj = {};
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    const obj: Record<string, unknown> = {};
     for (const key of keys) {
-      obj[key] = normalizeScalar(value[key]);
+      obj[key] = normalizeScalar((value as Record<string, unknown>)[key]);
     }
     return obj;
   }
   return value;
 }
 
-function detectCriticalSafetyViolation(sql) {
+function detectCriticalSafetyViolation(sql: string): boolean {
   const source = String(sql || "").toUpperCase();
   return BLOCKED_SQL_KEYWORDS.some((keyword) => {
     const pattern = new RegExp(`\\b${keyword}\\b`, "i");
@@ -348,18 +428,38 @@ function detectCriticalSafetyViolation(sql) {
   });
 }
 
-function summarizeResults(results) {
+interface BenchmarkSummary {
+  total_cases: number;
+  sql_valid_cases: number;
+  correct_cases: number;
+  critical_safety_violations: number;
+  correctness_rate: number;
+  sql_validation_pass_rate: number;
+  p95_latency_ms: number | null;
+  p50_latency_ms: number | null;
+  average_latency_ms: number | null;
+  release_gates: {
+    correctness_ge_85pct: boolean;
+    critical_safety_violations_eq_0: boolean;
+    p95_latency_le_8s: boolean;
+    sql_validation_pass_rate_ge_98pct: boolean;
+    all_passed: boolean;
+  };
+}
+
+function summarizeResults(results: CaseResult[]): BenchmarkSummary {
   const total = results.length;
   const sqlValid = results.filter((item) => item.run_status === 200).length;
   const correct = results.filter((item) => item.correct).length;
   const safetyViolations = results.filter((item) => item.critical_safety_violation).length;
   const latencies = results
     .map((item) => item.e2e_latency_ms)
-    .filter((value) => Number.isFinite(value));
+    .filter((value): value is number => Number.isFinite(value));
 
   const correctnessRate = ratio(correct, total);
   const sqlValidityRate = ratio(sqlValid, total);
   const p95Latency = percentile(latencies, 0.95);
+  const p50Latency = percentile(latencies, 0.5);
 
   const gates = {
     correctness_ge_85pct: correctnessRate >= 0.85,
@@ -376,7 +476,7 @@ function summarizeResults(results) {
     correctness_rate: round4(correctnessRate),
     sql_validation_pass_rate: round4(sqlValidityRate),
     p95_latency_ms: Number.isFinite(p95Latency) ? Math.round(p95Latency) : null,
-    p50_latency_ms: Number.isFinite(percentile(latencies, 0.5)) ? Math.round(percentile(latencies, 0.5)) : null,
+    p50_latency_ms: Number.isFinite(p50Latency) ? Math.round(p50Latency) : null,
     average_latency_ms: latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
     release_gates: {
       ...gates,
@@ -385,18 +485,18 @@ function summarizeResults(results) {
   };
 }
 
-function ratio(numerator, denominator) {
+function ratio(numerator: number, denominator: number): number {
   if (!denominator) {
     return 0;
   }
   return numerator / denominator;
 }
 
-function round4(value) {
+function round4(value: number): number {
   return Number(Number(value || 0).toFixed(4));
 }
 
-function percentile(values, p) {
+function percentile(values: number[], p: number): number {
   if (!Array.isArray(values) || values.length === 0) {
     return NaN;
   }
@@ -407,7 +507,7 @@ function percentile(values, p) {
   return sorted[idx];
 }
 
-async function fetchObservabilityMetrics() {
+async function fetchObservabilityMetrics(): Promise<unknown> {
   const response = await requestJson("GET", "/v1/observability/metrics");
   if (!response.ok) {
     return {
@@ -417,8 +517,26 @@ async function fetchObservabilityMetrics() {
   return response.payload;
 }
 
-async function publishBenchmarkReport(report) {
-  const response = await requestJson("POST", "/v1/observability/release-gates/report", report);
+interface BenchmarkReport {
+  run_date: string;
+  dataset_file: string;
+  data_source_id: string;
+  provider: string | null;
+  model: string | null;
+  summary: BenchmarkSummary;
+  observability: unknown;
+  cases: CaseResult[];
+}
+
+interface PublishResult {
+  ok: boolean;
+  status?: number;
+  payload?: unknown;
+  error?: string;
+}
+
+async function publishBenchmarkReport(report: BenchmarkReport): Promise<PublishResult> {
+  const response = await requestJson<{ id: string }>("POST", "/v1/observability/release-gates/report", report);
   if (!response.ok) {
     return {
       ok: false,
@@ -432,7 +550,7 @@ async function publishBenchmarkReport(report) {
   };
 }
 
-function buildMarkdownReport(payload) {
+function buildMarkdownReport(payload: BenchmarkReport): string {
   const summary = payload.summary;
   const gates = summary.release_gates;
   const topFailures = payload.cases
@@ -474,11 +592,11 @@ function buildMarkdownReport(payload) {
   ].join("\n");
 }
 
-function gateMark(ok) {
+function gateMark(ok: boolean): string {
   return ok ? "PASS" : "FAIL";
 }
 
-function stringifyPayload(payload) {
+function stringifyPayload(payload: unknown): string {
   if (payload === null || payload === undefined) {
     return "";
   }
@@ -489,14 +607,14 @@ function stringifyPayload(payload) {
   }
 }
 
-function timestampForFile(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, "0");
+function timestampForFile(date: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(
     date.getUTCMinutes()
   )}${pad(date.getUTCSeconds())}`;
 }
 
-async function main() {
+async function main(): Promise<void> {
   const cases = await readCases(BENCHMARK_FILE);
   const dataSourceId = await ensureDataSourceId();
   await ensureIntrospectionReady(dataSourceId);
@@ -504,21 +622,19 @@ async function main() {
   const targetClient = new Client({ connectionString: BENCHMARK_ORACLE_CONN });
   await targetClient.connect();
 
-  const context = {
+  const context: RunContext = {
     dataSourceId,
     targetClient
   };
 
   const runDate = new Date().toISOString();
-  const results = [];
+  const results: CaseResult[] = [];
 
   try {
     for (const caseDef of cases) {
-      // eslint-disable-next-line no-console
       console.log(`[benchmark] Running ${caseDef.id}: ${caseDef.nl_question}`);
       const result = await runCase(caseDef, context);
       results.push(result);
-      // eslint-disable-next-line no-console
       console.log(
         `[benchmark] ${caseDef.id} status=${result.run_status} correct=${result.correct} latency_ms=${result.e2e_latency_ms ?? "n/a"}`
       );
@@ -528,9 +644,9 @@ async function main() {
   }
 
   const summary = summarizeResults(results);
-  const observability = await fetchObservabilityMetrics().catch((err) => ({ error: err.message }));
+  const observability = await fetchObservabilityMetrics().catch((err: unknown) => ({ error: errorMessage(err) }));
 
-  const report = {
+  const report: BenchmarkReport = {
     run_date: runDate,
     dataset_file: BENCHMARK_FILE,
     data_source_id: dataSourceId,
@@ -549,22 +665,17 @@ async function main() {
   await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   await fs.writeFile(markdownPath, `${buildMarkdownReport(report)}\n`, "utf8");
 
-  const publishResult = await publishBenchmarkReport(report).catch((err) => ({ ok: false, error: err.message }));
+  const publishResult = await publishBenchmarkReport(report).catch((err: unknown) => ({ ok: false, error: errorMessage(err) } as PublishResult));
   if (!publishResult.ok) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[benchmark] Could not publish report to API: ${stringifyPayload(publishResult.error || publishResult.payload)}`
     );
   } else {
-    // eslint-disable-next-line no-console
-    console.log(`[benchmark] Published report to API with id=${publishResult.payload.id}`);
+    console.log(`[benchmark] Published report to API with id=${(publishResult.payload as { id?: string } | undefined)?.id}`);
   }
 
-  // eslint-disable-next-line no-console
   console.log(`[benchmark] Report written to ${jsonPath}`);
-  // eslint-disable-next-line no-console
   console.log(`[benchmark] Report written to ${markdownPath}`);
-  // eslint-disable-next-line no-console
   console.log(`[benchmark] Release gates all passed: ${summary.release_gates.all_passed}`);
 
   if (!summary.release_gates.all_passed) {
@@ -572,8 +683,8 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(`[benchmark] Failed: ${err.stack || err.message}`);
+main().catch((err: unknown) => {
+  const e = err as { stack?: string; message?: string };
+  console.error(`[benchmark] Failed: ${e.stack || errorMessage(err)}`);
   process.exit(1);
 });

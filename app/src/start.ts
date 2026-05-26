@@ -1,8 +1,9 @@
-const { runMigrations } = require("./migrate");
-const { startServer } = require("./server");
-const scheduleDispatcher = require("./services/scheduleDispatcher");
+import { runMigrations } from "./migrate";
+import { startServer } from "./server";
+import * as scheduleDispatcher from "./services/scheduleDispatcher";
+import { errorMessage } from "./lib/http";
 
-async function start() {
+async function start(): Promise<void> {
   console.log("[boot] Running migrations...");
   await runMigrations({ maxRetries: 30, delayMs: 2000 });
 
@@ -19,7 +20,7 @@ async function start() {
   }
 }
 
-start().catch((err) => {
-  console.error(`[boot] Startup failed: ${err.message}`);
+start().catch((err: unknown) => {
+  console.error(`[boot] Startup failed: ${errorMessage(err)}`);
   process.exit(1);
 });

@@ -1,50 +1,51 @@
-const http = require("http");
-const { createRequestId, logEvent } = require("./lib/observability");
-const { json, notFound, badRequest, internalError } = require("./lib/http");
-const { PORT } = require("./lib/constants");
-const {
+import * as http from "http";
+import type { IncomingMessage, ServerResponse } from "http";
+import { createRequestId, logEvent } from "./lib/observability";
+import { json, notFound, badRequest, internalError, errorMessage } from "./lib/http";
+import { PORT } from "./lib/constants";
+import {
   serveSwaggerDocs,
   serveOpenApiSpec,
   serveFrontendIndex,
   serveFrontendAsset,
   shouldServeFrontendApp,
   checkDatabase
-} = require("./lib/staticServing");
+} from "./lib/staticServing";
 
 // Route modules
-const {
+import {
   handleCreateDataSource,
   handleListDataSources,
   handleDeleteDataSource,
   handleIntrospect,
   handleImportSchema
-} = require("./routes/dataSources");
-const {
+} from "./routes/dataSources";
+import {
   handleExportDataSource,
   handleImportDataSource
-} = require("./routes/dataSourceExportImport");
-const {
+} from "./routes/dataSourceExportImport";
+import {
   handleListSchemaObjects,
   handlePatchSchemaObject
-} = require("./routes/schema");
-const {
+} from "./routes/schema";
+import {
   handleUpsertSemanticEntity,
   handleUpsertMetricDefinition,
   handleUpsertJoinPolicy
-} = require("./routes/semantic");
-const {
+} from "./routes/semantic";
+import {
   handleListRagNotes,
   handleUpsertRagNote,
   handleDeleteRagNote,
   handleRagReindex
-} = require("./routes/rag");
-const {
+} from "./routes/rag";
+import {
   handleCreateSession,
   handlePromptHistory,
   handleRunSession,
   handleFeedback
-} = require("./routes/query");
-const {
+} from "./routes/query";
+import {
   handleCreateSavedQuery,
   handleListSavedQueries,
   handleGetSavedQuery,
@@ -56,44 +57,44 @@ const {
   handleGetSavedQueryAccess,
   handleListSavedQueryVersions,
   handleRestoreSavedQueryVersion
-} = require("./routes/savedQueries");
-const {
+} from "./routes/savedQueries";
+import {
   handleCreateSavedQueryFolder,
   handleListSavedQueryFolders,
   handleUpdateSavedQueryFolder,
   handleDeleteSavedQueryFolder,
   handleMoveSavedQuery
-} = require("./routes/savedQueryFolders");
-const {
+} from "./routes/savedQueryFolders";
+import {
   handleCreateSchedule,
   handleListSchedules,
   handleUpdateSchedule,
   handleDeleteSchedule,
   handleRetrySchedule
-} = require("./routes/savedQuerySchedules");
-const {
+} from "./routes/savedQuerySchedules";
+import {
   handleExportSession,
   handleExportDeliver,
   handleExportStatus
-} = require("./routes/exportDelivery");
-const {
+} from "./routes/exportDelivery";
+import {
   handleProviderList,
   handleProviderUpsert,
   handleRoutingRuleUpsert,
   handleProviderHealth
-} = require("./routes/providers");
-const {
+} from "./routes/providers";
+import {
   handleObservabilityMetrics,
   handleReleaseGates,
   handleBenchmarkCommand,
   handleCreateBenchmarkReport
-} = require("./routes/observability");
-const {
+} from "./routes/observability";
+import {
   handleLogin,
   handleLogout,
   handleMe
-} = require("./routes/auth");
-const {
+} from "./routes/auth";
+import {
   handleListUsers,
   handleCreateUser,
   handleUpdateUserRoles,
@@ -112,41 +113,54 @@ const {
   handleIssueScimToken,
   handleRevokeScimToken,
   handleListAuditEvents
-} = require("./routes/admin");
-const {
+} from "./routes/admin";
+import {
   handleListEnabledProviders,
   handleStartLogin,
   handleCallback
-} = require("./routes/oidc");
-const {
-  handleGetConfig: handleGetUserConfig,
-  handlePutConfig: handlePutUserConfig
-} = require("./routes/userConfig");
-const {
-  handleList: handleListPromptPresets,
-  handleCreate: handleCreatePromptPreset,
-  handleUpdate: handleUpdatePromptPreset,
-  handleDelete: handleDeletePromptPreset
-} = require("./routes/promptPresets");
-const {
+} from "./routes/oidc";
+import {
+  handleGetConfig as handleGetUserConfig,
+  handlePutConfig as handlePutUserConfig
+} from "./routes/userConfig";
+import {
+  handleList as handleListPromptPresets,
+  handleCreate as handleCreatePromptPreset,
+  handleUpdate as handleUpdatePromptPreset,
+  handleDelete as handleDeletePromptPreset
+} from "./routes/promptPresets";
+import {
   handleServiceProviderConfig,
   handleResourceTypes,
   handleSchemas,
-  handleListUsers: handleScimListUsers,
-  handleCreateUser: handleScimCreateUser,
-  handleGetUser: handleScimGetUser,
-  handleReplaceUser: handleScimReplaceUser,
-  handlePatchUser: handleScimPatchUser,
-  handleDeleteUser: handleScimDeleteUser,
-  handleListGroups: handleScimListGroups,
-  handleCreateOrReplaceGroup: handleScimCreateGroup,
-  handlePatchGroup: handleScimPatchGroup
-} = require("./routes/scim");
-const { findPolicy } = require("./lib/routePolicy");
-const { enforcePolicy } = require("./lib/authGate");
+  handleListUsers as handleScimListUsers,
+  handleCreateUser as handleScimCreateUser,
+  handleGetUser as handleScimGetUser,
+  handleReplaceUser as handleScimReplaceUser,
+  handlePatchUser as handleScimPatchUser,
+  handleDeleteUser as handleScimDeleteUser,
+  handleListGroups as handleScimListGroups,
+  handleCreateOrReplaceGroup as handleScimCreateGroup,
+  handlePatchGroup as handleScimPatchGroup
+} from "./routes/scim";
+import { findPolicy } from "./lib/routePolicy";
+import { enforcePolicy, type AuthedRequest } from "./lib/authGate";
 
-async function routeRequest(req, res) {
-  const requestUrl = new URL(req.url, "http://localhost");
+interface HttpishError {
+  statusCode?: number;
+  message?: string;
+  stack?: string;
+}
+
+function statusCodeFromError(err: unknown): number | null {
+  if (err && typeof err === "object" && typeof (err as HttpishError).statusCode === "number") {
+    return (err as HttpishError).statusCode!;
+  }
+  return null;
+}
+
+async function routeRequest(req: AuthedRequest, res: ServerResponse): Promise<void> {
+  const requestUrl = new URL(req.url ?? "/", "http://localhost");
   const { pathname } = requestUrl;
 
   // AUTH-013: SCIM routes carry their own bearer-token auth gate and do
@@ -159,7 +173,7 @@ async function routeRequest(req, res) {
   // /v1 is handled by the static-asset and frontend-fallback branches.
   if (!isScimPath) {
     if (pathname.startsWith("/v1/")) {
-      const policy = findPolicy(req.method, pathname);
+      const policy = findPolicy(req.method ?? "", pathname);
       if (!policy) {
         return notFound(res);
       }
@@ -171,7 +185,7 @@ async function routeRequest(req, res) {
       // Public surfaces — apply the policy table where one exists (records an
       // audit event for transparency) and otherwise fall through to the static
       // routing below.
-      const policy = findPolicy(req.method, pathname);
+      const policy = findPolicy(req.method ?? "", pathname);
       if (policy && policy.public) {
         await enforcePolicy(req, res, policy);
       }
@@ -616,21 +630,23 @@ async function routeRequest(req, res) {
   }
 
   if (shouldServeFrontendApp(req, pathname)) {
-    return serveFrontendIndex(res);
+    serveFrontendIndex(res);
+    return;
   }
 
   return notFound(res);
 }
 
-function startServer() {
-  const server = http.createServer(async (req, res) => {
+export function startServer(): Promise<http.Server> {
+  const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    const authedReq = req as AuthedRequest;
     const startedAt = Date.now();
     const requestId = createRequestId();
-    req.requestId = requestId;
+    authedReq.requestId = requestId;
     res.setHeader("x-request-id", requestId);
 
     // CORS
-    const origin = req.headers.origin || "*";
+    const origin = (req.headers.origin as string | undefined) || "*";
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -670,10 +686,10 @@ function startServer() {
     });
 
     try {
-      await routeRequest(req, res);
+      await routeRequest(authedReq, res);
     } catch (err) {
-      if (err.statusCode === 400) {
-        return badRequest(res, err.message);
+      if (statusCodeFromError(err) === 400) {
+        return badRequest(res, (err as HttpishError).message);
       }
       logEvent(
         "http_error",
@@ -681,8 +697,8 @@ function startServer() {
           request_id: requestId,
           method: req.method,
           path: req.url,
-          error: err.message,
-          stack: err.stack || null
+          error: errorMessage(err),
+          stack: (err as HttpishError).stack || null
         },
         "error"
       );
@@ -698,5 +714,3 @@ function startServer() {
     });
   });
 }
-
-module.exports = { startServer };
