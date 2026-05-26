@@ -1,10 +1,11 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const { triggerRagReindexAsync } = require("../services/ragService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import { json, badRequest, readJsonBody, type RouteHandlerWithId, type RouteHandlerWithUrl } from "../lib/http";
+import { isUuid } from "../lib/validation";
+import ragService = require("../services/ragService");
+import { enforceDataSourceAccess } from "../lib/authGate";
+import type { SchemaObjectVisibilityRequest } from "../types";
 
-async function handleListSchemaObjects(req, res, requestUrl) {
+const handleListSchemaObjects: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
@@ -25,14 +26,14 @@ async function handleListSchemaObjects(req, res, requestUrl) {
   );
 
   return json(res, 200, { items: result.rows });
-}
+};
 
-async function handlePatchSchemaObject(req, res, schemaObjectId) {
+const handlePatchSchemaObject: RouteHandlerWithId<SchemaObjectVisibilityRequest> = async (req, res, schemaObjectId) => {
   if (!isUuid(schemaObjectId)) {
     return badRequest(res, "schemaObjectId must be a valid UUID");
   }
 
-  const objLookup = await appDb.query(
+  const objLookup = await appDb.query<{ data_source_id: string }>(
     "SELECT data_source_id FROM schema_objects WHERE id = $1",
     [schemaObjectId]
   );
@@ -43,7 +44,7 @@ async function handlePatchSchemaObject(req, res, schemaObjectId) {
     return undefined;
   }
 
-  const body = await readJsonBody(req);
+  const body = await readJsonBody<Partial<SchemaObjectVisibilityRequest>>(req);
   if (!Object.prototype.hasOwnProperty.call(body, "is_ignored")) {
     return badRequest(res, "is_ignored is required");
   }
@@ -51,7 +52,7 @@ async function handlePatchSchemaObject(req, res, schemaObjectId) {
     return badRequest(res, "is_ignored must be a boolean");
   }
 
-  const result = await appDb.query(
+  const result = await appDb.query<{ data_source_id: string }>(
     `
       UPDATE schema_objects
       SET is_ignored = $2
@@ -72,12 +73,12 @@ async function handlePatchSchemaObject(req, res, schemaObjectId) {
     return json(res, 404, { error: "not_found", message: "Schema object not found" });
   }
 
-  triggerRagReindexAsync(result.rows[0].data_source_id);
+  ragService.triggerRagReindexAsync(result.rows[0].data_source_id);
 
   return json(res, 200, result.rows[0]);
-}
+};
 
-module.exports = {
+export {
   handleListSchemaObjects,
   handlePatchSchemaObject
 };

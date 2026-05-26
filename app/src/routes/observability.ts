@@ -1,18 +1,19 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const {
+import appDb = require("../lib/appDb");
+import { json, badRequest, readJsonBody, type RouteHandler, type RouteHandlerWithUrl } from "../lib/http";
+import {
   buildObservabilityMetrics,
   loadLatestBenchmarkReleaseGates,
   buildBenchmarkCommand
-} = require("../services/observabilityService");
+} from "../services/observabilityService";
+import type { BenchmarkReportUploadRequest } from "../types";
 
-async function handleObservabilityMetrics(req, res, requestUrl) {
-  const windowHours = Number(requestUrl.searchParams.get("window_hours") || 24);
+const handleObservabilityMetrics: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
+  const windowHours = Number(requestUrl.searchParams.get("window_hours")) || 24;
   const metrics = await buildObservabilityMetrics({ windowHours });
   return json(res, 200, metrics);
-}
+};
 
-async function handleReleaseGates(_req, res) {
+const handleReleaseGates: RouteHandler = async (_req, res) => {
   const payload = await loadLatestBenchmarkReleaseGates();
   if (!payload.found) {
     return json(res, 404, {
@@ -21,15 +22,15 @@ async function handleReleaseGates(_req, res) {
     });
   }
   return json(res, 200, payload);
-}
+};
 
-async function handleBenchmarkCommand(_req, res) {
+const handleBenchmarkCommand: RouteHandler = async (_req, res) => {
   const payload = buildBenchmarkCommand();
   return json(res, 200, payload);
-}
+};
 
-async function handleCreateBenchmarkReport(req, res) {
-  const body = await readJsonBody(req);
+const handleCreateBenchmarkReport: RouteHandler<BenchmarkReportUploadRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<BenchmarkReportUploadRequest>>(req);
   const {
     run_date: runDate,
     dataset_file: datasetFile,
@@ -60,9 +61,9 @@ async function handleCreateBenchmarkReport(req, res) {
   );
 
   return json(res, 201, inserted.rows[0]);
-}
+};
 
-module.exports = {
+export {
   handleObservabilityMetrics,
   handleReleaseGates,
   handleBenchmarkCommand,

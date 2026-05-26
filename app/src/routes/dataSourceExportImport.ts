@@ -1,12 +1,74 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { logEvent } = require("../lib/observability");
-const { isUuid, groupByKey, validateDataSourceImportPayload } = require("../lib/validation");
-const { isSupportedDbType } = require("../adapters/dbAdapterFactory");
-const { reindexRagDocuments } = require("../services/ragService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import {
+  json,
+  badRequest,
+  readJsonBody,
+  errorMessage,
+  type RouteHandler,
+  type RouteHandlerWithId
+} from "../lib/http";
+import { logEvent } from "../lib/observability";
+import { isUuid, groupByKey, validateDataSourceImportPayload } from "../lib/validation";
+import { isSupportedDbType } from "../adapters/dbAdapterFactory";
+import ragService = require("../services/ragService");
+import { enforceDataSourceAccess } from "../lib/authGate";
 
-async function handleExportDataSource(req, res, dataSourceId) {
+interface DataSourceImportPayload {
+  version: number;
+  data_source: { name: string; db_type: string; connection_ref: string };
+  schema_objects?: ImportSchemaObject[];
+  rag_notes?: Array<{ title: string; content: string; active?: boolean }>;
+  semantic_entities?: ImportSemanticEntity[];
+  join_policies?: Array<{
+    left_ref: string;
+    right_ref: string;
+    join_type: string;
+    on_clause: string;
+    approved?: boolean;
+    notes?: string | null;
+  }>;
+  nl_sql_examples?: Array<{ question: string; sql: string; quality_score?: number; source?: string }>;
+  synonyms?: Array<{ term: string; maps_to_ref: string; weight?: number }>;
+}
+
+interface ImportSchemaObject {
+  object_type: string;
+  schema_name: string;
+  object_name: string;
+  description?: string | null;
+  is_ignored?: boolean;
+  columns?: Array<{
+    column_name: string;
+    data_type: string;
+    nullable: boolean;
+    is_pk: boolean;
+    ordinal_position: number;
+  }>;
+  relationships?: Array<{
+    from_column: string;
+    to_schema: string;
+    to_object: string;
+    to_column: string;
+    relationship_type: string;
+  }>;
+  indexes?: Array<{ index_name: string; columns: string[]; is_unique: boolean }>;
+}
+
+interface ImportSemanticEntity {
+  entity_type: string;
+  target_ref: string;
+  business_name: string;
+  description?: string | null;
+  owner?: string | null;
+  active?: boolean | null;
+  metric_definitions?: Array<{
+    sql_expression: string;
+    grain?: string | null;
+    filters_json?: Record<string, unknown> | null;
+  }>;
+}
+
+const handleExportDataSource: RouteHandlerWithId = async (req, res, dataSourceId) => {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "dataSourceId must be a valid UUID");
   }
@@ -71,26 +133,30 @@ async function handleExportDataSource(req, res, dataSourceId) {
 
   const objectIds = schemaObjectsResult.rows.map((o) => o.id);
 
-  let columnsResult = { rows: [] };
-  let relationshipsResult = { rows: [] };
-  let indexesResult = { rows: [] };
+  type ColumnRow = { schema_object_id: string; column_name: string; data_type: string; nullable: boolean; is_pk: boolean; ordinal_position: number };
+  type RelationshipRow = { from_object_id: string; from_column: string; to_object_id: string; to_column: string; relationship_type: string };
+  type IndexRow = { schema_object_id: string; index_name: string; columns: string[]; is_unique: boolean };
+
+  let columnsResult: { rows: ColumnRow[] } = { rows: [] };
+  let relationshipsResult: { rows: RelationshipRow[] } = { rows: [] };
+  let indexesResult: { rows: IndexRow[] } = { rows: [] };
 
   if (objectIds.length > 0) {
     [columnsResult, relationshipsResult, indexesResult] = await Promise.all([
-      appDb.query(
+      appDb.query<ColumnRow>(
         `SELECT schema_object_id, column_name, data_type, nullable, is_pk, ordinal_position
          FROM columns
          WHERE schema_object_id = ANY($1)
          ORDER BY schema_object_id, ordinal_position`,
         [objectIds]
       ),
-      appDb.query(
+      appDb.query<RelationshipRow>(
         `SELECT from_object_id, from_column, to_object_id, to_column, relationship_type
          FROM relationships
          WHERE from_object_id = ANY($1)`,
         [objectIds]
       ),
-      appDb.query(
+      appDb.query<IndexRow>(
         `SELECT schema_object_id, index_name, columns, is_unique
          FROM indexes
          WHERE schema_object_id = ANY($1)
@@ -100,10 +166,11 @@ async function handleExportDataSource(req, res, dataSourceId) {
     ]);
   }
 
+  type MetricDefRow = { semantic_entity_id: string; sql_expression: string; grain: string | null; filters_json: Record<string, unknown> | null };
   const seIds = semanticEntitiesResult.rows.map((se) => se.id);
-  let metricDefsResult = { rows: [] };
+  let metricDefsResult: { rows: MetricDefRow[] } = { rows: [] };
   if (seIds.length > 0) {
-    metricDefsResult = await appDb.query(
+    metricDefsResult = await appDb.query<MetricDefRow>(
       `SELECT semantic_entity_id, sql_expression, grain, filters_json
        FROM metric_definitions WHERE semantic_entity_id = ANY($1)`,
       [seIds]
@@ -185,11 +252,11 @@ async function handleExportDataSource(req, res, dataSourceId) {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Disposition": `attachment; filename="${filename}"`
   });
-  return res.end(JSON.stringify(payload, null, 2));
+  res.end(JSON.stringify(payload, null, 2));
 }
 
-async function handleImportDataSource(req, res) {
-  const body = await readJsonBody(req);
+const handleImportDataSource: RouteHandler<DataSourceImportPayload> = async (req, res) => {
+  const body = await readJsonBody<DataSourceImportPayload>(req);
 
   const validationError = validateDataSourceImportPayload(body);
   if (validationError) {
@@ -211,9 +278,9 @@ async function handleImportDataSource(req, res) {
     );
     const newDsId = dsInsert.rows[0].id;
 
-    const objectIdByKey = new Map();
+    const objectIdByKey = new Map<string, string>();
     for (const obj of (body.schema_objects || [])) {
-      const objInsert = await client.query(
+      const objInsert = await client.query<{ id: string }>(
         `INSERT INTO schema_objects (data_source_id, object_type, schema_name, object_name, description, is_ignored, hash, last_seen_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
          RETURNING id`,
@@ -266,7 +333,7 @@ async function handleImportDataSource(req, res) {
     }
 
     for (const se of (body.semantic_entities || [])) {
-      const seInsert = await client.query(
+      const seInsert = await client.query<{ id: string }>(
         `INSERT INTO semantic_entities (data_source_id, entity_type, target_ref, business_name, description, owner, active)
          VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
          RETURNING id`,
@@ -311,20 +378,21 @@ async function handleImportDataSource(req, res) {
   });
 
   try {
-    await reindexRagDocuments(dataSourceId);
+    await ragService.reindexRagDocuments(dataSourceId);
   } catch (err) {
-    logEvent("data_source_import_reindex_failed", { data_source_id: dataSourceId, error: err.message }, "error");
+    const message = errorMessage(err);
+    logEvent("data_source_import_reindex_failed", { data_source_id: dataSourceId, error: message }, "error");
     return json(res, 500, {
       error: "internal_error",
-      message: `Data source was imported but RAG reindex failed: ${err.message}`,
+      message: `Data source was imported but RAG reindex failed: ${message}`,
       data_source_id: dataSourceId
     });
   }
 
   return json(res, 201, { ok: true, data_source_id: dataSourceId });
-}
+};
 
-module.exports = {
+export {
   handleExportDataSource,
   handleImportDataSource
 };

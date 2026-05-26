@@ -1,75 +1,94 @@
-const { json, readJsonBody, badRequest } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const appDb = require("../lib/appDb");
-const adminUserService = require("../services/adminUserService");
-const dataSourceAccessService = require("../services/dataSourceAccessService");
-const authProviderService = require("../services/authProviderService");
-const auditService = require("../services/auditService");
-const linkedIdentityService = require("../services/linkedIdentityService");
-const oidcService = require("../services/oidcService");
-const scimTokenService = require("../services/scimTokenService");
+import {
+  readJsonBody,
+  badRequest,
+  json,
+  writeServiceResult,
+  type RouteHandler,
+  type RouteHandlerWithId,
+  type RouteHandlerWithIds,
+  type RouteHandlerWithUrl
+} from "../lib/http";
+import { isUuid } from "../lib/validation";
+import appDb = require("../lib/appDb");
+import { listUsers, createUser, updateUserRoles } from "../services/adminUserService";
+import { listUsersWithAccess, grantAccess, revokeAccess } from "../services/dataSourceAccessService";
+import {
+  listProviders,
+  upsertProvider,
+  deleteProvider,
+  findProviderById,
+  updateMappingRules,
+  updateScimGroupMappings
+} from "../services/authProviderService";
+import { listEvents, writeEvent } from "../services/auditService";
+import { listForUser, unlink } from "../services/linkedIdentityService";
+import { testConnection } from "../services/oidcService";
+import { listForProvider, issueToken, revokeToken } from "../services/scimTokenService";
+import type {
+  CreateAdminUserRequest,
+  UpdateUserRolesRequest,
+  AuthProviderUpsertRequest,
+  AuthProviderMappingRulesRequest,
+  GrantDataSourceAccessRequest
+} from "../types";
 
-function writeResult(res, result) {
-  return json(res, result.statusCode, result.body);
-}
+const handleListUsers: RouteHandler = async (_req, res) => {
+  const result = await listUsers();
+  return writeServiceResult(res, result);
+};
 
-async function handleListUsers(_req, res) {
-  const result = await adminUserService.listUsers();
-  return writeResult(res, result);
-}
-
-async function handleCreateUser(req, res) {
-  const body = await readJsonBody(req);
-  const result = await adminUserService.createUser({
+const handleCreateUser: RouteHandler<CreateAdminUserRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<CreateAdminUserRequest>>(req);
+  const result = await createUser({
     email: body.email,
     password: body.password,
     displayName: body.display_name,
     roles: body.roles,
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleUpdateUserRoles(req, res, userId) {
+const handleUpdateUserRoles: RouteHandlerWithId<UpdateUserRolesRequest> = async (req, res, userId) => {
   if (!isUuid(userId)) {
     return badRequest(res, "user id must be a uuid");
   }
-  const body = await readJsonBody(req);
-  const result = await adminUserService.updateUserRoles({
+  const body = await readJsonBody<Partial<UpdateUserRolesRequest>>(req);
+  const result = await updateUserRoles({
     userId,
     assign: body.assign,
     revoke: body.revoke,
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function dataSourceExists(dataSourceId) {
+async function dataSourceExists(dataSourceId: string): Promise<boolean> {
   const result = await appDb.query("SELECT id FROM data_sources WHERE id = $1", [dataSourceId]);
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
-async function userExists(userId) {
+async function userExists(userId: string): Promise<boolean> {
   const result = await appDb.query("SELECT id FROM users WHERE id = $1", [userId]);
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
-async function handleListDataSourceAccess(_req, res, dataSourceId) {
+const handleListDataSourceAccess: RouteHandlerWithId = async (_req, res, dataSourceId) => {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "data_source_id must be a uuid");
   }
   if (!(await dataSourceExists(dataSourceId))) {
     return json(res, 404, { error: "not_found", message: "data source not found" });
   }
-  const items = await dataSourceAccessService.listUsersWithAccess(dataSourceId);
+  const items = await listUsersWithAccess(dataSourceId);
   return json(res, 200, { items });
-}
+};
 
-async function handleGrantDataSourceAccess(req, res, dataSourceId) {
+const handleGrantDataSourceAccess: RouteHandlerWithId<GrantDataSourceAccessRequest> = async (req, res, dataSourceId) => {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "data_source_id must be a uuid");
   }
-  const body = await readJsonBody(req);
+  const body = await readJsonBody<Partial<GrantDataSourceAccessRequest>>(req);
   const userId = body && body.user_id;
   if (!isUuid(userId)) {
     return badRequest(res, "user_id must be a uuid");
@@ -81,7 +100,7 @@ async function handleGrantDataSourceAccess(req, res, dataSourceId) {
     return json(res, 404, { error: "not_found", message: "user not found" });
   }
   const changed = await appDb.withTransaction((client) => (
-    dataSourceAccessService.grantAccess(client, {
+    grantAccess(client, {
       userId,
       dataSourceId,
       actorUserId: req.user && req.user.id ? req.user.id : null
@@ -92,9 +111,9 @@ async function handleGrantDataSourceAccess(req, res, dataSourceId) {
     user_id: userId,
     data_source_id: dataSourceId
   });
-}
+};
 
-async function handleRevokeDataSourceAccess(req, res, dataSourceId, userId) {
+const handleRevokeDataSourceAccess: RouteHandlerWithIds = async (req, res, dataSourceId, userId) => {
   if (!isUuid(dataSourceId)) {
     return badRequest(res, "data_source_id must be a uuid");
   }
@@ -102,7 +121,7 @@ async function handleRevokeDataSourceAccess(req, res, dataSourceId, userId) {
     return badRequest(res, "user_id must be a uuid");
   }
   const changed = await appDb.withTransaction((client) => (
-    dataSourceAccessService.revokeAccess(client, {
+    revokeAccess(client, {
       userId,
       dataSourceId,
       actorUserId: req.user && req.user.id ? req.user.id : null
@@ -116,32 +135,32 @@ async function handleRevokeDataSourceAccess(req, res, dataSourceId, userId) {
     user_id: userId,
     data_source_id: dataSourceId
   });
-}
+};
 
-async function handleListAuthProviders(_req, res) {
-  const items = await authProviderService.listProviders();
+const handleListAuthProviders: RouteHandler = async (_req, res) => {
+  const items = await listProviders();
   return json(res, 200, { items });
-}
+};
 
-async function handleUpsertAuthProvider(req, res) {
-  const body = await readJsonBody(req);
-  const result = await authProviderService.upsertProvider(body, {
+const handleUpsertAuthProvider: RouteHandler<AuthProviderUpsertRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<AuthProviderUpsertRequest>>(req);
+  const result = await upsertProvider(body, {
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return json(res, result.statusCode, result.body);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleDeleteAuthProvider(req, res, providerId) {
+const handleDeleteAuthProvider: RouteHandlerWithId = async (req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const result = await authProviderService.deleteProvider(providerId, {
+  const result = await deleteProvider(providerId, {
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return json(res, result.statusCode, result.body);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListAuditEvents(req, res, requestUrl) {
+const handleListAuditEvents: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const params = requestUrl.searchParams;
   const actorUserIdRaw = params.get("actor_user_id");
   if (actorUserIdRaw && !isUuid(actorUserIdRaw)) {
@@ -151,31 +170,33 @@ async function handleListAuditEvents(req, res, requestUrl) {
   if (targetUserIdRaw && !isUuid(targetUserIdRaw)) {
     return badRequest(res, "target_user_id must be a uuid");
   }
-  const result = await auditService.listEvents({
+  const limitRaw = params.get("limit");
+  const offsetRaw = params.get("offset");
+  const result = await listEvents({
     action: params.get("action"),
     actorUserId: actorUserIdRaw,
     targetUserId: targetUserIdRaw,
     outcome: params.get("outcome"),
     since: params.get("since"),
     until: params.get("until"),
-    limit: params.get("limit"),
-    offset: params.get("offset")
+    limit: limitRaw === null ? undefined : Number(limitRaw),
+    offset: offsetRaw === null ? undefined : Number(offsetRaw)
   });
   return json(res, 200, result);
-}
+};
 
-async function handleUpsertAuthProviderMappingRules(req, res, providerId) {
+const handleUpsertAuthProviderMappingRules: RouteHandlerWithId<AuthProviderMappingRulesRequest> = async (req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const body = await readJsonBody(req);
-  const result = await authProviderService.updateMappingRules(providerId, body, {
+  const body = await readJsonBody<AuthProviderMappingRulesRequest>(req);
+  const result = await updateMappingRules(providerId, body, {
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return json(res, result.statusCode, result.body);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListUserLinkedIdentities(_req, res, userId) {
+const handleListUserLinkedIdentities: RouteHandlerWithId = async (_req, res, userId) => {
   if (!isUuid(userId)) {
     return badRequest(res, "user id must be a uuid");
   }
@@ -183,113 +204,110 @@ async function handleListUserLinkedIdentities(_req, res, userId) {
   if (userRow.rowCount === 0) {
     return json(res, 404, { error: "not_found", message: "user not found" });
   }
-  const items = await linkedIdentityService.listForUser(userId);
+  const items = await listForUser(userId);
   return json(res, 200, { items });
-}
+};
 
-async function handleDeleteUserLinkedIdentity(req, res, userId, providerId) {
+const handleDeleteUserLinkedIdentity: RouteHandlerWithIds = async (req, res, userId, providerId) => {
   if (!isUuid(userId)) {
     return badRequest(res, "user id must be a uuid");
   }
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const removed = await linkedIdentityService.unlink({ userId, providerId });
+  const removed = await unlink({ userId, providerId });
   if (!removed) {
     return json(res, 404, { error: "not_found", message: "no linked identity for that user / provider" });
   }
-  await auditService
-    .writeEvent({
-      actorUserId: req.user && req.user.id ? req.user.id : null,
-      targetUserId: userId,
-      action: "auth.identity.unlinked",
-      outcome: "success",
-      details: { provider_id: providerId, subject: removed.subject }
-    })
+  await writeEvent({
+    actorUserId: req.user && req.user.id ? req.user.id : null,
+    targetUserId: userId,
+    action: "auth.identity.unlinked",
+    outcome: "success",
+    details: { provider_id: providerId, subject: removed.subject }
+  })
     .catch(() => {});
   return json(res, 200, { ok: true, user_id: userId, provider_id: providerId });
-}
+};
 
-async function handleUpsertScimGroupMappings(req, res, providerId) {
+const handleUpsertScimGroupMappings: RouteHandlerWithId = async (req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
   const body = await readJsonBody(req);
-  const result = await authProviderService.updateScimGroupMappings(providerId, body, {
+  const result = await updateScimGroupMappings(providerId, body, {
     actorUserId: req.user && req.user.id ? req.user.id : null
   });
-  return json(res, result.statusCode, result.body);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListScimTokens(_req, res, providerId) {
+const handleListScimTokens: RouteHandlerWithId = async (_req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const items = await scimTokenService.listForProvider(providerId);
+  const items = await listForProvider(providerId);
   return json(res, 200, { items });
-}
+};
 
-async function handleIssueScimToken(req, res, providerId) {
+const handleIssueScimToken: RouteHandlerWithId = async (req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
   // Confirm the provider exists before issuing a token so we don't create
   // an orphan row tied to a phantom id.
-  const provider = await authProviderService.findProviderById(providerId);
+  const provider = await findProviderById(providerId);
   if (!provider) {
     return json(res, 404, { error: "not_found", message: "auth provider not found" });
   }
-  const body = await readJsonBody(req);
-  const result = await scimTokenService.issueToken({ providerId, label: body && body.label });
-  if (!result.ok) {
+  const body = await readJsonBody<{ label?: string }>(req);
+  const result = await issueToken({ providerId, label: typeof body.label === "string" ? body.label : "" });
+  if (result.ok === false) {
     return badRequest(res, result.message);
   }
-  await auditService
-    .writeEvent({
-      actorUserId: req.user && req.user.id ? req.user.id : null,
-      action: "scim.token.issued",
-      outcome: "success",
-      details: { provider_id: providerId, token_id: result.record.id, label: result.record.label }
-    })
+  await writeEvent({
+    actorUserId: req.user && req.user.id ? req.user.id : null,
+    action: "scim.token.issued",
+    outcome: "success",
+    details: { provider_id: providerId, token_id: result.record.id, label: result.record.label }
+  })
     .catch(() => {});
   return json(res, 201, { token: result.token, record: result.record });
-}
+};
 
-async function handleRevokeScimToken(req, res, providerId, tokenId) {
+const handleRevokeScimToken: RouteHandlerWithIds = async (req, res, providerId, tokenId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
   if (!isUuid(tokenId)) {
     return badRequest(res, "token id must be a uuid");
   }
-  const revoked = await scimTokenService.revokeToken({ providerId, tokenId });
+  const revoked = await revokeToken({ providerId, tokenId });
   if (!revoked) {
     return json(res, 404, { error: "not_found", message: "scim token not found" });
   }
-  await auditService
-    .writeEvent({
-      actorUserId: req.user && req.user.id ? req.user.id : null,
-      action: "scim.token.revoked",
-      outcome: "success",
-      details: { provider_id: providerId, token_id: tokenId }
-    })
+  await writeEvent({
+    actorUserId: req.user && req.user.id ? req.user.id : null,
+    action: "scim.token.revoked",
+    outcome: "success",
+    details: { provider_id: providerId, token_id: tokenId }
+  })
     .catch(() => {});
   return json(res, 200, { ok: true, record: revoked });
-}
+};
 
-async function handleTestAuthProvider(_req, res, providerId) {
+const handleTestAuthProvider: RouteHandlerWithId = async (_req, res, providerId) => {
   if (!isUuid(providerId)) {
     return badRequest(res, "provider id must be a uuid");
   }
-  const provider = await authProviderService.findProviderById(providerId, { withSecret: true });
+  const provider = await findProviderById(providerId, { withSecret: true });
   if (!provider) {
     return json(res, 404, { error: "not_found", message: "auth provider not found" });
   }
-  const result = await oidcService.testConnection(provider);
+  const result = await testConnection(provider);
   return json(res, 200, result);
-}
+};
 
-module.exports = {
+export {
   handleListUsers,
   handleCreateUser,
   handleUpdateUserRoles,

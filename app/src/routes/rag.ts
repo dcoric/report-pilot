@@ -1,11 +1,19 @@
-const appDb = require("../lib/appDb");
-const { json, badRequest, readJsonBody } = require("../lib/http");
-const { RAG_NOTE_TITLE_MAX_LENGTH, RAG_NOTE_CONTENT_MAX_LENGTH } = require("../lib/constants");
-const { isUuid } = require("../lib/validation");
-const { reindexRagDocuments, triggerRagReindexAsync } = require("../services/ragService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import {
+  json,
+  badRequest,
+  readJsonBody,
+  type RouteHandler,
+  type RouteHandlerWithId,
+  type RouteHandlerWithUrl
+} from "../lib/http";
+import { RAG_NOTE_TITLE_MAX_LENGTH, RAG_NOTE_CONTENT_MAX_LENGTH } from "../lib/constants";
+import { isUuid } from "../lib/validation";
+import ragService = require("../services/ragService");
+import { enforceDataSourceAccess } from "../lib/authGate";
+import type { RagNoteRequest } from "../types";
 
-async function handleListRagNotes(req, res, requestUrl) {
+const handleListRagNotes: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = String(requestUrl.searchParams.get("data_source_id") || "").trim();
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
@@ -36,10 +44,10 @@ async function handleListRagNotes(req, res, requestUrl) {
   );
 
   return json(res, 200, { items: result.rows });
-}
+};
 
-async function handleUpsertRagNote(req, res) {
-  const body = await readJsonBody(req);
+const handleUpsertRagNote: RouteHandler<RagNoteRequest> = async (req, res) => {
+  const body = await readJsonBody<Partial<RagNoteRequest>>(req);
   const id = body.id ? String(body.id).trim() : null;
   const dataSourceId = String(body.data_source_id || "").trim();
   const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -105,7 +113,7 @@ async function handleUpsertRagNote(req, res) {
       return json(res, 404, { error: "not_found", message: "RAG note not found" });
     }
 
-    triggerRagReindexAsync(updateResult.rows[0].data_source_id);
+    ragService.triggerRagReindexAsync(updateResult.rows[0].data_source_id);
     return json(res, 200, updateResult.rows[0]);
   }
 
@@ -131,11 +139,11 @@ async function handleUpsertRagNote(req, res) {
     [dataSourceId, title, content, active === null ? true : active, userId]
   );
 
-  triggerRagReindexAsync(dataSourceId);
+  ragService.triggerRagReindexAsync(dataSourceId);
   return json(res, 200, insertResult.rows[0]);
-}
+};
 
-async function handleDeleteRagNote(req, res, noteId) {
+const handleDeleteRagNote: RouteHandlerWithId = async (req, res, noteId) => {
   if (!isUuid(noteId)) {
     return badRequest(res, "noteId must be a valid UUID");
   }
@@ -165,11 +173,11 @@ async function handleDeleteRagNote(req, res, noteId) {
     return json(res, 404, { error: "not_found", message: "RAG note not found" });
   }
 
-  triggerRagReindexAsync(deleteResult.rows[0].data_source_id);
+  ragService.triggerRagReindexAsync(deleteResult.rows[0].data_source_id);
   return json(res, 200, { ok: true, id: deleteResult.rows[0].id });
-}
+};
 
-async function handleRagReindex(req, res, requestUrl) {
+const handleRagReindex: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   const dataSourceId = requestUrl.searchParams.get("data_source_id");
   if (!dataSourceId) {
     return badRequest(res, "data_source_id query parameter is required");
@@ -187,15 +195,15 @@ async function handleRagReindex(req, res, requestUrl) {
     return undefined;
   }
 
-  const result = await reindexRagDocuments(dataSourceId);
+  const result = await ragService.reindexRagDocuments(dataSourceId);
   return json(res, 202, {
     job_id: "inline-reindex",
     status: "succeeded",
     ...result
   });
-}
+};
 
-module.exports = {
+export {
   handleListRagNotes,
   handleUpsertRagNote,
   handleDeleteRagNote,

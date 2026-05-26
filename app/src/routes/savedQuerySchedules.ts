@@ -1,34 +1,36 @@
 // QUERY-007: routes for managing scheduled saved-query delivery.
 
-const appDb = require("../lib/appDb");
-const { json, readJsonBody } = require("../lib/http");
-const { isUuid } = require("../lib/validation");
-const scheduleService = require("../services/savedQueryScheduleService");
-const auditService = require("../services/auditService");
-const { enforceDataSourceAccess } = require("../lib/authGate");
+import appDb = require("../lib/appDb");
+import { enforceDataSourceAccess, type AuthedRequest } from "../lib/authGate";
+import {
+  readJsonBody,
+  writeServiceResult,
+  type RouteHandlerWithId,
+  type RouteHandlerWithIds
+} from "../lib/http";
+import { isUuid } from "../lib/validation";
+import * as scheduleService from "../services/savedQueryScheduleService";
+import * as auditService from "../services/auditService";
+import type { SavedQueryScheduleRequest } from "../types";
 
-function callerId(req) {
+function callerId(req: AuthedRequest): string | null {
   return (req.user && req.user.id) || null;
 }
 
-function requestClientIp(req) {
+function requestClientIp(req: AuthedRequest): string | null {
   return (req.socket && req.socket.remoteAddress) || null;
 }
 
-function writeResult(res, result) {
-  return json(res, result.statusCode, result.body);
-}
-
-async function loadSavedQueryDataSourceId(savedQueryId) {
+async function loadSavedQueryDataSourceId(savedQueryId: string): Promise<string | null> {
   if (!isUuid(savedQueryId)) return null;
-  const result = await appDb.query(
+  const result = await appDb.query<{ data_source_id: string | null }>(
     "SELECT data_source_id FROM saved_queries WHERE id = $1",
     [savedQueryId]
   );
-  return result.rowCount > 0 ? result.rows[0].data_source_id : null;
+  return (result.rowCount ?? 0) > 0 ? result.rows[0].data_source_id : null;
 }
 
-function emitScheduleAudit(req, action, savedQueryId, details = {}) {
+function emitScheduleAudit(req: AuthedRequest, action: string, savedQueryId: string, details: Record<string, unknown> = {}): void {
   auditService
     .writeEvent({
       actorUserId: callerId(req),
@@ -40,10 +42,10 @@ function emitScheduleAudit(req, action, savedQueryId, details = {}) {
     .catch(() => {});
 }
 
-async function handleCreateSchedule(req, res, savedQueryId) {
+const handleCreateSchedule: RouteHandlerWithId<SavedQueryScheduleRequest> = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
-  const body = await readJsonBody(req);
+  const body = await readJsonBody<Partial<SavedQueryScheduleRequest>>(req);
   const result = await scheduleService.createSchedule(savedQueryId, body, {
     callerUserId: callerId(req)
   });
@@ -57,22 +59,22 @@ async function handleCreateSchedule(req, res, savedQueryId) {
       recipient_count: (result.body.recipients || []).length
     });
   }
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleListSchedules(req, res, savedQueryId) {
+const handleListSchedules: RouteHandlerWithId = async (req, res, savedQueryId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.listSchedules(savedQueryId, {
     callerUserId: callerId(req)
   });
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleUpdateSchedule(req, res, savedQueryId, scheduleId) {
+const handleUpdateSchedule: RouteHandlerWithIds<SavedQueryScheduleRequest> = async (req, res, savedQueryId, scheduleId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
-  const body = await readJsonBody(req);
+  const body = await readJsonBody<Partial<SavedQueryScheduleRequest>>(req);
   const result = await scheduleService.updateSchedule(savedQueryId, scheduleId, body, {
     callerUserId: callerId(req)
   });
@@ -87,10 +89,10 @@ async function handleUpdateSchedule(req, res, savedQueryId, scheduleId) {
       recipient_count: (result.body.recipients || []).length
     });
   }
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleDeleteSchedule(req, res, savedQueryId, scheduleId) {
+const handleDeleteSchedule: RouteHandlerWithIds = async (req, res, savedQueryId, scheduleId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.deleteSchedule(savedQueryId, scheduleId, {
@@ -101,10 +103,10 @@ async function handleDeleteSchedule(req, res, savedQueryId, scheduleId) {
       schedule_id: scheduleId
     });
   }
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-async function handleRetrySchedule(req, res, savedQueryId, scheduleId) {
+const handleRetrySchedule: RouteHandlerWithIds = async (req, res, savedQueryId, scheduleId) => {
   const dsId = await loadSavedQueryDataSourceId(savedQueryId);
   if (dsId && !(await enforceDataSourceAccess(req, res, dsId))) return undefined;
   const result = await scheduleService.retryFailedRun(savedQueryId, scheduleId, {
@@ -117,10 +119,10 @@ async function handleRetrySchedule(req, res, savedQueryId, scheduleId) {
       delivery_ok: result.body.ok
     });
   }
-  return writeResult(res, result);
-}
+  return writeServiceResult(res, result);
+};
 
-module.exports = {
+export {
   handleCreateSchedule,
   handleListSchedules,
   handleUpdateSchedule,

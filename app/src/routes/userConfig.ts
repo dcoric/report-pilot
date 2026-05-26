@@ -5,26 +5,27 @@
 // guaranteed to be populated by lib/authGate.enforcePolicy before these
 // handlers run.
 
-const { json, readJsonBody } = require("../lib/http");
-const userConfigService = require("../services/userConfigService");
+import { json, readJsonBody, type RouteHandler } from "../lib/http";
+import { getConfig, putConfig } from "../services/userConfigService";
+import type { UserConfig } from "../types";
 
-async function handleGetConfig(req, res) {
+const handleGetConfig: RouteHandler<never, { config: UserConfig }> = async (req, res) => {
   const userId = req.user && req.user.id;
-  const config = await userConfigService.getConfig(userId);
+  const config = await getConfig(userId);
   return json(res, 200, { config });
-}
+};
 
-async function handlePutConfig(req, res) {
+const handlePutConfig: RouteHandler<Partial<UserConfig>, { config: UserConfig }> = async (req, res) => {
   const userId = req.user && req.user.id;
-  const body = await readJsonBody(req).catch(() => null);
-  const result = await userConfigService.putConfig(userId, body);
+  const body = await readJsonBody<Partial<UserConfig> | null>(req).catch(() => null);
+  const result = await putConfig(userId, body);
   if (result.statusCode === 200) {
     return json(res, 200, { config: result.body });
   }
   return json(res, result.statusCode, result.body);
-}
+};
 
-module.exports = {
+export {
   handleGetConfig,
   handlePutConfig
 };
