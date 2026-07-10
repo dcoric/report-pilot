@@ -27,7 +27,7 @@
     "csv-stringify": "^6.6.0",
     "mssql": "^11.0.1",
     "node-sql-parser": "^5.3.8",
-    "nodemailer": "^8.0.1",
+    "nodemailer": "^9.0.3",
     "openid-client": "^6.8.4",
     "parquetjs-lite": "^0.8.7",
     "pg": "^8.13.1",
@@ -38,7 +38,7 @@
     "@types/node": "^25.9.1",
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
-    "concurrently": "^9.2.1",
+    "concurrently": "^9.2.3",
     "openapi-typescript": "^7.13.0",
     "tsx": "^4.22.3",
     "typescript": "~5.9.3"
