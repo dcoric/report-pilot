@@ -31,7 +31,7 @@
     "openid-client": "^6.8.4",
     "parquetjs-lite": "^0.8.7",
     "pg": "^8.13.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",
