@@ -144,7 +144,7 @@ curl -X POST http://localhost:8080/v1/llm/providers \
 Benchmark assets:
 
 - Dataset: `docs/evals/dvdrental-mvp-benchmark.json` (60 reporting prompts)
-- Runner: `app/src/benchmark/runMvpBenchmark.js`
+- Runner: `app/src/benchmark/runMvpBenchmark.ts`
 
 Recommended flow with the dvdrental fixture:
 
