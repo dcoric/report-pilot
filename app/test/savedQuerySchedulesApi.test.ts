@@ -9,6 +9,7 @@ process.env.AUTH_COOKIE_SECURE = "false";
 import appDb = require("../src/lib/appDb");
 import dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
 import emailService = require("../src/services/emailService");
+import * as xlsx from "xlsx";
 import { createAuthTestStub } from "./helpers/authTestStub";
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
@@ -132,8 +133,8 @@ before(async () => {
     },
     async executeParameterizedReadOnly() {
       return {
-        columns: ["value"],
-        rows: [{ value: 1 }],
+        columns: ["second", "first"],
+        rows: [{ first: "A", second: "B" }],
         rowCount: 1,
         durationMs: 4
       };
@@ -152,7 +153,9 @@ before(async () => {
       recipients: [...opts.recipients],
       subject: opts.subject,
       fileName: opts.fileName,
-      bytes: opts.fileBuffer.length
+      bytes: opts.fileBuffer.length,
+      fileBuffer: Buffer.from(opts.fileBuffer),
+      contentType: opts.contentType
     });
     return { messageId: `stub-${sentEmails.length}` };
   };
@@ -638,7 +641,7 @@ test("QUERY-007 dispatch failure records error_message and exposes it via list e
   assert.equal(finalList.payload.items[0].recent_runs[0].status, "succeeded");
 });
 
-test("QUERY-007 successful email dispatch sends to recipients and records file size", async () => {
+test("QUERY-007 successful XLSX email dispatch sends a valid ordered workbook", async () => {
   const savedQueryId = await seedSavedQuery({ ownerLabel: "owner" });
 
   const created = await api("POST", `/v1/saved-queries/${savedQueryId}/schedules`, {
@@ -658,7 +661,18 @@ test("QUERY-007 successful email dispatch sends to recipients and records file s
   assert.deepEqual(sentEmails[0].recipients.sort(), ["lead@example.com", "ops@example.com"]);
   assert.match(sentEmails[0].subject, /Monday digest/);
   assert.match(sentEmails[0].fileName, /\.xlsx$/);
+  assert.equal(sentEmails[0].contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   assert.ok(sentEmails[0].bytes > 0);
+  assert.equal(xlsx.version, "0.20.3");
+
+  const workbook = xlsx.read(sentEmails[0].fileBuffer, { type: "buffer" });
+  assert.deepEqual(workbook.SheetNames, ["Results"]);
+  const resultsSheet = workbook.Sheets.Results;
+  assert.ok(resultsSheet);
+  assert.deepEqual(xlsx.utils.sheet_to_json(resultsSheet, { header: 1 }), [
+    ["second", "first"],
+    ["B", "A"]
+  ]);
 
   const runs = [...scheduleRuns.values()];
   assert.equal(runs.length, 1);

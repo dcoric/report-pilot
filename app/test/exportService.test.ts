@@ -4,7 +4,74 @@ import assert from "node:assert/strict";
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test";
 
-import { __private } from "../src/services/exportService";
+import appDb = require("../src/lib/appDb");
+import dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
+import * as xlsx from "xlsx";
+import { __private, exportQueryResult } from "../src/services/exportService";
+
+test("exportQueryResult writes a readable XLSX workbook in adapter column order", async () => {
+  const originalQuery = appDb.query;
+  const originalCreateDatabaseAdapter = dbAdapterFactory.createDatabaseAdapter;
+  let queryNumber = 0;
+  let adapterClosed = false;
+
+  appDb.query = (async () => {
+    queryNumber += 1;
+    if (queryNumber === 1) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "00000000-0000-4000-8000-000000000001",
+          data_source_id: "00000000-0000-4000-8000-000000000111",
+          question: "Quarterly sales",
+          connection_ref: "postgresql://example.invalid/reporting",
+          db_type: "postgres"
+        }]
+      };
+    }
+    if (queryNumber === 2) {
+      return { rowCount: 1, rows: [{ generated_sql: "SELECT 2 AS second, 1 AS first" }] };
+    }
+    throw new Error(`Unexpected app database query #${queryNumber}`);
+  }) as unknown as typeof appDb.query;
+
+  (dbAdapterFactory as { createDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter }).createDatabaseAdapter = (() => ({
+    async executeReadOnly() {
+      return {
+        columns: ["second", "first"],
+        rows: [{ first: 1, second: 2 }],
+        rowCount: 1,
+        originalRowCount: 1,
+        truncated: false,
+        durationMs: 1
+      };
+    },
+    async close() {
+      adapterClosed = true;
+    }
+  })) as unknown as typeof dbAdapterFactory.createDatabaseAdapter;
+
+  try {
+    const exported = await exportQueryResult("00000000-0000-4000-8000-000000000001", "xlsx");
+
+    assert.equal(exported.contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert.match(exported.filename, /^Quarterly_sales_.*\.xlsx$/);
+    assert.ok(exported.buffer.length > 0);
+
+    const workbook = xlsx.read(exported.buffer, { type: "buffer" });
+    assert.deepEqual(workbook.SheetNames, ["Results"]);
+    const resultsSheet = workbook.Sheets.Results;
+    assert.ok(resultsSheet);
+    assert.deepEqual(xlsx.utils.sheet_to_json(resultsSheet, { header: 1 }), [
+      ["second", "first"],
+      [2, 1]
+    ]);
+    assert.equal(adapterClosed, true);
+  } finally {
+    appDb.query = originalQuery;
+    (dbAdapterFactory as { createDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter }).createDatabaseAdapter = originalCreateDatabaseAdapter;
+  }
+});
 
 test("getColumnOrder prefers adapter columns", () => {
   const actual = __private.getColumnOrder(["b", "a"], [{ a: 1, b: 2 }]);
