@@ -11,48 +11,80 @@ import dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
 import emailService = require("../src/services/emailService");
 import * as xlsx from "xlsx";
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { SavedQueryRow } from "../src/services/savedQueryService";
+import type {
+  SavedQuerySchedule,
+  SavedQueryScheduleRun
+} from "../src/types/domain";
+
+interface TestUserFixture {
+  id: string;
+  cookie: string;
+  role: string;
+}
+
+interface ScheduleWithRuns extends SavedQuerySchedule {
+  recent_runs: SavedQueryScheduleRun[];
+}
+
+interface TestPayload extends Partial<SavedQuerySchedule> {
+  id: string;
+  items: ScheduleWithRuns[];
+  message: string;
+  ok: boolean;
+  run_id: string;
+}
+
+interface SentEmail {
+  recipients: string[];
+  subject: string;
+  fileName: string;
+  bytes: number;
+  fileBuffer: Buffer;
+  contentType: string;
+}
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 
 let server: import("http").Server;
 let baseUrl: string;
-let savedQueries;
-let savedQueryShares;
-let savedQueryVersions;
-let schedules;
-let scheduleRuns;
-let savedQueryCounter;
-let scheduleCounter;
-let scheduleRunCounter;
+let savedQueries: Map<string, SavedQueryRow>;
+let savedQueryShares: Map<string, unknown>;
+let savedQueryVersions: Map<string, unknown>;
+let schedules: Map<string, SavedQuerySchedule>;
+let scheduleRuns: Map<string, SavedQueryScheduleRun>;
+let savedQueryCounter: number;
+let scheduleCounter: number;
+let scheduleRunCounter: number;
 let originalQuery: typeof appDb.query;
-let originalCreateDatabaseAdapter;
-let originalIsSupportedDbType;
-let originalSendExportEmail;
-let sentEmails;
-let emailFailureMode;
+let originalCreateDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter;
+let originalIsSupportedDbType: typeof dbAdapterFactory.isSupportedDbType;
+let originalSendExportEmail: typeof emailService.sendExportEmail;
+let sentEmails: SentEmail[];
+let emailFailureMode: "throw" | null;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-const testUsers = {};
+const testUsers: Record<string, TestUserFixture> = {};
 
-function nextSavedQueryId() {
+function nextSavedQueryId(): string {
   savedQueryCounter += 1;
   return `00000000-0000-4000-8000-${String(savedQueryCounter).padStart(12, "0")}`;
 }
 
-function nextScheduleId() {
+function nextScheduleId(): string {
   scheduleCounter += 1;
   return `00000000-0000-4000-8000-dddd${String(scheduleCounter).padStart(8, "0")}`;
 }
 
-function nextScheduleRunId() {
+function nextScheduleRunId(): string {
   scheduleRunCounter += 1;
   return `00000000-0000-4000-8000-eeee${String(scheduleRunCounter).padStart(8, "0")}`;
 }
 
-function normalize(sql: string) {
+function normalize(sql: string): string {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function ensureTestUser(label, role = "analyst") {
+function ensureTestUser(label: string, role = "analyst"): TestUserFixture {
   if (testUsers[label]) return testUsers[label];
   const user = authStub.seedUser({
     email: `${label}@example.com`,
@@ -64,11 +96,11 @@ function ensureTestUser(label, role = "analyst") {
   return testUsers[label];
 }
 
-function userId(label) {
+function userId(label: string): string {
   return ensureTestUser(label).id;
 }
 
-async function api(method: string, path: string, body?: unknown, label: string | null = "owner", { role = "analyst" }: { role?: string } = {}) {
+async function api<T = TestPayload>(method: string, path: string, body?: unknown, label: string | null = "owner", { role = "analyst" }: { role?: string } = {}) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (label !== null) {
     const fixture = ensureTestUser(label, role);
@@ -79,16 +111,16 @@ async function api(method: string, path: string, body?: unknown, label: string |
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
     payload = null;
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
-async function seedSavedQuery({ ownerLabel = "owner", name = "Daily report", sql = "SELECT 1 AS value" } = {}) {
+async function seedSavedQuery({ ownerLabel = "owner", name = "Daily report", sql = "SELECT 1 AS value" }: { ownerLabel?: string; name?: string; sql?: string } = {}): Promise<string> {
   const ownerId = userId(ownerLabel);
   const id = nextSavedQueryId();
   const now = new Date().toISOString();
@@ -103,6 +135,7 @@ async function seedSavedQuery({ ownerLabel = "owner", name = "Daily report", sql
     parameter_schema: [],
     tags: [],
     visibility: "private",
+    folder_id: null,
     created_at: now,
     updated_at: now
   });
@@ -145,7 +178,7 @@ before(async () => {
 
   // Stub email transport so tests can assert on what would have been sent and
   // exercise the failure path without touching SMTP.
-  emailService.sendExportEmail = async (opts) => {
+  emailService.sendExportEmail = async (opts: Parameters<typeof emailService.sendExportEmail>[0]) => {
     if (emailFailureMode === "throw") {
       throw new Error("SMTP unavailable (test stub)");
     }
@@ -160,13 +193,13 @@ before(async () => {
     return { messageId: `stub-${sentEmails.length}` };
   };
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
     const normalized = normalize(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       if (id === DATA_SOURCE_ID) {
         return { rowCount: 1, rows: [{ id }] };
       }
@@ -174,7 +207,7 @@ before(async () => {
     }
 
     if (normalized === "select data_source_id from saved_queries where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row
         ? { rowCount: 1, rows: [{ data_source_id: row.data_source_id }] }
@@ -182,13 +215,13 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, owner_id, sql, data_source_id, default_run_params, parameter_schema from saved_queries where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.tags, sq.visibility, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       if (!row) return { rowCount: 0, rows: [] };
       return {
@@ -215,9 +248,9 @@ before(async () => {
         parameterOverridesJson,
         status,
         nextRunAt
-      ] = params;
+      ] = params as [string, string | null, string, string, string, string[], SavedQuerySchedule["delivery_mode"], SavedQuerySchedule["format"], string, SavedQuerySchedule["status"], string | null];
       const now = new Date().toISOString();
-      const row = {
+      const row: SavedQuerySchedule = {
         id: nextScheduleId(),
         saved_query_id: savedQueryId,
         owner_user_id: ownerUserId,
@@ -227,7 +260,7 @@ before(async () => {
         recipients: Array.isArray(recipients) ? recipients : [],
         delivery_mode: deliveryMode,
         format,
-        parameter_overrides: JSON.parse(parameterOverridesJson),
+        parameter_overrides: JSON.parse(parameterOverridesJson) as Record<string, unknown>,
         status,
         next_run_at: nextRunAt,
         last_run_at: null,
@@ -240,7 +273,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, saved_query_id, owner_user_id, name, cron_expression, timezone, recipients, delivery_mode, format, parameter_overrides, status, next_run_at, last_run_at, last_status, created_at, updated_at from saved_query_schedules where saved_query_id = $1")) {
-      const [savedQueryId] = params;
+      const [savedQueryId] = params as [string];
       const rows = [...schedules.values()]
         .filter((row) => row.saved_query_id === savedQueryId)
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -248,16 +281,16 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, saved_query_id, owner_user_id, name, cron_expression, timezone, recipients, delivery_mode, format, parameter_overrides, status, next_run_at, last_run_at, last_status, created_at, updated_at from saved_query_schedules where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = schedules.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("select id, saved_query_id, owner_user_id, name, cron_expression, timezone, recipients, delivery_mode, format, parameter_overrides, status, next_run_at, last_run_at, last_status, created_at, updated_at from saved_query_schedules where status = 'active'")) {
-      const [now, limit] = params;
+      const [now, limit] = params as [string, number];
       const rows = [...schedules.values()]
         .filter((row) => row.status === "active" && row.next_run_at && new Date(row.next_run_at) <= new Date(now))
-        .sort((a, b) => new Date(a.next_run_at).getTime() - new Date(b.next_run_at).getTime())
+        .sort((a, b) => new Date(a.next_run_at ?? 0).getTime() - new Date(b.next_run_at ?? 0).getTime())
         .slice(0, limit);
       return { rowCount: rows.length, rows };
     }
@@ -274,10 +307,10 @@ before(async () => {
         parameterOverridesJson,
         status,
         nextRunAt
-      ] = params;
+      ] = params as [string, string, string, string, string[], SavedQuerySchedule["delivery_mode"], SavedQuerySchedule["format"], string, SavedQuerySchedule["status"], string | null];
       const existing = schedules.get(id);
       if (!existing) return { rowCount: 0, rows: [] };
-      const updated = {
+      const updated: SavedQuerySchedule = {
         ...existing,
         name,
         cron_expression: cronExpression,
@@ -285,7 +318,7 @@ before(async () => {
         recipients: Array.isArray(recipients) ? recipients : [],
         delivery_mode: deliveryMode,
         format,
-        parameter_overrides: JSON.parse(parameterOverridesJson),
+        parameter_overrides: JSON.parse(parameterOverridesJson) as Record<string, unknown>,
         status,
         next_run_at: nextRunAt,
         updated_at: new Date().toISOString()
@@ -295,7 +328,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_query_schedules set last_status = 'running'")) {
-      const [id] = params;
+      const [id] = params as [string];
       const existing = schedules.get(id);
       if (existing) {
         schedules.set(id, { ...existing, last_status: "running", updated_at: new Date().toISOString() });
@@ -304,7 +337,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_query_schedules set last_run_at = now(), last_status = 'succeeded'")) {
-      const [id, nextRunAt] = params;
+      const [id, nextRunAt] = params as [string, string | null];
       const existing = schedules.get(id);
       if (existing) {
         schedules.set(id, {
@@ -319,7 +352,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_query_schedules set last_run_at = now(), last_status = 'failed'")) {
-      const [id, nextRunAt] = params;
+      const [id, nextRunAt] = params as [string, string | null];
       const existing = schedules.get(id);
       if (existing) {
         schedules.set(id, {
@@ -334,7 +367,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("delete from saved_query_schedules where id = $1 returning id")) {
-      const [id] = params;
+      const [id] = params as [string];
       if (!schedules.has(id)) return { rowCount: 0, rows: [] };
       schedules.delete(id);
       // CASCADE clean-up of runs.
@@ -355,8 +388,8 @@ before(async () => {
         recipients,
         deliveryMode,
         format
-      ] = params;
-      const row = {
+      ] = params as [string, string, string, string | null, number, string[], SavedQueryScheduleRun["delivery_mode"], SavedQueryScheduleRun["format"]];
+      const row: SavedQueryScheduleRun = {
         id: nextScheduleRunId(),
         schedule_id: scheduleId,
         saved_query_id: savedQueryId,
@@ -378,7 +411,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_query_schedule_runs set status = 'succeeded'")) {
-      const [id, fileName, fileSize, rowCount] = params;
+      const [id, fileName, fileSize, rowCount] = params as [string, string, number, number];
       const existing = scheduleRuns.get(id);
       if (existing) {
         scheduleRuns.set(id, {
@@ -394,7 +427,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update saved_query_schedule_runs set status = 'failed'")) {
-      const [id, errMessage] = params;
+      const [id, errMessage] = params as [string, string];
       const existing = scheduleRuns.get(id);
       if (existing) {
         scheduleRuns.set(id, {
@@ -408,7 +441,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, schedule_id, saved_query_id, scheduled_for, started_at, completed_at, status, attempt, recipients, delivery_mode, format, file_name, file_size_bytes, row_count, error_message from saved_query_schedule_runs where schedule_id = any")) {
-      const [scheduleIds] = params;
+      const [scheduleIds] = params as [string[]];
       const set = new Set(scheduleIds);
       const rows = [...scheduleRuns.values()]
         .filter((row) => set.has(row.schedule_id))
@@ -425,7 +458,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select attempt, status from saved_query_schedule_runs where schedule_id = $1")) {
-      const [scheduleId] = params;
+      const [scheduleId] = params as [string];
       const rows = [...scheduleRuns.values()]
         .filter((row) => row.schedule_id === scheduleId)
         .sort((a, b) => new Date(b.scheduled_for).getTime() - new Date(a.scheduled_for).getTime())
@@ -597,7 +630,7 @@ test("QUERY-007 download_artifact mode skips SMTP and still records the run", as
   assert.equal(runs.length, 1);
   assert.equal(runs[0].status, "succeeded");
   assert.equal(runs[0].delivery_mode, "download_artifact");
-  assert.ok(runs[0].file_name && runs[0].file_size_bytes > 0);
+  assert.ok(runs[0].file_name && (runs[0].file_size_bytes ?? 0) > 0);
 });
 
 test("QUERY-007 dispatch failure records error_message and exposes it via list endpoint", async () => {
@@ -623,7 +656,7 @@ test("QUERY-007 dispatch failure records error_message and exposes it via list e
   assert.equal(list.payload.items[0].last_status, "failed");
   assert.equal(list.payload.items[0].recent_runs.length, 1);
   assert.equal(list.payload.items[0].recent_runs[0].status, "failed");
-  assert.match(list.payload.items[0].recent_runs[0].error_message, /SMTP unavailable/);
+  assert.match(list.payload.items[0].recent_runs[0].error_message ?? "", /SMTP unavailable/);
 
   // Manual retry via the API exposes a second attempt that succeeds once SMTP
   // is healthy again.
@@ -678,5 +711,5 @@ test("QUERY-007 successful XLSX email dispatch sends a valid ordered workbook", 
   assert.equal(runs.length, 1);
   assert.equal(runs[0].status, "succeeded");
   assert.equal(runs[0].row_count, 1);
-  assert.match(runs[0].file_name, /\.xlsx$/);
+  assert.match(runs[0].file_name ?? "", /\.xlsx$/);
 });

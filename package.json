@@ -18,7 +18,7 @@
     "benchmark:large-schema": "tsx app/src/benchmark/runLargeSchemaBenchmark.ts",
     "create-user": "tsx scripts/create-user.ts",
     "test": "node --import tsx --test app/test/**/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.test.legacy.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p tsconfig.test.json",
     "types:openapi": "npm --prefix tools/openapi-typescript run generate"
   },
   "engines": {
