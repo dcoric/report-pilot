@@ -1562,6 +1562,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OkResponse"
+  /v1/query/sessions/{sessionId}/clarification/cancel:
+    post:
+      tags: [Query]
+      summary: Cancel a pending query clarification
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Clarification cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  status:
+                    type: string
+                    enum: [cancelled]
+                required: [ok, status]
+        "409":
+          description: The session has no pending clarification
   /v1/query/sessions/{sessionId}/export:
     post:
       tags: [Export]

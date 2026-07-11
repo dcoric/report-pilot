@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 
 import appDb = require("../src/lib/appDb");
 import {
+  cancelPendingClarification,
   recordPendingClarification,
   resolvePendingClarification
 } from "../src/services/queryClarificationStore";
@@ -40,6 +41,27 @@ test("clarification store persists pending options and audits their resolution",
     assert.ok(statements.some((entry) => entry.sql.includes("status = 'awaiting_clarification'")));
     assert.ok(statements.some((entry) => entry.sql.includes("selected_option_id = $2")));
     assert.ok(statements.some((entry) => entry.sql.includes("status = 'created'")));
+  } finally {
+    appDb.withTransaction = originalTransaction;
+  }
+});
+
+test("clarification store audits cancellation and updates the session state", async () => {
+  const originalTransaction = appDb.withTransaction;
+  const statements: string[] = [];
+  const client = {
+    query: async (sql: string) => {
+      const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
+      statements.push(normalized);
+      return { rowCount: 1, rows: [] };
+    }
+  } as unknown as PoolClient;
+  appDb.withTransaction = (async <T>(callback: (transactionClient: PoolClient) => Promise<T>) => callback(client)) as typeof appDb.withTransaction;
+
+  try {
+    assert.equal(await cancelPendingClarification("session-1"), true);
+    assert.ok(statements.some((statement) => statement.includes("set status = 'cancelled'")));
+    assert.ok(statements.some((statement) => statement.includes("update query_sessions set status = 'cancelled'")));
   } finally {
     appDb.withTransaction = originalTransaction;
   }

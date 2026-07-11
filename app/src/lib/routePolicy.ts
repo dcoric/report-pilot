@@ -86,6 +86,7 @@ export const POLICIES: ReadonlyArray<RoutePolicy> = [
   { method: "POST", pattern: /^\/v1\/query\/sessions$/, permission: "query.run" },
   { method: "GET", pattern: /^\/v1\/query\/prompts\/history$/, permission: "query.run" },
   { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/run$/, permission: "query.run" },
+  { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/clarification\/cancel$/, permission: "query.run" },
   { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/feedback$/, permission: "query.run" },
   { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/export$/, permission: "query.run" },
   { method: "POST", pattern: /^\/v1\/query\/sessions\/[^/]+\/export\/deliver$/, permission: "query.run" },

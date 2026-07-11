@@ -1,6 +1,7 @@
 import type { components } from '../../lib/api/types';
 
 export type RunProvider = NonNullable<components['schemas']['RunSessionRequest']['llm_provider']>;
+export type QueryClarification = components['schemas']['QueryClarification'];
 
 export interface LlmProvider {
     id: string;
