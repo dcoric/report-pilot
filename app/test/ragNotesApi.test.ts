@@ -9,32 +9,52 @@ process.env.AUTH_COOKIE_SECURE = "false";
 import appDb = require("../src/lib/appDb");
 import ragService = require("../src/services/ragService");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { RagNoteResponse } from "../src/types";
+
+interface RagNoteListPayload {
+  items: RagNoteResponse[];
+}
+
+interface DeleteNotePayload {
+  ok: boolean;
+  id: string;
+}
+
+interface ApiResult<T> {
+  status: number;
+  payload: T;
+}
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const OTHER_SOURCE_ID = "00000000-0000-4000-8000-000000000333";
 
 let server: import("http").Server;
 let baseUrl: string;
-let notes;
-let reindexCalls;
-let noteCounter;
+let notes: Map<string, RagNoteResponse>;
+let reindexCalls: string[];
+let noteCounter: number;
 let originalQuery: typeof appDb.query;
-let originalReindex;
-let originalSetImmediate;
+let originalReindex: typeof ragService.reindexRagDocuments;
+let originalSetImmediate: typeof global.setImmediate;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-let analystCookie;
-let viewerCookie;
+let analystCookie: string;
+let viewerCookie: string;
 
-function normalizeSql(sql) {
+function normalizeSql(sql: string): string {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function nextNoteId() {
+function nextNoteId(): string {
   noteCounter += 1;
   return `00000000-0000-4000-8000-${String(noteCounter).padStart(12, "0")}`;
 }
 
-async function api(method: string, path: string, body?: unknown, { cookie }: { cookie?: string } = {}) {
+async function api<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  { cookie }: { cookie?: string } = {}
+): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   headers.Cookie = cookie || analystCookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -43,7 +63,7 @@ async function api(method: string, path: string, body?: unknown, { cookie }: { c
     body: body ? JSON.stringify(body) : undefined
   });
 
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
@@ -52,7 +72,7 @@ async function api(method: string, path: string, body?: unknown, { cookie }: { c
 
   return {
     status: response.status,
-    payload
+    payload: payload as T
   };
 }
 
@@ -78,14 +98,14 @@ before(async () => {
   analystCookie = authStub.cookieFor(authStub.seedSession(analyst.id).token);
   viewerCookie = authStub.cookieFor(authStub.seedSession(viewer.id).token);
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const normalized = normalizeSql(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
-      const id = params[0];
+      const id = String(params[0]);
       if (id === DATA_SOURCE_ID || id === OTHER_SOURCE_ID) {
         return { rowCount: 1, rows: [{ id }] };
       }
@@ -93,7 +113,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, data_source_id, title, content, active, created_at, updated_at from rag_notes")) {
-      const dataSourceId = params[0];
+      const dataSourceId = String(params[0]);
       const rows = [...notes.values()]
         .filter((note) => note.data_source_id === dataSourceId)
         .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -102,14 +122,17 @@ before(async () => {
 
     if (normalized.startsWith("insert into rag_notes")) {
       const now = new Date().toISOString();
-      const [dataSourceId, title, content, active] = params;
+      const dataSourceId = String(params[0]);
+      const title = String(params[1]);
+      const content = String(params[2]);
+      const active = Boolean(params[3]);
       const id = nextNoteId();
       const note = {
         id,
         data_source_id: dataSourceId,
         title,
         content,
-        active: Boolean(active),
+        active,
         created_at: now,
         updated_at: now
       };
@@ -118,7 +141,11 @@ before(async () => {
     }
 
     if (normalized.startsWith("update rag_notes")) {
-      const [id, dataSourceId, title, content, active] = params;
+      const id = String(params[0]);
+      const dataSourceId = String(params[1]);
+      const title = String(params[2]);
+      const content = String(params[3]);
+      const active = params[4];
       const existing = notes.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -128,7 +155,7 @@ before(async () => {
         data_source_id: dataSourceId,
         title,
         content,
-        active: active === null ? existing.active : active,
+        active: active === null ? existing.active : Boolean(active),
         updated_at: new Date().toISOString()
       };
       notes.set(id, updated);
@@ -136,7 +163,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, data_source_id from rag_notes where id = $1")) {
-      const [id] = params;
+      const id = String(params[0]);
       const existing = notes.get(id);
       return existing
         ? { rowCount: 1, rows: [{ id: existing.id, data_source_id: existing.data_source_id }] }
@@ -144,7 +171,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("delete from rag_notes")) {
-      const [id] = params;
+      const id = String(params[0]);
       const existing = notes.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -201,7 +228,7 @@ after(async () => {
 });
 
 test("RAG notes create/update/list/delete happy path", async () => {
-  const create = await api("POST", "/v1/rag/notes", {
+  const create = await api<RagNoteResponse>("POST", "/v1/rag/notes", {
     data_source_id: DATA_SOURCE_ID,
     title: "  Revenue policy  ",
     content: "  Exclude test transactions.  "
@@ -214,12 +241,12 @@ test("RAG notes create/update/list/delete happy path", async () => {
 
   const noteId = create.payload.id;
 
-  const list = await api("GET", `/v1/rag/notes?data_source_id=${DATA_SOURCE_ID}`);
+  const list = await api<RagNoteListPayload>("GET", `/v1/rag/notes?data_source_id=${DATA_SOURCE_ID}`);
   assert.equal(list.status, 200);
   assert.equal(list.payload.items.length, 1);
   assert.equal(list.payload.items[0].id, noteId);
 
-  const update = await api("POST", "/v1/rag/notes", {
+  const update = await api<RagNoteResponse>("POST", "/v1/rag/notes", {
     id: noteId,
     data_source_id: DATA_SOURCE_ID,
     title: "Updated policy",
@@ -230,13 +257,13 @@ test("RAG notes create/update/list/delete happy path", async () => {
   assert.equal(reindexCalls.length, 2);
   assert.equal(reindexCalls[1], DATA_SOURCE_ID);
 
-  const del = await api("DELETE", `/v1/rag/notes/${noteId}`);
+  const del = await api<DeleteNotePayload>("DELETE", `/v1/rag/notes/${noteId}`);
   assert.equal(del.status, 200);
   assert.deepEqual(del.payload, { ok: true, id: noteId });
   assert.equal(reindexCalls.length, 3);
   assert.equal(reindexCalls[2], DATA_SOURCE_ID);
 
-  const listAfterDelete = await api("GET", `/v1/rag/notes?data_source_id=${DATA_SOURCE_ID}`);
+  const listAfterDelete = await api<RagNoteListPayload>("GET", `/v1/rag/notes?data_source_id=${DATA_SOURCE_ID}`);
   assert.equal(listAfterDelete.status, 200);
   assert.equal(listAfterDelete.payload.items.length, 0);
 });

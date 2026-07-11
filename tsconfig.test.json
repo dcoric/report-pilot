@@ -18,12 +18,10 @@
     "app/test/federationHardeningApi.test.ts",
     "app/test/oidcLoginApi.test.ts",
     "app/test/promptPresetsApi.test.ts",
-    "app/test/ragNotesApi.test.ts",
     "app/test/savedQueriesApi.test.ts",
     "app/test/savedQueryFoldersApi.test.ts",
     "app/test/savedQuerySchedulesApi.test.ts",
     "app/test/scimApi.test.ts",
-    "app/test/securityHardeningApi.test.ts",
-    "app/test/userConfigApi.test.ts"
+    "app/test/securityHardeningApi.test.ts"
   ]
 }

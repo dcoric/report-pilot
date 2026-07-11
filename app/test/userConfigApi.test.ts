@@ -10,22 +10,42 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { UserConfig } from "../src/services/userConfigService";
+
+interface UserConfigPayload {
+  config: UserConfig;
+}
+
+interface ErrorPayload {
+  error?: string;
+  code?: string;
+  message?: string;
+}
+
+interface ApiResult<T> {
+  status: number;
+  payload: T;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
 let originalQuery: typeof appDb.query;
-let configs;       // user_id -> stored config object
-let dataSources;   // id -> row
+let configs: Map<string, UserConfig>;
+let dataSources: Set<string>;
 
-let analystCookie;
-let viewerCookie;
+let analystCookie: string;
+let viewerCookie: string;
 
 function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-async function call(method: string, path: string, { cookie, body }: { cookie?: string; body?: unknown } = {}) {
+async function call<T = ErrorPayload>(
+  method: string,
+  path: string,
+  { cookie, body }: { cookie?: string; body?: unknown } = {}
+): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -33,18 +53,18 @@ async function call(method: string, path: string, { cookie, body }: { cookie?: s
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try { payload = await response.json(); } catch { payload = null; }
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
 before(async () => {
   authStub = createAuthTestStub();
   originalQuery = appDb.query;
   configs = new Map();
-  dataSources = new Map();
+  dataSources = new Set();
 
   const analyst = authStub.seedUser({ email: "alice@example.com", roles: ["analyst"], password: "Hunter22ok!" });
   analystCookie = authStub.cookieFor(authStub.seedSession(analyst.id).token);
@@ -52,16 +72,16 @@ before(async () => {
   viewerCookie = authStub.cookieFor(authStub.seedSession(viewer.id).token);
 
   // Pre-seed a data source so the validation FK check has something to find.
-  dataSources.set("00000000-0000-4000-8000-d5d5d5d5d5d5", { id: "00000000-0000-4000-8000-d5d5d5d5d5d5" });
+  dataSources.add("00000000-0000-4000-8000-d5d5d5d5d5d5");
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const n = normalize(sql);
 
     if (n.startsWith("select config, updated_at from user_configs where user_id = $1")) {
-      const [userId] = params;
+      const userId = String(params[0]);
       const row = configs.get(userId);
       return row
         ? { rowCount: 1, rows: [{ config: row, updated_at: new Date().toISOString() }] }
@@ -69,13 +89,14 @@ before(async () => {
     }
 
     if (n.startsWith("insert into user_configs (user_id, config, updated_at)")) {
-      const [userId, configJson] = params;
-      configs.set(userId, JSON.parse(configJson));
+      const userId = String(params[0]);
+      const configJson = String(params[1]);
+      configs.set(userId, JSON.parse(configJson) as UserConfig);
       return { rowCount: 1, rows: [] };
     }
 
     if (n.startsWith("select id from data_sources where id = $1")) {
-      const [id] = params;
+      const id = String(params[0]);
       return dataSources.has(id)
         ? { rowCount: 1, rows: [{ id }] }
         : { rowCount: 0, rows: [] };
@@ -105,7 +126,7 @@ test("GET requires authentication", async () => {
 });
 
 test("GET returns baseline defaults when nothing is saved", async () => {
-  const result = await call("GET", "/v1/users/me/config", { cookie: analystCookie });
+  const result = await call<UserConfigPayload>("GET", "/v1/users/me/config", { cookie: analystCookie });
   assert.equal(result.status, 200);
   assert.equal(result.payload.config.theme, "system");
   assert.equal(result.payload.config.max_rows, 1000);
@@ -113,7 +134,7 @@ test("GET returns baseline defaults when nothing is saved", async () => {
 });
 
 test("PUT saves a config; subsequent GET returns it", async () => {
-  const put = await call("PUT", "/v1/users/me/config", {
+  const put = await call<UserConfigPayload>("PUT", "/v1/users/me/config", {
     cookie: analystCookie,
     body: {
       default_data_source_id: "00000000-0000-4000-8000-d5d5d5d5d5d5",
@@ -127,7 +148,7 @@ test("PUT saves a config; subsequent GET returns it", async () => {
   assert.equal(put.payload.config.theme, "dark");
   assert.equal(put.payload.config.max_rows, 500);
 
-  const get = await call("GET", "/v1/users/me/config", { cookie: analystCookie });
+  const get = await call<UserConfigPayload>("GET", "/v1/users/me/config", { cookie: analystCookie });
   assert.equal(get.status, 200);
   assert.equal(get.payload.config.default_data_source_id, "00000000-0000-4000-8000-d5d5d5d5d5d5");
   assert.equal(get.payload.config.theme, "dark");
@@ -162,11 +183,11 @@ test("PUT rejects unknown fields", async () => {
 
 test("viewer role can also read and write their own config", async () => {
   // The two new permissions are granted to admin / analyst / viewer alike.
-  const put = await call("PUT", "/v1/users/me/config", {
+  const put = await call<UserConfigPayload>("PUT", "/v1/users/me/config", {
     cookie: viewerCookie,
     body: { theme: "light" }
   });
   assert.equal(put.status, 200);
-  const get = await call("GET", "/v1/users/me/config", { cookie: viewerCookie });
+  const get = await call<UserConfigPayload>("GET", "/v1/users/me/config", { cookie: viewerCookie });
   assert.equal(get.payload.config.theme, "light");
 });
