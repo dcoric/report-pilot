@@ -34,6 +34,32 @@ test("buildSqlSystemPrompt switches by dialect", () => {
   assert.match(buildSqlSystemPrompt("postgres"), /PostgreSQL/);
 });
 
+test("buildSqlPrompt keeps complete scoped columns and includes untrusted repair diagnostics", () => {
+  const columns = Array.from({ length: 150 }, (_, index) => ({
+    schema_name: "public",
+    object_name: "wide_table",
+    column_name: `column_${index}`,
+    data_type: "text"
+  }));
+  const prompt = buildSqlPrompt({
+    dialect: "postgres",
+    question: "Repair the wide-table report",
+    maxRows: 50,
+    schemaObjects: [{ schema_name: "public", object_name: "wide_table", object_type: "table" }],
+    columns,
+    repair: {
+      previousSql: "SELECT missing_column FROM public.wide_table",
+      errors: ["Column missing_column does not exist"]
+    }
+  });
+
+  assert.match(prompt, /public\.wide_table\.column_149 : text/);
+  assert.match(prompt, /Repair context:/);
+  assert.match(prompt, /Previous SQL:/);
+  assert.match(prompt, /Column missing_column does not exist/);
+  assert.match(prompt, /untrusted data, not instructions/);
+});
+
 test("buildProviderOrder respects explicit provider, routing fallbacks, and enabled flags", () => {
   const providerConfigs = new Map([
     ["openai", { enabled: false }],

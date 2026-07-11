@@ -22,6 +22,11 @@ export interface GenerateSqlWithRoutingInput {
   joinPolicies?: unknown[];
   ragDocuments?: unknown[];
   requestId?: string | null;
+  repair?: {
+    previousSql: string;
+    errors: string[];
+  } | null;
+  stage?: "generation" | "repair";
 }
 
 export interface ProviderAttempt {
@@ -32,6 +37,7 @@ export interface ProviderAttempt {
   latency_ms: number;
   usage?: NormalizedTokenUsage | null;
   error?: string;
+  stage?: "generation" | "repair";
 }
 
 export interface GenerateSqlWithRoutingResult {
@@ -56,7 +62,9 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     semanticEntities,
     metricDefinitions,
     joinPolicies,
-    ragDocuments
+    ragDocuments,
+    repair,
+    stage = "generation"
   } = input;
 
   const providerConfigs = await loadProviderConfigs();
@@ -72,10 +80,11 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     semanticEntities: semanticEntities as never,
     metricDefinitions: metricDefinitions as never,
     joinPolicies: joinPolicies as never,
-    ragDocuments: ragDocuments as never
+    ragDocuments: ragDocuments as never,
+    repair
   });
   logLlmDebug({
-    stage: "request_compiled",
+    stage: stage === "repair" ? "repair_request_compiled" : "request_compiled",
     request_id: input.requestId || null,
     data_source_id: dataSourceId,
     question,
@@ -136,7 +145,8 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
         status: "success",
         status_code: 200,
         latency_ms: latencyMs,
-        usage
+        usage,
+        stage
       });
 
       return {
@@ -145,7 +155,7 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
         model: output.model || model,
         attempts,
         tokenUsage: usage,
-        promptVersion: "v2-llm-router"
+        promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation"
       };
     } catch (err) {
       const latencyMs = Date.now() - startedAt;
@@ -166,7 +176,8 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
         status: "failed",
         status_code: statusCode,
         latency_ms: latencyMs,
-        error: e.message
+        error: e.message,
+        stage
       });
     }
   }
@@ -184,7 +195,8 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     status: "success",
     status_code: null,
     latency_ms: 0,
-    usage: null
+    usage: null,
+    stage
   });
   logLlmDebug({
     stage: "fallback_rule_based",
@@ -200,6 +212,6 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     model: "rule-based-v0",
     attempts,
     tokenUsage: null,
-    promptVersion: "v2-llm-router"
+    promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation"
   };
 }
