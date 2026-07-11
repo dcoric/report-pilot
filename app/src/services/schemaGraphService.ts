@@ -273,6 +273,51 @@ export async function loadExpandedSchemaContext(
   return { graph, expansion, context };
 }
 
+export async function loadResolvedSchemaContext(
+  dataSourceId: string,
+  expanded: ExpandedSchemaContext,
+  selectedPath: SchemaPath
+): Promise<ExpandedSchemaContext> {
+  const selectedSignature = pathSignature(selectedPath);
+  const remainingAmbiguities = expanded.expansion.ambiguities.filter((ambiguity) =>
+    !ambiguity.alternatives.some((path) => pathSignature(path) === selectedSignature)
+  );
+  const edges = new Map(expanded.expansion.edges.map((edge) => [edge.id, edge]));
+  for (const edge of selectedPath.edges) edges.set(edge.id, edge);
+  const objectIds = unique([...expanded.expansion.object_ids, ...selectedPath.object_ids]);
+  const coreSet = new Set(expanded.expansion.core_object_ids);
+  const expansion: SchemaExpansion = {
+    ...expanded.expansion,
+    status: remainingAmbiguities.length > 0
+      ? "ambiguous"
+      : expanded.expansion.unresolved_object_ids.length > 0 ? "disconnected" : "complete",
+    object_ids: objectIds,
+    connector_object_ids: objectIds.filter((id) => !coreSet.has(id)),
+    edges: [...edges.values()].sort(compareEdges),
+    paths: [...expanded.expansion.paths, selectedPath],
+    ambiguities: remainingAmbiguities
+  };
+  if (expansion.status !== "complete") {
+    return { graph: expanded.graph, expansion, context: null };
+  }
+
+  const scopedContext = await loadScopedQueryContext(dataSourceId, expansion.object_ids);
+  return {
+    graph: expanded.graph,
+    expansion,
+    context: {
+      ...scopedContext,
+      joinPolicies: expansion.edges.map((edge) => ({
+        id: edge.id,
+        left_ref: edge.left_ref,
+        right_ref: edge.right_ref,
+        join_type: edge.join_type,
+        on_clause: edge.on_clause
+      }))
+    }
+  };
+}
+
 function findBestPaths(
   adjacency: Map<string, SchemaGraphEdge[]>,
   sourceIds: Set<string>,

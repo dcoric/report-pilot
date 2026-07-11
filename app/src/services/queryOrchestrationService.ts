@@ -27,6 +27,10 @@ import {
   emitQueryDiagnostic,
   type QueryDiagnosticInput
 } from "./queryDiagnosticsService";
+import {
+  recordPendingClarification,
+  resolvePendingClarification
+} from "./queryClarificationStore";
 
 const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
 const { retrieveRagContext } = ragRetrieval;
@@ -44,6 +48,7 @@ export interface OrchestrateInput {
   maxRows: number;
   timeoutMs?: number;
   noExecute?: boolean;
+  clarificationOptionId?: string | null;
 }
 
 export interface OrchestrateResult<T = unknown> {
@@ -57,13 +62,17 @@ export interface QueryOrchestrationDependencies {
   generateSqlWithRouting: typeof generateSqlWithRouting;
   createDatabaseAdapter: typeof createDatabaseAdapter;
   emitQueryDiagnostic: typeof emitQueryDiagnostic;
+  recordPendingClarification: typeof recordPendingClarification;
+  resolvePendingClarification: typeof resolvePendingClarification;
 }
 
 const defaultDependencies: QueryOrchestrationDependencies = {
   prepareQueryGenerationContext,
   generateSqlWithRouting,
   createDatabaseAdapter,
-  emitQueryDiagnostic
+  emitQueryDiagnostic,
+  recordPendingClarification,
+  resolvePendingClarification
 };
 
 function success<T>(body: T, statusCode = 200): OrchestrateResult<T> {
@@ -163,11 +172,18 @@ export async function orchestrateQueryRun({
   sqlOverride,
   maxRows,
   timeoutMs,
-  noExecute
+  noExecute,
+  clarificationOptionId
 }: OrchestrateInput, dependencies: QueryOrchestrationDependencies = defaultDependencies): Promise<OrchestrateResult> {
   const providerIsValid = await validateRequestedProvider(requestedProvider);
   if (!providerIsValid) {
     return failure(400, { error: "bad_request", message: "Unsupported llm_provider" });
+  }
+  if (sqlOverride && clarificationOptionId) {
+    return failure(400, {
+      error: "bad_request",
+      message: "sql_override and clarification_option_id cannot be used together"
+    });
   }
 
   const session = await resolveSession({
@@ -254,7 +270,8 @@ export async function orchestrateQueryRun({
         question: session.question,
         requestedProvider,
         requestedModel,
-        requestId
+        requestId,
+        clarificationOptionId
       });
     } catch (err) {
       schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
@@ -268,7 +285,11 @@ export async function orchestrateQueryRun({
     schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
     schemaLinking = prepared.diagnostics;
     if (prepared.ok === false) {
-      await markSessionStatus(sessionId, "failed");
+      if (prepared.clarification) {
+        await dependencies.recordPendingClarification(sessionId, prepared.clarification);
+      } else {
+        await markSessionStatus(sessionId, "failed");
+      }
       emitTerminalDiagnostic("failed", "schema_linking", prepared.code);
       return failure(422, {
         error: prepared.code,
@@ -276,6 +297,16 @@ export async function orchestrateQueryRun({
         clarification: prepared.clarification,
         schema_linking: prepared.diagnostics
       });
+    }
+    if (clarificationOptionId) {
+      const resolved = await dependencies.resolvePendingClarification(sessionId, clarificationOptionId);
+      if (!resolved) {
+        emitTerminalDiagnostic("failed", "schema_linking", "clarification_not_pending");
+        return failure(409, {
+          error: "clarification_not_pending",
+          message: "This query session does not have a pending clarification"
+        });
+      }
     }
     context = prepared.context;
     ragDocuments = prepared.ragDocuments;

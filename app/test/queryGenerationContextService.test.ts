@@ -81,12 +81,15 @@ test("prepareQueryGenerationContext fails before the linker when no candidates m
 });
 
 test("prepareQueryGenerationContext surfaces graph ambiguity instead of generating", async () => {
-  const dependencies = baseDependencies([card(PAYMENT, "payment", ["Revenue"])], []);
+  const dependencies = baseDependencies([
+    card(PAYMENT, "payment", ["Revenue"]),
+    card(CUSTOMER, "customer")
+  ], []);
   dependencies.loadExpandedSchemaContext = async () => ({
     graph: { nodes: [], edges: [] },
     expansion: {
       status: "ambiguous",
-      core_object_ids: [PAYMENT],
+      core_object_ids: [PAYMENT, CUSTOMER],
       object_ids: [PAYMENT],
       connector_object_ids: [],
       edges: [],
@@ -112,6 +115,48 @@ test("prepareQueryGenerationContext surfaces graph ambiguity instead of generati
   if (result.ok === false) {
     assert.equal(result.code, "schema_linking_ambiguous");
     assert.equal(result.clarification?.kind, "join_path");
+    assert.equal(result.clarification?.options.length, 2);
+    const resumed = await prepareQueryGenerationContext({
+      dataSourceId: "source",
+      question: "Revenue",
+      clarificationOptionId: result.clarification!.options[0].id
+    }, dependencies);
+    assert.equal(resumed.ok, true);
+  }
+});
+
+test("prepareQueryGenerationContext rejects stale clarification option IDs", async () => {
+  const dependencies = baseDependencies([
+    card(PAYMENT, "payment", ["Revenue"]),
+    card(CUSTOMER, "customer")
+  ], []);
+  dependencies.loadExpandedSchemaContext = async () => ({
+    graph: { nodes: [], edges: [] },
+    expansion: {
+      status: "ambiguous",
+      core_object_ids: [PAYMENT, CUSTOMER],
+      object_ids: [PAYMENT],
+      connector_object_ids: [],
+      edges: [],
+      paths: [],
+      ambiguities: [{
+        target_object_id: CUSTOMER,
+        alternatives: [ambiguityPath("edge-a"), ambiguityPath("edge-b")]
+      }],
+      unresolved_object_ids: []
+    },
+    context: null
+  });
+
+  const result = await prepareQueryGenerationContext({
+    dataSourceId: "source",
+    question: "Revenue",
+    clarificationOptionId: "join_path_000000000000"
+  }, dependencies);
+
+  assert.equal(result.ok, false);
+  if (result.ok === false) {
+    assert.equal(result.code, "clarification_option_invalid");
     assert.equal(result.clarification?.options.length, 2);
   }
 });
@@ -156,7 +201,38 @@ function baseDependencies(cards: TableCard[], docs: RagRetrievalDoc[]): Generati
         joinPolicies: [],
         ragNotes: []
       }
-    })
+    }),
+    loadResolvedSchemaContext: async (_dataSourceId, expanded, selectedPath) => {
+      const objectIds = [...new Set([...expanded.expansion.object_ids, ...selectedPath.object_ids])];
+      return {
+        graph: expanded.graph,
+        expansion: {
+          ...expanded.expansion,
+          status: "complete" as const,
+          object_ids: objectIds,
+          connector_object_ids: objectIds.filter((id) => !expanded.expansion.core_object_ids.includes(id)),
+          edges: selectedPath.edges,
+          paths: [selectedPath],
+          ambiguities: []
+        },
+        context: {
+          schemaObjects: cards
+            .filter((item) => objectIds.includes(item.id))
+            .map((item) => ({ id: item.id, schema_name: item.schema_name, object_name: item.object_name, object_type: item.object_type })),
+          columns: [{ schema_name: "public", object_name: "payment", column_name: "amount", data_type: "numeric" }],
+          semanticEntities: [],
+          metricDefinitions: [],
+          joinPolicies: selectedPath.edges.map((edge) => ({
+            id: edge.id,
+            left_ref: edge.left_ref,
+            right_ref: edge.right_ref,
+            join_type: edge.join_type,
+            on_clause: edge.on_clause
+          })),
+          ragNotes: []
+        }
+      };
+    }
   };
 }
 

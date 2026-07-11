@@ -1530,6 +1530,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QueryClarificationRequiredResponse"
+        "409":
+          description: The clarification is no longer pending for this session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum: [clarification_not_pending]
+                  message:
+                    type: string
+                required: [error, message]
   /v1/query/sessions/{sessionId}/feedback:
     post:
       tags: [Query]
@@ -3587,6 +3600,10 @@ components:
         no_execute:
           type: boolean
           description: When true, generate and validate SQL without connecting to or executing against the source database.
+        clarification_option_id:
+          type: string
+          pattern: '^join_path_[a-f0-9]{12}$'
+          description: Opaque option ID returned by a prior 422 clarification response for this session.
         max_rows:
           type: integer
           minimum: 1
@@ -3658,7 +3675,7 @@ components:
       properties:
         error:
           type: string
-          enum: [schema_linking_ambiguous]
+          enum: [schema_linking_ambiguous, clarification_option_invalid]
         message:
           type: string
         clarification:

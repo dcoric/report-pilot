@@ -8,6 +8,7 @@ import {
 import { linkTablesWithRouting, type LinkTablesResult } from "./llmSchemaLinkerService";
 import {
   loadExpandedSchemaContext,
+  loadResolvedSchemaContext,
   type ExpandedSchemaContext,
   type SchemaExpansion
 } from "./schemaGraphService";
@@ -16,6 +17,7 @@ import type { RagRetrievalDoc } from "./ragRetrieval";
 import { rankValidatedExamples } from "./exampleRankingService";
 import {
   buildJoinPathClarification,
+  findJoinPathByOptionId,
   type QueryClarification
 } from "./queryClarificationService";
 
@@ -29,6 +31,7 @@ export interface PrepareGenerationContextInput {
   requestId?: string | null;
   candidateLimit?: number;
   finalRagLimit?: number;
+  clarificationOptionId?: string | null;
 }
 
 export interface SchemaLinkingDiagnostics {
@@ -53,7 +56,7 @@ export type PrepareGenerationContextResult =
   }
   | {
     ok: false;
-    code: "no_schema_candidates" | "schema_linking_ambiguous" | "schema_linking_disconnected";
+    code: "no_schema_candidates" | "schema_linking_ambiguous" | "schema_linking_disconnected" | "clarification_option_invalid";
     message: string;
     clarification: QueryClarification | null;
     diagnostics: SchemaLinkingDiagnostics;
@@ -64,13 +67,15 @@ export interface GenerationContextDependencies {
   retrieveRagContext: typeof retrieveRagContext;
   linkTablesWithRouting: typeof linkTablesWithRouting;
   loadExpandedSchemaContext: typeof loadExpandedSchemaContext;
+  loadResolvedSchemaContext: typeof loadResolvedSchemaContext;
 }
 
 const defaultDependencies: GenerationContextDependencies = {
   loadTableCards,
   retrieveRagContext,
   linkTablesWithRouting,
-  loadExpandedSchemaContext
+  loadExpandedSchemaContext,
+  loadResolvedSchemaContext
 };
 
 export async function prepareQueryGenerationContext(
@@ -111,12 +116,27 @@ export async function prepareQueryGenerationContext(
   });
   diagnostics.linker = linker;
 
-  const expanded = await dependencies.loadExpandedSchemaContext(
+  let expanded = await dependencies.loadExpandedSchemaContext(
     input.dataSourceId,
     linker.selection.table_ids,
     { maxIntermediateHops: 2, maxAlternativePaths: 4 }
   );
   diagnostics.expansion = expanded.expansion;
+
+  if (expanded.expansion.status === "ambiguous" && input.clarificationOptionId) {
+    const selectedPath = findJoinPathByOptionId(expanded.expansion, input.clarificationOptionId);
+    if (!selectedPath) {
+      return {
+        ok: false,
+        code: "clarification_option_invalid",
+        message: "The selected clarification option is no longer valid",
+        clarification: buildJoinPathClarification(expanded.expansion),
+        diagnostics
+      };
+    }
+    expanded = await dependencies.loadResolvedSchemaContext(input.dataSourceId, expanded, selectedPath);
+    diagnostics.expansion = expanded.expansion;
+  }
 
   if (expanded.expansion.status !== "complete" || !expanded.context) {
     const ambiguous = expanded.expansion.status === "ambiguous";
