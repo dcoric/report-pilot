@@ -63,3 +63,11 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: End-to-end smoke test
+        run: npm run test:e2e
+        working-directory: frontend
