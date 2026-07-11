@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { editor } from 'monaco-editor';
 import type { OnMount } from '@monaco-editor/react';
-import { Calendar, Loader2, Play, Save, Share2, Timer } from 'lucide-react';
+import { Calendar, Database, Loader2, Play, Save, Share2, Timer } from 'lucide-react';
 import { format as formatSql } from 'sql-formatter';
 import { toast } from 'sonner';
 import { InspectorPanel } from '../components/Query/InspectorPanel';
@@ -12,6 +12,7 @@ import { ResultSection } from '../components/Query/ResultSection';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
 import { SavedQueryParamsPanel, type ParamValues } from '../components/Query/SavedQueryParamsPanel';
 import { SqlSection } from '../components/Query/SqlSection';
+import { AsyncErrorState } from '../components/Layout/AsyncErrorState';
 import type {
     LlmProvider,
     PromptHistoryItem,
@@ -74,7 +75,14 @@ function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {
 
 export const QueryWorkspace = () => {
     const [searchParams, setSearchParams] = useSearchParams();
-    const { dataSources, selectedDataSourceId, setSelectedDataSourceId } = useDataSource();
+    const {
+        dataSources,
+        selectedDataSourceId,
+        setSelectedDataSourceId,
+        isLoadingDataSources,
+        dataSourceLoadError,
+        refreshDataSources,
+    } = useDataSource();
     const { savedQueries, createSavedQuery, updateSavedQuery } = useSavedQueries();
     const { setActions } = useWorkspaceActions();
 
@@ -597,6 +605,42 @@ export const QueryWorkspace = () => {
     };
 
     const lastDuration = queryResult && !queryResult.preview ? `${queryResult.duration_ms}ms` : '—';
+
+    if (isLoadingDataSources && dataSources.length === 0) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center text-slate-500" role="status">
+                <Loader2 size={28} className="mb-3 animate-spin text-oxblood" aria-hidden="true" />
+                <p>Loading database connections…</p>
+            </div>
+        );
+    }
+
+    if (dataSourceLoadError && dataSources.length === 0) {
+        return (
+            <div className="h-full overflow-y-auto bg-surface-container-low p-6">
+                <div className="rounded-lg border border-outline-variant bg-white shadow-sm">
+                    <AsyncErrorState
+                        title="Database connections are unavailable"
+                        message={dataSourceLoadError}
+                        onRetry={() => void refreshDataSources()}
+                        isRetrying={isLoadingDataSources}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    if (dataSources.length === 0) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center text-slate-500">
+                <Database size={44} className="mb-4 text-slate-300" aria-hidden="true" />
+                <p className="text-lg font-medium text-slate-900">No database connections available</p>
+                <p className="mt-1 max-w-md text-sm">
+                    Add a data source or ask an administrator to grant access before creating a query.
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-full overflow-hidden">
