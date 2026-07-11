@@ -79,7 +79,7 @@ test("validateConfig accepts null for nullable fields", () => {
 });
 
 test("validateConfig caps table_preferences serialized size", () => {
-  const big = {};
+  const big: Record<string, string> = {};
   for (let i = 0; i < 5000; i += 1) big[`key${i}`] = "value".repeat(10);
   const res = userConfigService.validateConfig({ table_preferences: big });
   assert.equal(res.ok, false);
