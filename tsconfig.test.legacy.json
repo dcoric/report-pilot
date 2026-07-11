@@ -10,7 +10,6 @@
     "noUnusedParameters": false
   },
   "include": [
-    "app/test/savedQueryFoldersApi.test.ts",
     "app/test/savedQuerySchedulesApi.test.ts",
     "app/src/types/**/*.d.ts"
   ],
