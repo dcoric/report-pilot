@@ -21,19 +21,42 @@ process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@l
 import appDb = require("../src/lib/appDb");
 import externalLoginService = require("../src/services/externalLoginService");
 import oidcStateService = require("../src/services/oidcStateService");
+import type { PoolClient } from "pg";
+import type { ProviderRow } from "../src/services/authProviderService";
+import type { AuthUserRow } from "../src/services/authService";
+import type { LinkedIdentity } from "../src/services/linkedIdentityService";
+
+interface AuditRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+interface UsedStateRow {
+  state_hash: string;
+  provider_id: string;
+  expires_at: Date | string;
+}
 
 let originalQuery: typeof appDb.query;
 let originalWithTransaction: typeof appDb.withTransaction;
 
-let providers;
-let users;
-let linkedIdentities;
-let auditRows;
-let usedStates;
-let providerCounter;
-let userCounter;
-let identityCounter;
-let auditCounter;
+let providers: Map<string, ProviderRow>;
+let users: Map<string, AuthUserRow>;
+let linkedIdentities: Map<string, LinkedIdentity>;
+let auditRows: AuditRow[];
+let usedStates: Map<string, UsedStateRow>;
+let providerCounter: number;
+let userCounter: number;
+let identityCounter: number;
+let auditCounter: number;
 
 function uuid(prefix: string, counter: number) {
   return `00000000-0000-4000-8000-${prefix}${String(counter).padStart(8, "0")}`;
@@ -47,24 +70,24 @@ function nextProviderId(): string { providerCounter += 1; return uuid("eeee", pr
 function nextUserId(): string { userCounter += 1; return uuid("aaab", userCounter); }
 function nextIdentityId(): string { identityCounter += 1; return uuid("ffff", identityCounter); }
 
-function seedProvider(overrides: Record<string, unknown> = {}) {
-  const row = {
-    id: overrides.id || nextProviderId(),
+function seedProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
+  const row: ProviderRow = {
+    id: overrides.id ?? nextProviderId(),
     type: "oidc",
-    name: overrides.name || "okta",
-    display_name: overrides.display_name || "Okta",
-    issuer: overrides.issuer || "https://okta.example.com",
+    name: overrides.name ?? "okta",
+    display_name: overrides.display_name ?? "Okta",
+    issuer: overrides.issuer ?? "https://okta.example.com",
     client_id: "test-client",
     client_secret: null,
     scopes: ["openid", "email", "profile"],
     redirect_uri: "http://localhost/cb",
     claims_mapping: {},
     enabled: true,
-    auto_link_by_email: overrides.auto_link_by_email !== undefined ? overrides.auto_link_by_email : true,
-    jit_enabled: overrides.jit_enabled === true,
-    jit_default_role: overrides.jit_default_role || "viewer",
-    jit_allowed_domains: overrides.jit_allowed_domains || [],
-    require_email_verified: overrides.require_email_verified !== undefined ? overrides.require_email_verified : true,
+    auto_link_by_email: overrides.auto_link_by_email ?? true,
+    jit_enabled: overrides.jit_enabled ?? false,
+    jit_default_role: overrides.jit_default_role ?? "viewer",
+    jit_allowed_domains: overrides.jit_allowed_domains ?? [],
+    require_email_verified: overrides.require_email_verified ?? true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -85,34 +108,36 @@ before(() => {
   identityCounter = 0;
   auditCounter = 0;
 
-  appDb.withTransaction = (async (handler) => {
-    const txClient = { query: async (sql, params) => appDb.query(sql, params) };
-    return handler(txClient);
-  }) as unknown as typeof appDb.withTransaction;
+  const txClient = {
+    query: (sql: string, params: unknown[] = []) => appDb.query(sql, params)
+  } as unknown as PoolClient;
+  appDb.withTransaction = (async <T>(handler: (client: PoolClient) => Promise<T>): Promise<T> => (
+    handler(txClient)
+  )) as typeof appDb.withTransaction;
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const n = normalize(sql);
 
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const [emailLower] = params as [string];
       const row = [...users.values()].find((u) => u.email.toLowerCase() === emailLower);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = users.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
     if (n.startsWith("select id, user_id, provider_id, subject, email_at_link, created_at, last_seen_at from linked_identities where provider_id = $1 and subject = $2")) {
-      const [providerId, subject] = params;
+      const [providerId, subject] = params as [string, string];
       const row = [...linkedIdentities.values()].find(
         (li) => li.provider_id === providerId && li.subject === subject
       );
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
     if (n.startsWith("insert into linked_identities")) {
-      const [userId, providerId, subject, emailAtLink] = params;
-      const row = {
+      const [userId, providerId, subject, emailAtLink] = params as [string, string, string, string | null];
+      const row: LinkedIdentity = {
         id: nextIdentityId(),
         user_id: userId, provider_id: providerId, subject, email_at_link: emailAtLink || null,
         created_at: new Date().toISOString(), last_seen_at: new Date().toISOString()
@@ -121,9 +146,9 @@ before(() => {
       return { rowCount: 1, rows: [row] };
     }
     if (n.startsWith("insert into users")) {
-      const [email] = params;
-      const row = {
-        id: nextUserId(), email, password_hash: null, display_name: params[2] || null,
+      const [email, , displayName] = params as [string, null, string | null];
+      const row: AuthUserRow = {
+        id: nextUserId(), email, password_hash: null, display_name: displayName,
         is_active: true, last_login_at: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString()
       };
@@ -131,20 +156,29 @@ before(() => {
       return { rowCount: 1, rows: [row] };
     }
     if (n.startsWith("select id, name from roles where lower(name) = any($1::text[])")) {
-      const [names] = params;
-      return { rowCount: (names || []).length, rows: (names || []).map((name, idx) => ({ id: uuid("ccc1", idx + 1), name })) };
+      const [names] = params as [string[]];
+      return { rowCount: names.length, rows: names.map((name, idx) => ({ id: uuid("ccc1", idx + 1), name })) };
     }
     if (n.startsWith("insert into user_roles")) {
       return { rowCount: 1, rows: [{ role_id: params[1], user_id: params[0] }] };
     }
     if (n.startsWith("insert into auth_audit_log")) {
       auditCounter += 1;
-      const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params;
+      const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params as [
+        string | null,
+        string | null,
+        string | null,
+        string,
+        string | null,
+        string,
+        string | null,
+        string | null
+      ];
       auditRows.push({
         id: uuid("dddd", auditCounter),
         actor_user_id: actorUserId, actor_email: actorEmail,
         target_user_id: targetUserId, action, outcome,
-        details: JSON.parse(detailsJson),
+        details: JSON.parse(detailsJson) as Record<string, unknown>,
         ip_address: ipAddress, user_agent: userAgent,
         created_at: new Date().toISOString()
       });
@@ -152,7 +186,7 @@ before(() => {
     }
     // oidcStateService.recordUsedState
     if (n.startsWith("insert into oidc_used_states")) {
-      const [hash, providerId, expiresAt] = params;
+      const [hash, providerId, expiresAt] = params as [string, string, Date | string];
       if (usedStates.has(hash)) {
         const err = Object.assign(new Error("dup state"), { code: "23505" }); throw err;
       }
@@ -194,7 +228,7 @@ test("auto-link by email is refused when email_verified is explicitly false", as
   });
 
   const result = await externalLoginService.resolveExternalLogin(
-    provider as unknown as Parameters<typeof externalLoginService.resolveExternalLogin>[0],
+    provider,
     {
       email: "alice@example.com",
       sub: "sub-1",
@@ -219,7 +253,7 @@ test("auto-link by email proceeds when email_verified is true", async () => {
   });
 
   const result = await externalLoginService.resolveExternalLogin(
-    provider as unknown as Parameters<typeof externalLoginService.resolveExternalLogin>[0],
+    provider,
     {
       email: "alice@example.com",
       sub: "sub-2",
@@ -234,7 +268,7 @@ test("auto-link by email proceeds when email_verified is true", async () => {
 test("JIT is refused when email_verified is explicitly false", async () => {
   const provider = seedProvider({ jit_enabled: true });
   const result = await externalLoginService.resolveExternalLogin(
-    provider as unknown as Parameters<typeof externalLoginService.resolveExternalLogin>[0],
+    provider,
     {
       email: "new@example.com",
       sub: "sub-3",
@@ -256,7 +290,7 @@ test("turning require_email_verified off lets unverified emails through (ops opt
     created_at: new Date().toISOString(), updated_at: new Date().toISOString()
   });
   const result = await externalLoginService.resolveExternalLogin(
-    provider as unknown as Parameters<typeof externalLoginService.resolveExternalLogin>[0],
+    provider,
     { email: "alice@example.com", sub: "sub-x", claims: { email_verified: false } },
     {}
   );
