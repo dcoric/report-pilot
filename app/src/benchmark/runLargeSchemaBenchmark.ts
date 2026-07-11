@@ -3,10 +3,13 @@ async function main(): Promise<void> {
   // are not called here, but appDb still validates this environment variable at
   // module load. Use an inert value so the standalone benchmark needs no DB.
   process.env.DATABASE_URL ||= "postgresql://benchmark:benchmark@127.0.0.1:1/unused";
-  const { runLargeSchemaBenchmark } = await import("./largeSchemaBenchmark");
+  const { formatLargeSchemaGateFailures, runLargeSchemaBenchmark } = await import("./largeSchemaBenchmark");
   const result = await runLargeSchemaBenchmark();
   console.log(JSON.stringify(result, null, 2));
   if (!result.release_gates.all_passed) {
+    for (const failure of formatLargeSchemaGateFailures(result)) {
+      console.error(`[large-schema-gate] ${failure}`);
+    }
     process.exitCode = 2;
   }
 }

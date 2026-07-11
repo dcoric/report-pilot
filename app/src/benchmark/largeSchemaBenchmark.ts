@@ -55,6 +55,21 @@ export interface LargeSchemaCaseResult {
   };
 }
 
+export interface LargeSchemaGateDiagnostic {
+  id: string;
+  stage: "schema_linking" | "prompt_construction";
+  metric: string;
+  actual: number;
+  comparator: ">=" | ">" | "<" | "=";
+  target: number;
+  passed: boolean;
+}
+
+export const LARGE_SCHEMA_THRESHOLDS = {
+  table_recall_at_15: 0.95,
+  join_path_accuracy: 1
+} as const;
+
 export interface LargeSchemaBenchmarkResult {
   version: string;
   schema: {
@@ -85,6 +100,7 @@ export interface LargeSchemaBenchmarkResult {
     prompt_chars_below_legacy: boolean;
     all_passed: boolean;
   };
+  gate_diagnostics: LargeSchemaGateDiagnostic[];
   cases: LargeSchemaCaseResult[];
 }
 
@@ -181,11 +197,49 @@ export async function runLargeSchemaBenchmark(
     .filter((value): value is number => Number.isFinite(value));
   const hierarchicalPromptChars = average(hierarchicalPromptValues);
   const gates = {
-    table_recall_at_15_ge_95pct: hierarchicalRecall >= 0.95,
-    join_path_accuracy_eq_100pct: hierarchicalJoinAccuracy === 1,
+    table_recall_at_15_ge_95pct: hierarchicalRecall >= LARGE_SCHEMA_THRESHOLDS.table_recall_at_15,
+    join_path_accuracy_eq_100pct: hierarchicalJoinAccuracy === LARGE_SCHEMA_THRESHOLDS.join_path_accuracy,
     improves_table_recall_over_legacy: hierarchicalRecall > legacyRecall,
     prompt_chars_below_legacy: hierarchicalPromptChars < legacyPromptChars
   };
+  const gateDiagnostics: LargeSchemaGateDiagnostic[] = [
+    {
+      id: "table_recall_at_15_ge_95pct",
+      stage: "schema_linking",
+      metric: "table_recall_at_15",
+      actual: round4(hierarchicalRecall),
+      comparator: ">=",
+      target: LARGE_SCHEMA_THRESHOLDS.table_recall_at_15,
+      passed: gates.table_recall_at_15_ge_95pct
+    },
+    {
+      id: "join_path_accuracy_eq_100pct",
+      stage: "schema_linking",
+      metric: "join_path_accuracy",
+      actual: round4(hierarchicalJoinAccuracy),
+      comparator: "=",
+      target: LARGE_SCHEMA_THRESHOLDS.join_path_accuracy,
+      passed: gates.join_path_accuracy_eq_100pct
+    },
+    {
+      id: "improves_table_recall_over_legacy",
+      stage: "schema_linking",
+      metric: "table_recall_at_15",
+      actual: round4(hierarchicalRecall),
+      comparator: ">",
+      target: round4(legacyRecall),
+      passed: gates.improves_table_recall_over_legacy
+    },
+    {
+      id: "prompt_chars_below_legacy",
+      stage: "prompt_construction",
+      metric: "average_prompt_chars",
+      actual: Math.round(hierarchicalPromptChars),
+      comparator: "<",
+      target: Math.round(legacyPromptChars),
+      passed: gates.prompt_chars_below_legacy
+    }
+  ];
 
   return {
     version: fixture.version,
@@ -214,8 +268,17 @@ export async function runLargeSchemaBenchmark(
       ...gates,
       all_passed: Object.values(gates).every(Boolean)
     },
+    gate_diagnostics: gateDiagnostics,
     cases: results
   };
+}
+
+export function formatLargeSchemaGateFailures(result: LargeSchemaBenchmarkResult): string[] {
+  return result.gate_diagnostics
+    .filter((gate) => !gate.passed)
+    .map((gate) => (
+      `${gate.stage}.${gate.metric} failed: actual ${gate.actual} must be ${gate.comparator} ${gate.target}`
+    ));
 }
 
 async function readFixture(filePath: string): Promise<LargeSchemaFixtureDefinition> {

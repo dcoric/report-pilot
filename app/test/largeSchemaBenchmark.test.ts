@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test";
 
-import { runLargeSchemaBenchmark } from "../src/benchmark/largeSchemaBenchmark";
+import {
+  formatLargeSchemaGateFailures,
+  runLargeSchemaBenchmark
+} from "../src/benchmark/largeSchemaBenchmark";
 
 test("large-schema benchmark compares legacy caps with hierarchical linking", async () => {
   const result = await runLargeSchemaBenchmark();
@@ -18,4 +21,21 @@ test("large-schema benchmark compares legacy caps with hierarchical linking", as
   assert.equal(result.cases.find((item) => item.id === "ls003")?.hierarchical.expansion_status, "complete");
   assert.equal(result.cases.find((item) => item.id === "ls005")?.hierarchical.expansion_status, "ambiguous");
   assert.equal(result.release_gates.all_passed, true);
+  assert.equal(result.gate_diagnostics.length, 4);
+  assert.equal(result.gate_diagnostics.every((gate) => gate.passed), true);
+  assert.deepEqual(formatLargeSchemaGateFailures(result), []);
+});
+
+test("large-schema gate failures identify the pipeline stage and metric", async () => {
+  const result = await runLargeSchemaBenchmark();
+  const regressed = {
+    ...result,
+    gate_diagnostics: result.gate_diagnostics.map((gate, index) => (
+      index === 0 ? { ...gate, actual: 0.8, passed: false } : gate
+    ))
+  };
+
+  assert.deepEqual(formatLargeSchemaGateFailures(regressed), [
+    "schema_linking.table_recall_at_15 failed: actual 0.8 must be >= 0.95"
+  ]);
 });
