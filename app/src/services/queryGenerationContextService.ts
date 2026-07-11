@@ -14,6 +14,10 @@ import {
 import type { QueryContext } from "./queryOrchestrationStore";
 import type { RagRetrievalDoc } from "./ragRetrieval";
 import { rankValidatedExamples } from "./exampleRankingService";
+import {
+  buildJoinPathClarification,
+  type QueryClarification
+} from "./queryClarificationService";
 
 const { retrieveRagContext } = ragRetrieval;
 
@@ -51,6 +55,7 @@ export type PrepareGenerationContextResult =
     ok: false;
     code: "no_schema_candidates" | "schema_linking_ambiguous" | "schema_linking_disconnected";
     message: string;
+    clarification: QueryClarification | null;
     diagnostics: SchemaLinkingDiagnostics;
   };
 
@@ -91,6 +96,7 @@ export async function prepareQueryGenerationContext(
       ok: false,
       code: "no_schema_candidates",
       message: "No relevant schema objects were found for the question",
+      clarification: null,
       diagnostics
     };
   }
@@ -118,8 +124,9 @@ export async function prepareQueryGenerationContext(
       ok: false,
       code: ambiguous ? "schema_linking_ambiguous" : "schema_linking_disconnected",
       message: ambiguous
-        ? "Multiple equally valid join paths were found; refine the question or approve a join policy"
+        ? "Multiple equally valid join paths were found"
         : "The selected schema objects could not be connected within the configured join-path limit",
+      clarification: ambiguous ? buildJoinPathClarification(expanded.expansion) : null,
       diagnostics
     };
   }

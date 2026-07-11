@@ -3146,6 +3146,15 @@ export interface paths {
                         "application/json": components["schemas"]["RunSessionResponse"];
                     };
                 };
+                /** @description Query intent requires clarification before generation can continue */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["QueryClarificationRequiredResponse"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -5091,6 +5100,25 @@ export interface components {
             /** @description True when the request was handled as a dry-run and no query was executed. */
             preview: boolean;
             diagnostics: components["schemas"]["QueryGenerationDiagnostics"];
+        };
+        QueryClarificationOption: {
+            /** @description Stable opaque identifier for this interpretation. */
+            id: string;
+            label: string;
+            description: string;
+            table_refs: string[];
+        };
+        QueryClarification: {
+            /** @enum {string} */
+            kind: "join_path";
+            message: string;
+            options: components["schemas"]["QueryClarificationOption"][];
+        };
+        QueryClarificationRequiredResponse: {
+            /** @enum {string} */
+            error: "schema_linking_ambiguous";
+            message: string;
+            clarification: components["schemas"]["QueryClarification"];
         };
         /** @description Compact generation metadata for debugging and benchmark measurement. Prompt contents are never included. */
         QueryGenerationDiagnostics: {

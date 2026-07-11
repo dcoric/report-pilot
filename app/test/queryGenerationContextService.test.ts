@@ -91,7 +91,13 @@ test("prepareQueryGenerationContext surfaces graph ambiguity instead of generati
       connector_object_ids: [],
       edges: [],
       paths: [],
-      ambiguities: [{ target_object_id: CUSTOMER, alternatives: [] }],
+      ambiguities: [{
+        target_object_id: CUSTOMER,
+        alternatives: [
+          ambiguityPath("edge-a"),
+          ambiguityPath("edge-b")
+        ]
+      }],
       unresolved_object_ids: []
     },
     context: null
@@ -105,6 +111,8 @@ test("prepareQueryGenerationContext surfaces graph ambiguity instead of generati
   assert.equal(result.ok, false);
   if (result.ok === false) {
     assert.equal(result.code, "schema_linking_ambiguous");
+    assert.equal(result.clarification?.kind, "join_path");
+    assert.equal(result.clarification?.options.length, 2);
   }
 });
 
@@ -192,5 +200,25 @@ function exampleRag(id: string, schemaRef: string, quality: number): RagRetrieva
       validation_state: "validated",
       schema_refs: [schemaRef]
     }
+  };
+}
+
+function ambiguityPath(edgeId: string) {
+  const edge = {
+    id: edgeId,
+    left_object_id: PAYMENT,
+    right_object_id: CUSTOMER,
+    left_ref: "public.payment",
+    right_ref: "public.customer",
+    source: "relationship" as const,
+    join_type: "INNER",
+    on_clause: "public.payment.customer_id = public.customer.id",
+    relationship_type: "many_to_one"
+  };
+  return {
+    object_ids: [PAYMENT, CUSTOMER],
+    edge_ids: [edge.id],
+    edges: [edge],
+    approved_policy_count: 0
   };
 }

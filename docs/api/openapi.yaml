@@ -1524,6 +1524,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RunSessionResponse"
+        "422":
+          description: Query intent requires clarification before generation can continue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryClarificationRequiredResponse"
   /v1/query/sessions/{sessionId}/feedback:
     post:
       tags: [Query]
@@ -3617,6 +3623,47 @@ components:
         diagnostics:
           $ref: "#/components/schemas/QueryGenerationDiagnostics"
       required: [attempt_id, sql, columns, rows, row_count, duration_ms, confidence, preview, diagnostics]
+    QueryClarificationOption:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Stable opaque identifier for this interpretation.
+        label:
+          type: string
+        description:
+          type: string
+        table_refs:
+          type: array
+          items:
+            type: string
+      required: [id, label, description, table_refs]
+    QueryClarification:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [join_path]
+        message:
+          type: string
+        options:
+          type: array
+          minItems: 2
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/QueryClarificationOption"
+      required: [kind, message, options]
+    QueryClarificationRequiredResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          enum: [schema_linking_ambiguous]
+        message:
+          type: string
+        clarification:
+          $ref: "#/components/schemas/QueryClarification"
+      required: [error, message, clarification]
     QueryGenerationDiagnostics:
       type: object
       description: Compact generation metadata for debugging and benchmark measurement. Prompt contents are never included.

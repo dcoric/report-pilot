@@ -273,6 +273,7 @@ export async function orchestrateQueryRun({
       return failure(422, {
         error: prepared.code,
         message: prepared.message,
+        clarification: prepared.clarification,
         schema_linking: prepared.diagnostics
       });
     }

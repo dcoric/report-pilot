@@ -46,6 +46,8 @@ export interface QueryDiagnosticPayload {
     linker_status: string;
     fallback_used: boolean;
     fallback_category: "none" | "no_provider" | "provider_failure";
+    clarification_required: boolean;
+    clarification_option_count: number;
   } | null;
   retrieval: { rag_document_count: number; example_count: number };
   generation: {
@@ -113,7 +115,10 @@ export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnost
       fallback_used: linker?.status === "fallback",
       fallback_category: linker?.status !== "fallback"
         ? "none"
-        : linkerAttempts.length === 0 ? "no_provider" : "provider_failure"
+        : linkerAttempts.length === 0 ? "no_provider" : "provider_failure",
+      clarification_required: expansion?.status === "ambiguous",
+      clarification_option_count: (expansion?.ambiguities || [])
+        .reduce((total, ambiguity) => total + ambiguity.alternatives.length, 0)
     } : null,
     retrieval: {
       rag_document_count: Math.max(0, Math.floor(input.ragDocumentCount)),
