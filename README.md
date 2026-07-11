@@ -126,6 +126,11 @@ Observability:
   prompt-size estimates, and token totals. It never includes the question,
   prompt or SQL contents, query parameters, connection details, or raw provider
   errors.
+- Optional OpenTelemetry OTLP/HTTP traces and metrics are disabled by default.
+  Set `OTEL_ENABLED=true` to initialize the Node SDK; invalid configuration or
+  exporter failures degrade safely without blocking application startup. See
+  [docs/observability/opentelemetry.md](docs/observability/opentelemetry.md) for
+  configuration, redaction defaults, and a local Collector setup.
 
 RAG:
 
