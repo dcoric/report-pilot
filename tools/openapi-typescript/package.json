@@ -1,0 +1,12 @@
+{
+  "name": "@report-pilot/openapi-typescript-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate": "openapi-typescript ../../docs/api/openapi.yaml -o ../../app/src/types/openapi.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "~5.9.3"
+  }
+}

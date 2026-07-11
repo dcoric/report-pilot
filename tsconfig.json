@@ -5,8 +5,6 @@
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "app",
-    "allowJs": true,
-    "checkJs": false,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
