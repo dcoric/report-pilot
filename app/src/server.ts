@@ -43,6 +43,7 @@ import {
   handleCreateSession,
   handlePromptHistory,
   handleRunSession,
+  handleCancelClarification,
   handleFeedback
 } from "./routes/query";
 import {
@@ -558,6 +559,11 @@ async function routeRequest(req: AuthedRequest, res: ServerResponse): Promise<vo
   const runMatch = pathname.match(/^\/v1\/query\/sessions\/([^/]+)\/run$/);
   if (req.method === "POST" && runMatch) {
     return handleRunSession(req, res, runMatch[1]);
+  }
+
+  const cancelClarificationMatch = pathname.match(/^\/v1\/query\/sessions\/([^/]+)\/clarification\/cancel$/);
+  if (req.method === "POST" && cancelClarificationMatch) {
+    return handleCancelClarification(req, res, cancelClarificationMatch[1]);
   }
 
   const feedbackMatch = pathname.match(/^\/v1\/query\/sessions\/([^/]+)\/feedback$/);

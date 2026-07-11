@@ -11,6 +11,7 @@ import { clamp, isUuid } from "../lib/validation";
 import { validateAndNormalizeSql } from "../services/sqlSafety";
 import ragService = require("../services/ragService");
 import { orchestrateQueryRun } from "../services/queryOrchestrationService";
+import { cancelPendingClarification } from "../services/queryClarificationStore";
 import { enforceDataSourceAccess, listAccessibleDataSourceIds } from "../lib/authGate";
 import type {
   CreateSessionRequest,
@@ -227,9 +228,32 @@ const handleFeedback: RouteHandlerWithId<FeedbackRequest> = async (req, res, ses
   return json(res, 200, { ok: true, example_saved: exampleSaved, example_reason: exampleReason });
 };
 
+const handleCancelClarification: RouteHandlerWithId = async (req, res, sessionId) => {
+  const sessionLookup = await appDb.query<{ data_source_id: string }>(
+    "SELECT data_source_id FROM query_sessions WHERE id = $1",
+    [sessionId]
+  );
+  if (sessionLookup.rowCount === 0) {
+    return json(res, 404, { error: "not_found", message: "Session not found" });
+  }
+  if (!(await enforceDataSourceAccess(req, res, sessionLookup.rows[0].data_source_id))) {
+    return undefined;
+  }
+
+  const cancelled = await cancelPendingClarification(sessionId);
+  if (!cancelled) {
+    return json(res, 409, {
+      error: "clarification_not_pending",
+      message: "This query session does not have a pending clarification"
+    });
+  }
+  return json(res, 200, { ok: true, status: "cancelled" });
+};
+
 export {
   handleCreateSession,
   handlePromptHistory,
   handleRunSession,
+  handleCancelClarification,
   handleFeedback
 };

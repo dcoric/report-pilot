@@ -87,3 +87,26 @@ export async function resolvePendingClarification(
     return true;
   });
 }
+
+export async function cancelPendingClarification(sessionId: string): Promise<boolean> {
+  return appDb.withTransaction(async (client: PoolClient) => {
+    const result = await client.query(
+      `
+        UPDATE query_clarifications
+        SET status = 'cancelled'
+        WHERE id = (
+          SELECT id
+          FROM query_clarifications
+          WHERE session_id = $1 AND status = 'pending'
+          ORDER BY created_at DESC
+          LIMIT 1
+          FOR UPDATE
+        )
+      `,
+      [sessionId]
+    );
+    if ((result.rowCount ?? 0) === 0) return false;
+    await client.query("UPDATE query_sessions SET status = 'cancelled' WHERE id = $1", [sessionId]);
+    return true;
+  });
+}

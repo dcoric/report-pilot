@@ -44,6 +44,7 @@ test("findPolicy maps known endpoints to the expected policy", () => {
 
   // Query / run
   assert.equal(requirePolicy("POST", "/v1/query/sessions").permission, "query.run");
+  assert.equal(requirePolicy("POST", "/v1/query/sessions/session-1/clarification/cancel").permission, "query.run");
   assert.equal(requirePolicy("POST", "/v1/saved-queries/00000000-0000-4000-8000-000000000001/run").permission, "query.run");
   assert.equal(requirePolicy("GET", "/v1/exports/00000000-0000-4000-8000-000000000001/status").permission, "query.run");
 });

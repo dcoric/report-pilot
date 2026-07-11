@@ -6,6 +6,7 @@ import { Calendar, Loader2, Play, Save, Share2, Timer } from 'lucide-react';
 import { format as formatSql } from 'sql-formatter';
 import { toast } from 'sonner';
 import { InspectorPanel } from '../components/Query/InspectorPanel';
+import { ClarificationPanel } from '../components/Query/ClarificationPanel';
 import { PromptSection } from '../components/Query/PromptSection';
 import { ResultSection } from '../components/Query/ResultSection';
 import { SaveQueryDialog, type SaveQueryDialogValues } from '../components/Query/SaveQueryDialog';
@@ -14,6 +15,7 @@ import { SqlSection } from '../components/Query/SqlSection';
 import type {
     LlmProvider,
     PromptHistoryItem,
+    QueryClarification,
     RunResponse,
     RunProvider,
     SavedQuery,
@@ -29,7 +31,27 @@ type QueryRunErrorPayload = {
     message?: string;
     details?: string[];
     sql?: string;
+    clarification?: QueryClarification;
 };
+
+function parseClarification(value: unknown): QueryClarification | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const candidate = value as Record<string, unknown>;
+    if (candidate.kind !== 'join_path' || typeof candidate.message !== 'string' || !Array.isArray(candidate.options)) {
+        return undefined;
+    }
+    const options = candidate.options.filter((option): option is QueryClarification['options'][number] => {
+        if (!option || typeof option !== 'object') return false;
+        const item = option as Record<string, unknown>;
+        return typeof item.id === 'string'
+            && typeof item.label === 'string'
+            && typeof item.description === 'string'
+            && Array.isArray(item.table_refs)
+            && item.table_refs.every((ref) => typeof ref === 'string');
+    });
+    if (options.length < 2 || options.length !== candidate.options.length) return undefined;
+    return { kind: 'join_path', message: candidate.message, options };
+}
 
 function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {
     if (!error || typeof error !== 'object') {
@@ -44,6 +66,7 @@ function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {
         message: typeof payload.message === 'string' ? payload.message : undefined,
         details,
         sql: typeof payload.sql === 'string' ? payload.sql : undefined,
+        clarification: parseClarification(payload.clarification),
     };
 }
 
@@ -86,6 +109,10 @@ export const QueryWorkspace = () => {
     const [paramErrors, setParamErrors] = useState<Record<string, string> | null>(null);
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const [isSubmittingSave, setIsSubmittingSave] = useState(false);
+    const [clarification, setClarification] = useState<QueryClarification | null>(null);
+    const [resolvingOptionId, setResolvingOptionId] = useState<string | null>(null);
+    const [selectedClarificationOptionId, setSelectedClarificationOptionId] = useState<string | null>(null);
+    const [isCancellingClarification, setIsCancellingClarification] = useState(false);
 
     const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
     const selectedDataSource = dataSources.find((dataSource) => dataSource.id === selectedDataSourceId) || null;
@@ -125,16 +152,23 @@ export const QueryWorkspace = () => {
 
     const applyRunError = (error: unknown, options?: { updateOriginalSql?: boolean }) => {
         const payload = parseRunErrorPayload(error);
-        if (!payload?.sql) {
-            return;
+        if (payload?.clarification) {
+            setClarification(payload.clarification);
         }
-        setGeneratedSql(payload.sql);
-        if (options?.updateOriginalSql) {
-            setOriginalSql(payload.sql);
+        if (payload?.sql) {
+            setGeneratedSql(payload.sql);
+            if (options?.updateOriginalSql) {
+                setOriginalSql(payload.sql);
+            }
         }
+        return payload;
     };
 
-    const generateSql = async (nextSessionId: string, sqlOverride?: string) => {
+    const generateSql = async (
+        nextSessionId: string,
+        sqlOverride?: string,
+        clarificationOptionId?: string,
+    ): Promise<boolean> => {
         const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/run', {
             params: { path: { sessionId: nextSessionId } },
             body: {
@@ -144,6 +178,7 @@ export const QueryWorkspace = () => {
                 max_rows: maxRows,
                 timeout_ms: Math.max(1000, Math.round(timeout * 1000)),
                 ...(sqlOverride ? { sql_override: sqlOverride } : {}),
+                ...(clarificationOptionId ? { clarification_option_id: clarificationOptionId } : {}),
             },
         });
 
@@ -151,13 +186,29 @@ export const QueryWorkspace = () => {
             setGeneratedSql(data.sql);
             setOriginalSql(data.sql);
             setQueryResult(data as RunResponse);
-            return;
+            setClarification(null);
+            setSelectedClarificationOptionId(null);
+            return true;
         }
 
         if (error) {
             setQueryResult(null);
-            applyRunError(error, { updateOriginalSql: true });
+            const payload = applyRunError(error, { updateOriginalSql: true });
+            if (payload?.clarification) {
+                setSelectedClarificationOptionId(null);
+                toast.info('Choose an interpretation to continue.');
+            } else if (clarificationOptionId) {
+                setSelectedClarificationOptionId(clarificationOptionId);
+                if (payload?.error === 'clarification_not_pending') {
+                    setClarification(null);
+                    setSessionId(null);
+                }
+                toast.error(payload?.message || 'Generation failed. Retry this interpretation.');
+            } else {
+                toast.error(payload?.message || 'Failed to generate SQL');
+            }
         }
+        return false;
     };
 
     const handleAsk = async () => {
@@ -170,6 +221,8 @@ export const QueryWorkspace = () => {
         setIsGenerating(true);
         setGeneratedSql('');
         setQueryResult(null);
+        setClarification(null);
+        setSelectedClarificationOptionId(null);
         setLoadedSavedQuery(null);
 
         try {
@@ -197,6 +250,48 @@ export const QueryWorkspace = () => {
             toast.error('An error occurred');
         } finally {
             setIsGenerating(false);
+        }
+    };
+
+    const handleClarificationSelect = async (optionId: string) => {
+        if (!sessionId || resolvingOptionId || isCancellingClarification) return;
+        setResolvingOptionId(optionId);
+        setIsGenerating(true);
+        try {
+            const succeeded = await generateSql(sessionId, undefined, optionId);
+            if (succeeded) {
+                toast.success(isDryRun ? 'Preview generated successfully' : 'Query executed successfully');
+                void fetchPromptHistory(false);
+            }
+        } catch (error) {
+            console.error(error);
+            toast.error('Failed to apply this interpretation. You can retry or choose another.');
+        } finally {
+            setResolvingOptionId(null);
+            setIsGenerating(false);
+        }
+    };
+
+    const handleClarificationCancel = async () => {
+        if (!sessionId || resolvingOptionId || isCancellingClarification) return;
+        setIsCancellingClarification(true);
+        try {
+            const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/clarification/cancel', {
+                params: { path: { sessionId } },
+            });
+            if (error || !data) {
+                toast.error('Could not cancel this clarification.');
+                return;
+            }
+            setClarification(null);
+            setSelectedClarificationOptionId(null);
+            setSessionId(null);
+            toast.info('Clarification cancelled. Refine the question and ask again.');
+        } catch (error) {
+            console.error(error);
+            toast.error('Could not cancel this clarification.');
+        } finally {
+            setIsCancellingClarification(false);
         }
     };
 
@@ -336,6 +431,8 @@ export const QueryWorkspace = () => {
         setGeneratedSql(savedQuery.sql);
         setOriginalSql(savedQuery.sql);
         setQueryResult(null);
+        setClarification(null);
+        setSelectedClarificationOptionId(null);
         setLoadedSavedQuery(savedQuery);
 
         const seededParams: ParamValues = {};
@@ -583,6 +680,17 @@ export const QueryWorkspace = () => {
                     onPromptHistorySelect={handlePromptHistorySelect}
                     onAsk={handleAsk}
                 />
+
+                {clarification && (
+                    <ClarificationPanel
+                        clarification={clarification}
+                        resolvingOptionId={resolvingOptionId}
+                        selectedOptionId={selectedClarificationOptionId}
+                        isCancelling={isCancellingClarification}
+                        onSelect={handleClarificationSelect}
+                        onCancel={handleClarificationCancel}
+                    />
+                )}
 
                 {loadedSavedQuery && loadedSavedQuery.parameter_schema?.length > 0 && (
                     <SavedQueryParamsPanel
