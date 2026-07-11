@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import appDb = require("../lib/appDb");
 import { embedTextsForIndexing } from "./embeddingRouter";
 import { buildRagDocuments } from "./ragDocumentBuilder";
+import { invalidateSchemaArtifacts } from "./schemaArtifactCache";
 
 interface ReindexResult {
   data_source_id: string;
@@ -12,6 +13,7 @@ interface ReindexResult {
 }
 
 async function reindexRagDocuments(dataSourceId: string): Promise<ReindexResult> {
+  invalidateSchemaArtifacts(dataSourceId);
   const docs = await buildRagDocuments(dataSourceId);
   const embedResponse = await embedTextsForIndexing(docs.map((doc) => doc.content));
   const vectors = embedResponse.vectors || [];
@@ -84,6 +86,8 @@ function triggerRagReindexAsync(dataSourceId: string | null | undefined): void {
   if (!dataSourceId) {
     return;
   }
+
+  invalidateSchemaArtifacts(dataSourceId);
 
   setImmediate(() => {
     // Read through the export object so test monkey-patches of

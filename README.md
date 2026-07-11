@@ -137,6 +137,10 @@ RAG:
   filtered by datasource, current RAG schema version, and optional document
   type; recent current-version documents provide a deterministic local
   fallback when lexical search has too few matches.
+- Table-card and schema-graph artifacts use a bounded in-memory cache keyed by
+  datasource and current RAG schema version. Reindex entrypoints invalidate all
+  artifact kinds immediately, and a completed reindex naturally moves reads to
+  the new version key.
 - Embeddings:
   - `RAG_EMBED_PROVIDER=auto|openai|gemini|local`
   - `RAG_EMBED_MODEL_OPENAI=text-embedding-3-small`

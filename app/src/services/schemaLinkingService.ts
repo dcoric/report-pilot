@@ -1,6 +1,7 @@
 import appDb = require("../lib/appDb");
 import ragRetrieval = require("./ragRetrieval");
 import type { RagRetrievalDoc } from "./ragRetrieval";
+import { getOrLoadSchemaArtifact, loadCurrentSchemaVersion } from "./schemaArtifactCache";
 
 const { retrieveRagContext } = ragRetrieval;
 
@@ -100,6 +101,11 @@ export async function retrieveTableCandidates(
 }
 
 export async function loadTableCards(dataSourceId: string): Promise<TableCard[]> {
+  const schemaVersion = await loadCurrentSchemaVersion(dataSourceId);
+  return getOrLoadSchemaArtifact("table_cards", dataSourceId, schemaVersion, () => buildTableCards(dataSourceId));
+}
+
+async function buildTableCards(dataSourceId: string): Promise<TableCard[]> {
   const [objectsResult, primaryKeysResult, relationshipsResult, semanticResult, synonymsResult, joinsResult] =
     await Promise.all([
       appDb.query<SchemaObjectRow>(

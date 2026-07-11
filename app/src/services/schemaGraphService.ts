@@ -1,5 +1,6 @@
 import appDb = require("../lib/appDb");
 import { loadScopedQueryContext, type QueryContext } from "./queryOrchestrationStore";
+import { getOrLoadSchemaArtifact, loadCurrentSchemaVersion } from "./schemaArtifactCache";
 
 export interface SchemaGraphNode {
   id: string;
@@ -89,6 +90,11 @@ interface JoinPolicyRow {
 }
 
 export async function loadSchemaGraph(dataSourceId: string): Promise<SchemaGraph> {
+  const schemaVersion = await loadCurrentSchemaVersion(dataSourceId);
+  return getOrLoadSchemaArtifact("schema_graph", dataSourceId, schemaVersion, () => buildSchemaGraph(dataSourceId));
+}
+
+async function buildSchemaGraph(dataSourceId: string): Promise<SchemaGraph> {
   const [objectsResult, relationshipsResult, policiesResult] = await Promise.all([
     appDb.query<SchemaObjectRow>(
       `
