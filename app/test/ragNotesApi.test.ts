@@ -196,7 +196,8 @@ before(async () => {
     return {
       data_source_id: dataSourceId,
       documents_indexed: 0,
-      embedding_model: "test"
+      embedding_model: "test",
+      schema_version: 1
     };
   };
 

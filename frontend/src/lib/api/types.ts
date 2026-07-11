@@ -3946,7 +3946,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["JobAcceptedResponse"];
+                        "application/json": components["schemas"]["RagReindexResponse"];
                     };
                 };
             };
@@ -5163,6 +5163,15 @@ export interface components {
             job_id: string;
             /** @enum {string} */
             status: "queued";
+        };
+        RagReindexResponse: {
+            job_id: string;
+            /** @enum {string} */
+            status: "succeeded";
+            data_source_id: string;
+            documents_indexed: number;
+            embedding_model: string;
+            schema_version: number;
         };
         SchemaObject: {
             id: string;

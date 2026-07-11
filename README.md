@@ -132,7 +132,11 @@ RAG:
 - `POST /v1/rag/reindex?data_source_id=...`
 - RAG reindex also runs automatically after introspection, semantic changes, and saved feedback examples.
 - `/v1/query/sessions/{id}/run` uses retrieved RAG chunks in prompt context and returns `citations.rag_documents`.
-- Retrieval is hybrid: lexical token matching + embeddings + reranking.
+- Retrieval is hybrid: PostgreSQL GIN-indexed lexical candidate selection,
+  embeddings, and deterministic reranking. Candidate work is bounded and
+  filtered by datasource, current RAG schema version, and optional document
+  type; recent current-version documents provide a deterministic local
+  fallback when lexical search has too few matches.
 - Embeddings:
   - `RAG_EMBED_PROVIDER=auto|openai|gemini|local`
   - `RAG_EMBED_MODEL_OPENAI=text-embedding-3-small`

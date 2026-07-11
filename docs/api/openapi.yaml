@@ -1952,7 +1952,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JobAcceptedResponse"
+                $ref: "#/components/schemas/RagReindexResponse"
   /v1/rag/notes:
     get:
       tags: [Admin]
@@ -3775,6 +3775,23 @@ components:
           type: string
           enum: [queued]
       required: [job_id, status]
+    RagReindexResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [succeeded]
+        data_source_id:
+          type: string
+        documents_indexed:
+          type: integer
+        embedding_model:
+          type: string
+        schema_version:
+          type: integer
+      required: [job_id, status, data_source_id, documents_indexed, embedding_model, schema_version]
     SchemaObject:
       type: object
       properties:
