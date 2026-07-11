@@ -12,6 +12,7 @@ import {
 } from "../src/services/schemaLinkingService";
 import { loadScopedQueryContext } from "../src/services/queryOrchestrationStore";
 import type { RagRetrievalDoc } from "../src/services/ragRetrieval";
+import { clearSchemaArtifactCache } from "../src/services/schemaArtifactCache";
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const PAYMENT_ID = "00000000-0000-4000-8000-000000000201";
@@ -66,8 +67,12 @@ test("rankTableCards returns no weak fill candidates for an empty or unmatched q
 });
 
 test("loadTableCards retains keys, both relationship directions, aliases, synonyms, and approved endpoints", async () => {
+  clearSchemaArtifactCache();
   appDb.query = (async (sql: string) => {
     const normalized = normalizeSql(sql);
+    if (normalized.includes("from rag_index_state")) {
+      return result([{ schema_version: 1 }]);
+    }
     if (normalized.includes("from schema_objects") && normalized.includes("object_type in")) {
       return result([
         {

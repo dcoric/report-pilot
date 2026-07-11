@@ -12,6 +12,7 @@ import {
   type SchemaGraphEdge,
   type SchemaGraphNode
 } from "../src/services/schemaGraphService";
+import { clearSchemaArtifactCache } from "../src/services/schemaArtifactCache";
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const A = "00000000-0000-4000-8000-000000000201";
@@ -107,9 +108,13 @@ test("expandSchemaGraph handles cycles without revisiting objects", () => {
 });
 
 test("loadExpandedSchemaContext loads full columns for core and connector tables", async () => {
+  clearSchemaArtifactCache();
   const scopedColumnCalls: unknown[][] = [];
   appDb.query = (async (sql: string, params: unknown[] = []) => {
     const normalized = normalizeSql(sql);
+    if (normalized.includes("from rag_index_state")) {
+      return result([{ schema_version: 1 }]);
+    }
     if (normalized.includes("from schema_objects") && normalized.includes("object_type in")) {
       return result([
         { id: A, schema_name: "public", object_name: "payment", object_type: "table" },
