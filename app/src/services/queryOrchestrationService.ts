@@ -33,6 +33,7 @@ import {
   loadResolvedClarificationOptionIds
 } from "./queryClarificationStore";
 import type { QueryClarification } from "./queryClarificationService";
+import { withTelemetrySpan } from "../lib/telemetry";
 
 const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
 const { retrieveRagContext } = ragRetrieval;
@@ -164,7 +165,18 @@ function buildValidationJson(input: BuildValidationJsonInput): Record<string, un
   };
 }
 
-export async function orchestrateQueryRun({
+export function orchestrateQueryRun(
+  input: OrchestrateInput,
+  dependencies: QueryOrchestrationDependencies = defaultDependencies
+): Promise<OrchestrateResult> {
+  return withTelemetrySpan("query.run", {
+    "pipeline.stage": "end_to_end",
+    provider: input.requestedProvider || "auto",
+    "datasource.type": input.dbType || "unknown"
+  }, () => orchestrateQueryRunInternal(input, dependencies));
+}
+
+async function orchestrateQueryRunInternal({
   sessionId,
   question,
   dataSourceId,
@@ -178,7 +190,7 @@ export async function orchestrateQueryRun({
   timeoutMs,
   noExecute,
   clarificationOptionId
-}: OrchestrateInput, dependencies: QueryOrchestrationDependencies = defaultDependencies): Promise<OrchestrateResult> {
+}: OrchestrateInput, dependencies: QueryOrchestrationDependencies): Promise<OrchestrateResult> {
   const providerIsValid = await validateRequestedProvider(requestedProvider);
   if (!providerIsValid) {
     return failure(400, { error: "bad_request", message: "Unsupported llm_provider" });
@@ -210,6 +222,10 @@ export async function orchestrateQueryRun({
   }
 
   const sqlDialect: "postgres" | "mssql" = session.db_type === "mssql" ? "mssql" : "postgres";
+  const telemetryAttributes = {
+    provider: requestedProvider || "auto",
+    "datasource.type": sqlDialect
+  };
   const generationStartedAt = Date.now();
   let context: QueryContext;
   let ragDocuments: RagRetrievalDoc[] = [];
@@ -259,7 +275,8 @@ export async function orchestrateQueryRun({
       tokenUsage: generationTokenUsage,
       executionDurationMs,
       clarificationKind: activeClarification?.kind || null,
-      clarificationOptionCount: activeClarification?.options.length
+      clarificationOptionCount: activeClarification?.options.length,
+      dataSourceType: sqlDialect
     });
   };
 
@@ -275,15 +292,18 @@ export async function orchestrateQueryRun({
       const resolvedClarificationOptionIds = clarificationOptionId
         ? await dependencies.loadResolvedClarificationOptionIds(sessionId)
         : [];
-      prepared = await dependencies.prepareQueryGenerationContext({
-        dataSourceId: session.data_source_id,
-        question: session.question,
-        requestedProvider,
-        requestedModel,
-        requestId,
-        clarificationOptionId,
-        resolvedClarificationOptionIds
-      });
+      prepared = await withTelemetrySpan("query.schema_linking", {
+        ...telemetryAttributes,
+        "pipeline.stage": "schema_linking"
+      }, () => dependencies.prepareQueryGenerationContext({
+          dataSourceId: session.data_source_id,
+          question: session.question,
+          requestedProvider,
+          requestedModel,
+          requestId,
+          clarificationOptionId,
+          resolvedClarificationOptionIds
+        }));
     } catch (err) {
       schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
       await markSessionStatus(sessionId, "failed");
@@ -335,7 +355,10 @@ export async function orchestrateQueryRun({
     promptVersion = "v2-cached-sql";
   } else {
     try {
-      const generation = await dependencies.generateSqlWithRouting({
+      const generation = await withTelemetrySpan("query.llm.generate", {
+        ...telemetryAttributes,
+        "pipeline.stage": "generation"
+      }, () => dependencies.generateSqlWithRouting({
         requestId: requestId || null,
         dataSourceId: session.data_source_id,
         dialect: sqlDialect,
@@ -349,7 +372,7 @@ export async function orchestrateQueryRun({
         metricDefinitions: context.metricDefinitions,
         joinPolicies: context.joinPolicies,
         ragDocuments
-      });
+      }));
 
       generatedSql = generation.sql;
       usedProvider = generation.provider;
@@ -371,21 +394,20 @@ export async function orchestrateQueryRun({
   let adapter: DbAdapter | null = null;
   try {
     let safeSql = generatedSql;
-    let safety = validateAndNormalizeSql(generatedSql, {
-      maxRows,
-      schemaObjects: context.schemaObjects,
-      dialect: sqlDialect
-    });
+    let safety: ReturnType<typeof validateAndNormalizeSql>;
     let validationJson: Record<string, unknown> = {};
 
     while (true) {
       let validationErrors: string[] = [];
       safeSql = generatedSql;
-      safety = validateAndNormalizeSql(generatedSql, {
-        maxRows,
-        schemaObjects: context.schemaObjects,
-        dialect: sqlDialect
-      });
+      safety = await withTelemetrySpan("query.sql.validate", {
+        ...telemetryAttributes,
+        "pipeline.stage": "validation"
+      }, async () => validateAndNormalizeSql(generatedSql, {
+          maxRows,
+          schemaObjects: context.schemaObjects,
+          dialect: sqlDialect
+        }));
 
       if (!safety.ok) {
         validationErrors = safety.errors;
@@ -410,7 +432,10 @@ export async function orchestrateQueryRun({
               return failure(400, { error: "bad_request", message: (err as Error).message });
             }
           }
-          const adapterValidation = await adapter.validateSql(safeSql);
+          const adapterValidation = await withTelemetrySpan("query.database.validate", {
+            ...telemetryAttributes,
+            "pipeline.stage": "validation"
+          }, () => adapter!.validateSql(safeSql));
           if (!adapterValidation.ok) {
             validationErrors = adapterValidation.errors;
           }
@@ -443,7 +468,10 @@ export async function orchestrateQueryRun({
           const previousSql = generatedSql;
           let repair;
           try {
-            repair = await dependencies.generateSqlWithRouting({
+            repair = await withTelemetrySpan("query.llm.repair", {
+              ...telemetryAttributes,
+              "pipeline.stage": "repair"
+            }, () => dependencies.generateSqlWithRouting({
               requestId: requestId || null,
               dataSourceId: session.data_source_id,
               dialect: sqlDialect,
@@ -459,7 +487,7 @@ export async function orchestrateQueryRun({
               ragDocuments,
               repair: { previousSql, errors: validationErrors },
               stage: "repair"
-            });
+            }));
           } catch (err) {
             await markSessionStatus(sessionId, "failed");
             emitTerminalDiagnostic("failed", "generation", "llm_repair_failed");
@@ -510,10 +538,15 @@ export async function orchestrateQueryRun({
       }
 
       if (!noExecute && EXPLAIN_BUDGET_ENABLED && sqlDialect === "postgres") {
-        const explainRows = await adapter!.explain(safeSql);
-        const budget = evaluateExplainBudget(explainRows, {
-          maxTotalCost: EXPLAIN_MAX_TOTAL_COST,
-          maxPlanRows: EXPLAIN_MAX_PLAN_ROWS
+        const budget = await withTelemetrySpan("query.budget.check", {
+          ...telemetryAttributes,
+          "pipeline.stage": "budget"
+        }, async () => {
+          const explainRows = await adapter!.explain(safeSql);
+          return evaluateExplainBudget(explainRows, {
+            maxTotalCost: EXPLAIN_MAX_TOTAL_COST,
+            maxPlanRows: EXPLAIN_MAX_PLAN_ROWS
+          });
         });
         validationJson.explain_budget = budget;
         if (!budget.ok) {
@@ -533,7 +566,10 @@ export async function orchestrateQueryRun({
             const previousSql = safeSql;
             let repair;
             try {
-              repair = await dependencies.generateSqlWithRouting({
+              repair = await withTelemetrySpan("query.llm.repair", {
+                ...telemetryAttributes,
+                "pipeline.stage": "repair"
+              }, () => dependencies.generateSqlWithRouting({
                 requestId: requestId || null,
                 dataSourceId: session.data_source_id,
                 dialect: sqlDialect,
@@ -549,7 +585,7 @@ export async function orchestrateQueryRun({
                 ragDocuments,
                 repair: { previousSql, errors: budget.errors },
                 stage: "repair"
-              });
+              }));
             } catch (err) {
               await markSessionStatus(sessionId, "failed");
               emitTerminalDiagnostic("failed", "generation", "llm_repair_failed");
@@ -660,7 +696,10 @@ export async function orchestrateQueryRun({
       });
     }
 
-    const execution = await adapter!.executeReadOnly(safeSql, { timeoutMs, maxRows });
+    const execution = await withTelemetrySpan("query.database.execute", {
+      ...telemetryAttributes,
+      "pipeline.stage": "execution"
+    }, () => adapter!.executeReadOnly(safeSql, { timeoutMs, maxRows }));
     executionDurationMs = execution.durationMs;
     await insertQueryResultMeta({
       attemptId: attemptId as string,

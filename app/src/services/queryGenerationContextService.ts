@@ -23,6 +23,7 @@ import {
   findJoinPathByOptionId,
   type QueryClarification
 } from "./queryClarificationService";
+import { withTelemetrySpan } from "../lib/telemetry";
 
 const { retrieveRagContext } = ragRetrieval;
 
@@ -90,8 +91,12 @@ export async function prepareQueryGenerationContext(
   const finalRagLimit = positiveInteger(input.finalRagLimit, 12);
   const retrievalLimit = Math.max(candidateLimit * 3, finalRagLimit);
   const [cards, retrievedDocuments] = await Promise.all([
-    dependencies.loadTableCards(input.dataSourceId),
-    dependencies.retrieveRagContext(input.dataSourceId, input.question, { limit: retrievalLimit })
+    withTelemetrySpan("query.schema.retrieve", {
+      "pipeline.stage": "schema_retrieval"
+    }, () => dependencies.loadTableCards(input.dataSourceId)),
+    withTelemetrySpan("query.rag.retrieve", {
+      "pipeline.stage": "rag_retrieval"
+    }, () => dependencies.retrieveRagContext(input.dataSourceId, input.question, { limit: retrievalLimit }))
   ]);
   const candidates = rankTableCards(input.question, cards, retrievedDocuments, candidateLimit);
   const diagnostics: SchemaLinkingDiagnostics = {
@@ -136,21 +141,25 @@ export async function prepareQueryGenerationContext(
     );
   }
 
-  const linker = await dependencies.linkTablesWithRouting({
+  const linker = await withTelemetrySpan("query.llm.schema_linker", {
+    "pipeline.stage": "schema_linking"
+  }, () => dependencies.linkTablesWithRouting({
     dataSourceId: input.dataSourceId,
     question: input.question,
     candidates: linkerCandidates,
     requestedProvider: input.requestedProvider,
     requestedModel: input.requestedModel,
     requestId: input.requestId
-  });
+  }));
   diagnostics.linker = linker;
 
-  let expanded = await dependencies.loadExpandedSchemaContext(
-    input.dataSourceId,
-    linker.selection.table_ids,
-    { maxIntermediateHops: 2, maxAlternativePaths: 4 }
-  );
+  let expanded = await withTelemetrySpan("query.schema.expand", {
+    "pipeline.stage": "schema_expansion"
+  }, () => dependencies.loadExpandedSchemaContext(
+      input.dataSourceId,
+      linker.selection.table_ids,
+      { maxIntermediateHops: 2, maxAlternativePaths: 4 }
+    ));
   diagnostics.expansion = expanded.expansion;
 
   const joinPathOptionIds = clarificationOptionIds(input).filter((optionId) => optionId.startsWith("join_path_"));
