@@ -10,6 +10,8 @@ This repository now includes a local Docker setup with:
 - Docker
 - Docker Compose (v2)
 
+For local development, use Node.js 20 or newer and run `npm run setup`. The backend uses the native TypeScript 7 compiler; `npm run types:openapi` uses an isolated TypeScript 5.9 toolchain until `openapi-typescript` supports the TypeScript 7 compiler API. In the migration benchmark, the combined backend and scripts typecheck improved from 2.43 seconds on TypeScript 5.9 to a median 0.39 seconds on TypeScript 7 (6.2x); results vary by machine and workload.
+
 ## Run
 
 ```bash

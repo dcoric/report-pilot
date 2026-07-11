@@ -7,7 +7,7 @@
   "scripts": {
     "dev:fe": "npm --prefix frontend run dev",
     "dev:be": "tsx watch app/src/start.ts",
-    "setup": "npm ci && npm --prefix frontend ci",
+    "setup": "npm ci && npm --prefix frontend ci && npm --prefix tools/openapi-typescript ci",
     "build:fe": "npm --prefix frontend run build",
     "build:be": "tsc",
     "dev": "concurrently \"npm run dev:fe\" \"npm run dev:be\"",
@@ -17,9 +17,9 @@
     "benchmark:mvp": "tsx app/src/benchmark/runMvpBenchmark.ts",
     "benchmark:large-schema": "tsx app/src/benchmark/runLargeSchemaBenchmark.ts",
     "create-user": "tsx scripts/create-user.ts",
-    "test": "node --import tsx --test app/test/**/*.test.{js,ts}",
+    "test": "node --import tsx --test app/test/**/*.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
-    "types:openapi": "openapi-typescript docs/api/openapi.yaml -o app/src/types/openapi.ts"
+    "types:openapi": "npm --prefix tools/openapi-typescript run generate"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -40,8 +40,7 @@
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "concurrently": "^9.2.3",
-    "openapi-typescript": "^7.13.0",
     "tsx": "^4.22.3",
-    "typescript": "~5.9.3"
+    "typescript": "^7.0.2"
   }
 }

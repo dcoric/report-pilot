@@ -5,14 +5,20 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 ## Commands
 
 - `npm run setup`
-- `npm run dev` — concurrently runs `dev:fe` and `dev:be`; `dev:be` uses `tsx watch app/src/start.js` so edits to both `.js` and `.ts` files trigger a restart
+- `npm run dev` — concurrently runs `dev:fe` and `dev:be`; `dev:be` uses `tsx watch app/src/start.ts` so TypeScript edits trigger a restart
 - `npm run build` — builds frontend (`npm run build:fe`) and backend (`npm run build:be`); backend output goes to `dist/` (compiled by `tsc`)
 - `npm start` — runs the compiled backend via `node dist/src/start.js` (used by the Docker image)
-- `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.{js,ts}`, so `.js` and `.ts` test files are both picked up
+- `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.ts`
 - `npm run typecheck`
 - `npm run migrate`
 - `npm run types:openapi` — regenerate `app/src/types/openapi.ts` from `docs/api/openapi.yaml`
 - `npm --prefix frontend run lint`
+
+## Type Discipline
+
+- Backend source and tests are TypeScript-only. Do not add `.js` files under `app/src/**` or `app/test/**`.
+- TypeScript 7 is the application compiler. The OpenAPI generator has an isolated TypeScript 5.9 toolchain because it still depends on the legacy compiler API.
+- Prefer precise types or `unknown` over `any`; do not bypass type errors with `@ts-ignore`.
 
 ## Code Map
 
@@ -35,17 +41,17 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 
 ## High-Value Files
 
-- `app/src/server.js`, `app/src/start.js`, `app/src/migrate.js`
-- `app/src/services/llmSqlService.js`, `app/src/services/sqlGenerator.js`
-- `app/src/services/sqlAstValidator.js`, `app/src/services/sqlSafety.js`, `app/src/services/queryBudget.js`
-- `app/src/services/introspectionService.js`, `app/src/services/ddlImportService.js`
-- `app/src/services/ragService.js`, `app/src/services/ragRetrieval.js`
-- `app/src/services/providerConfigService.js`
+- `app/src/server.ts`, `app/src/start.ts`, `app/src/migrate.ts`
+- `app/src/services/llmSqlService.ts`, `app/src/services/sqlGenerator.ts`
+- `app/src/services/sqlAstValidator.ts`, `app/src/services/sqlSafety.ts`, `app/src/services/queryBudget.ts`
+- `app/src/services/introspectionService.ts`, `app/src/services/ddlImportService.ts`
+- `app/src/services/ragService.ts`, `app/src/services/ragRetrieval.ts`
+- `app/src/services/providerConfigService.ts`
 
 ## Change Coupling
 
 - API shape changes: update route code, `docs/api/openapi.yaml`, `frontend/src/lib/api/types.ts`, and affected UI calls.
-- Query generation or safety changes: review `llmSqlService.js`, `sqlGenerator.js`, `sqlAstValidator.js`, `sqlSafety.js`, and `queryBudget.js` together.
+- Query generation or safety changes: review `llmSqlService.ts`, `sqlGenerator.ts`, `sqlAstValidator.ts`, `sqlSafety.ts`, and `queryBudget.ts` together.
 - Introspection or RAG changes: keep schema metadata and indexed documents aligned; preserve reindex triggers after schema or semantic changes.
 - Persisted state changes: add a migration before wiring service logic.
 
