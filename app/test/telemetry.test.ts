@@ -5,6 +5,9 @@ import assert from "node:assert/strict";
 import { loadTelemetryConfig } from "../src/lib/telemetryConfig";
 import {
   initializeTelemetry,
+  recordTelemetryCounter,
+  recordTelemetryHistogram,
+  withTelemetrySpan,
   sanitizeTelemetryAttributes
 } from "../src/lib/telemetry";
 
@@ -88,4 +91,26 @@ test("telemetry shutdown failures are contained", async () => {
 
   assert.equal(handle.enabled, true);
   await handle.shutdown();
+});
+
+test("no-op spans and metrics preserve application behavior", async () => {
+  const value = await withTelemetrySpan("query.schema.retrieve", {
+    "pipeline.stage": "schema_retrieval",
+    question: "must not be exported"
+  }, async () => 42);
+  assert.equal(value, 42);
+
+  const failure = new Error("private provider response");
+  await assert.rejects(
+    withTelemetrySpan("query.llm.generate", { "pipeline.stage": "generation" }, async () => {
+      throw failure;
+    }),
+    (error) => error === failure
+  );
+
+  assert.doesNotThrow(() => {
+    recordTelemetryCounter("report_pilot.query.repairs", 1, { provider: "test" });
+    recordTelemetryHistogram("report_pilot.query.duration", 12, { outcome: "success" });
+    recordTelemetryCounter("report_pilot.query.repairs", Number.NaN);
+  });
 });

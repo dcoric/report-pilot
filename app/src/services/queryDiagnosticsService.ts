@@ -2,6 +2,10 @@ import { logEvent } from "../lib/observability";
 import type { ProviderAttempt } from "./llmSqlService";
 import type { SchemaLinkingDiagnostics } from "./queryGenerationContextService";
 import type { QueryClarification } from "./queryClarificationService";
+import {
+  recordTelemetryCounter,
+  recordTelemetryHistogram
+} from "../lib/telemetry";
 
 const MAX_TABLE_IDS = 20;
 const MAX_PROVIDER_ATTEMPTS = 8;
@@ -29,6 +33,7 @@ export interface QueryDiagnosticInput {
   executionDurationMs?: number | null;
   clarificationKind?: QueryClarification["kind"] | null;
   clarificationOptionCount?: number;
+  dataSourceType?: string | null;
 }
 
 export interface QueryDiagnosticPayload {
@@ -162,11 +167,54 @@ export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnost
 }
 
 export function emitQueryDiagnostic(input: QueryDiagnosticInput): void {
+  const payload = buildQueryDiagnostic(input);
+  recordQueryMetrics(input, payload);
   logEvent(
     "query_generation_diagnostics",
-    { ...buildQueryDiagnostic(input) },
+    { ...payload },
     input.outcome === "failed" ? "warn" : "info"
   );
+}
+
+function recordQueryMetrics(input: QueryDiagnosticInput, payload: QueryDiagnosticPayload): void {
+  const attributes = {
+    provider: payload.generation.provider,
+    "datasource.type": input.dataSourceType || "unknown",
+    outcome: payload.outcome
+  };
+  recordTelemetryHistogram("report_pilot.query.duration", payload.duration_ms, attributes);
+  recordTelemetryHistogram(
+    "report_pilot.query.retrieval.documents",
+    payload.retrieval.rag_document_count,
+    attributes,
+    "{document}"
+  );
+  recordTelemetryHistogram(
+    "report_pilot.query.retrieval.candidates",
+    payload.schema_linking?.candidate_count || 0,
+    attributes,
+    "{candidate}"
+  );
+  if (payload.generation.fallback_used || payload.schema_linking?.fallback_used) {
+    recordTelemetryCounter("report_pilot.query.fallbacks", 1, attributes);
+  }
+  if (payload.generation.repair_count > 0) {
+    recordTelemetryCounter("report_pilot.query.repairs", payload.generation.repair_count, attributes);
+  }
+  if (payload.generation.token_usage.total_tokens > 0) {
+    recordTelemetryCounter(
+      "report_pilot.query.tokens",
+      payload.generation.token_usage.total_tokens,
+      attributes
+    );
+  }
+  if (payload.outcome === "failed") {
+    recordTelemetryCounter("report_pilot.query.errors", 1, {
+      ...attributes,
+      "pipeline.stage": payload.terminal_stage,
+      "error.type": payload.error_code || "unknown"
+    });
+  }
 }
 
 function boundIds(ids: string[]): string[] {

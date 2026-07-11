@@ -43,6 +43,19 @@ The debug exporter prints received traces and metrics in the Collector output.
 Production deployments should pin the Collector image and replace the debug
 exporter with their observability backend.
 
+## Pipeline Signals
+
+Each query run creates an end-to-end span with child spans for schema and RAG
+retrieval, schema linking and graph expansion, LLM generation and repair, SQL
+and adapter validation, query-budget checks, and database execution. Stage
+metrics use bounded `pipeline.stage`, `outcome`, `provider`, and
+`datasource.type` attributes.
+
+The runtime also emits query duration, retrieval document/candidate counts,
+fallbacks, repairs, token totals, and terminal errors. Provider and datasource
+type are included; model names, datasource IDs, user IDs, questions, prompts,
+SQL, parameters, connection details, and raw error messages are excluded.
+
 ## Sensitive Data
 
 Report Pilot's telemetry attribute sanitizer drops prompt, question, SQL,
