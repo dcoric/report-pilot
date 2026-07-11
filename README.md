@@ -195,6 +195,11 @@ Report outputs:
 - Runner exits with code `2` when one or more MVP release gates fail.
 - Reports include table recall@15, join-path accuracy, repair rate, prompt size,
   schema-size/complexity stratification, and a legacy-global versus hierarchical comparison.
+- The provider-backed MVP release gates also require rule-based fallback on at
+  most 10% of successful runs and successful repair on at least 80% of runs
+  where repair is attempted.
+  A run with no repair attempts reports repair success as `null` and does not
+  fail the repair gate.
 
 Progress tracker:
 
