@@ -3,6 +3,7 @@ import * as path from "path";
 import { Client } from "pg";
 import { errorMessage } from "../lib/http";
 import type { LargeSchemaBenchmarkResult } from "./largeSchemaBenchmark";
+import { summarizeQueryQuality } from "./queryQualityGates";
 
 const APP_BASE_URL = String(process.env.BENCHMARK_APP_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const BENCHMARK_FILE = process.env.BENCHMARK_FILE || path.join(process.cwd(), "docs", "evals", "dvdrental-mvp-benchmark.json");
@@ -214,6 +215,7 @@ interface RunResponse {
   sql?: string;
   rows?: Array<Record<string, unknown>>;
   provider?: string | { name?: string; model?: string };
+  repair_exhausted?: boolean;
   diagnostics?: {
     schema_linking?: null | {
       candidate_tables?: Array<{ id?: string; ref?: string }>;
@@ -301,7 +303,8 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
       critical_safety_violation: false,
       e2e_latency_ms: e2eLatencyMs,
       generated_sql: runResponse.payload?.sql || null,
-      ...metadata
+      ...metadata,
+      repair_count: runResponse.payload?.repair_exhausted === true ? 1 : 0
     };
   }
 
@@ -535,6 +538,12 @@ interface BenchmarkSummary {
   table_recall_at_15: number;
   join_path_accuracy: number;
   repair_rate: number;
+  fallback_eligible_cases: number;
+  fallback_cases: number;
+  fallback_rate: number;
+  repair_attempted_cases: number;
+  repair_succeeded_cases: number;
+  repair_success_rate: number | null;
   average_prompt_chars: number | null;
   stratified: {
     by_schema_size: Record<string, BenchmarkSliceSummary>;
@@ -547,6 +556,8 @@ interface BenchmarkSummary {
     sql_validation_pass_rate_ge_98pct: boolean;
     table_recall_at_15_ge_95pct: boolean;
     join_path_accuracy_ge_95pct: boolean;
+    fallback_rate_le_10pct: boolean;
+    repair_success_rate_ge_80pct: boolean;
     large_schema_comparison_passed: boolean;
     all_passed: boolean;
   };
@@ -583,6 +594,7 @@ function summarizeResults(results: CaseResult[], largeSchema: LargeSchemaBenchma
   const tableRecall = average(tableRecallValues);
   const joinPathAccuracy = ratio(joinPathValues.filter(Boolean).length, joinPathValues.length);
   const repairRate = ratio(results.filter((item) => Number(item.repair_count || 0) > 0).length, total);
+  const queryQuality = summarizeQueryQuality(results);
 
   const gates = {
     correctness_ge_85pct: correctnessRate >= 0.85,
@@ -591,6 +603,7 @@ function summarizeResults(results: CaseResult[], largeSchema: LargeSchemaBenchma
     sql_validation_pass_rate_ge_98pct: sqlValidityRate >= 0.98,
     table_recall_at_15_ge_95pct: tableRecall >= 0.95,
     join_path_accuracy_ge_95pct: joinPathAccuracy >= 0.95,
+    ...queryQuality.gates,
     large_schema_comparison_passed: largeSchema.release_gates.all_passed
   };
 
@@ -608,6 +621,12 @@ function summarizeResults(results: CaseResult[], largeSchema: LargeSchemaBenchma
     table_recall_at_15: round4(tableRecall),
     join_path_accuracy: round4(joinPathAccuracy),
     repair_rate: round4(repairRate),
+    fallback_eligible_cases: queryQuality.fallback_eligible_cases,
+    fallback_cases: queryQuality.fallback_cases,
+    fallback_rate: queryQuality.fallback_rate,
+    repair_attempted_cases: queryQuality.repair_attempted_cases,
+    repair_succeeded_cases: queryQuality.repair_succeeded_cases,
+    repair_success_rate: queryQuality.repair_success_rate,
     average_prompt_chars: promptCharValues.length > 0 ? Math.round(average(promptCharValues)) : null,
     stratified: {
       by_schema_size: stratifyResults(results, (item) => item.schema_size_bucket || "unknown"),
@@ -748,6 +767,8 @@ function buildMarkdownReport(payload: BenchmarkReport): string {
     `- Table recall@15: ${(summary.table_recall_at_15 * 100).toFixed(2)}%`,
     `- Join-path accuracy: ${(summary.join_path_accuracy * 100).toFixed(2)}%`,
     `- Repair rate: ${(summary.repair_rate * 100).toFixed(2)}%`,
+    `- Rule-based fallback rate: ${(summary.fallback_rate * 100).toFixed(2)}% (${summary.fallback_cases}/${summary.fallback_eligible_cases} successful runs)`,
+    `- Repair success rate: ${summary.repair_success_rate === null ? "n/a (no repairs attempted)" : `${(summary.repair_success_rate * 100).toFixed(2)}% (${summary.repair_succeeded_cases}/${summary.repair_attempted_cases})`}`,
     `- Average prompt size: ${summary.average_prompt_chars === null ? "n/a" : `${summary.average_prompt_chars} chars`}`,
     "",
     "## Release Gates",
@@ -757,6 +778,8 @@ function buildMarkdownReport(payload: BenchmarkReport): string {
     `- SQL validation pass rate >= 98%: ${gateMark(gates.sql_validation_pass_rate_ge_98pct)}`,
     `- Table recall@15 >= 95%: ${gateMark(gates.table_recall_at_15_ge_95pct)}`,
     `- Join-path accuracy >= 95%: ${gateMark(gates.join_path_accuracy_ge_95pct)}`,
+    `- Rule-based fallback rate <= 10%: ${gateMark(gates.fallback_rate_le_10pct)}`,
+    `- Repair success rate >= 80% (when attempted): ${gateMark(gates.repair_success_rate_ge_80pct)}`,
     `- Large-schema comparison passed: ${gateMark(gates.large_schema_comparison_passed)}`,
     `- All gates passed: ${gateMark(gates.all_passed)}`,
     "",
