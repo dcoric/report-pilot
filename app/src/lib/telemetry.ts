@@ -1,5 +1,8 @@
 import {
+  context,
   metrics,
+  propagation,
+  SpanKind,
   SpanStatusCode,
   trace,
   type Attributes,
@@ -7,6 +10,7 @@ import {
   type Counter,
   type Histogram
 } from "@opentelemetry/api";
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-proto";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
@@ -36,10 +40,12 @@ export interface TelemetryDependencies {
 
 const SENSITIVE_ATTRIBUTE = /(prompt|question|sql|statement|connection|password|secret|token|api[_-]?key|parameter|request\.body|response\.body)/i;
 const MAX_ATTRIBUTE_LENGTH = 120;
-const tracer = trace.getTracer("report-pilot.pipeline", "0.1.0");
-const meter = metrics.getMeter("report-pilot.pipeline", "0.1.0");
 const counters = new Map<string, Counter>();
 const histograms = new Map<string, Histogram>();
+const headerGetter = {
+  keys: (carrier: IncomingHttpHeaders): string[] => Object.keys(carrier),
+  get: (carrier: IncomingHttpHeaders, key: string): string | string[] | undefined => carrier[key.toLowerCase()]
+};
 
 export async function initializeTelemetry(
   env: NodeJS.ProcessEnv = process.env,
@@ -52,6 +58,8 @@ export async function initializeTelemetry(
   try {
     const sdk = dependencies.createSdk(config);
     sdk.start();
+    counters.clear();
+    histograms.clear();
     console.log(`[telemetry] OTLP traces and metrics enabled for ${config.serviceName}`);
     return {
       enabled: true,
@@ -89,27 +97,103 @@ export async function withTelemetrySpan<T>(
 ): Promise<T> {
   const startedAt = performance.now();
   const safeAttributes = sanitizeTelemetryAttributes(attributes);
-  return tracer.startActiveSpan(name, { attributes: safeAttributes }, async (span) => {
-    let outcome = "success";
-    try {
-      return await operation();
-    } catch (error) {
-      outcome = "error";
-      span.setStatus({ code: SpanStatusCode.ERROR });
-      span.setAttribute("error.type", boundedErrorType(error));
-      throw error;
-    } finally {
-      span.end();
-      recordTelemetryHistogram("report_pilot.pipeline.stage.duration", performance.now() - startedAt, {
-        ...safeAttributes,
-        outcome
-      });
-      recordTelemetryCounter("report_pilot.pipeline.stage.calls", 1, {
-        ...safeAttributes,
-        outcome
-      });
+  try {
+    return pipelineTracer().startActiveSpan(name, { attributes: safeAttributes }, async (span) => {
+      let outcome = "success";
+      try {
+        return await operation();
+      } catch (error) {
+        outcome = "error";
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        span.setAttribute("error.type", boundedErrorType(error));
+        throw error;
+      } finally {
+        span.end();
+        recordTelemetryHistogram("report_pilot.pipeline.stage.duration", performance.now() - startedAt, {
+          ...safeAttributes,
+          outcome
+        });
+        recordTelemetryCounter("report_pilot.pipeline.stage.calls", 1, {
+          ...safeAttributes,
+          outcome
+        });
+      }
+    });
+  } catch {
+    return operation();
+  }
+}
+
+export async function withHttpServerTelemetry<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    const method = String(request.method || "UNKNOWN").toUpperCase().slice(0, 16);
+    const route = normalizeHttpRoute(request.url);
+    const parentContext = propagation.extract(context.active(), request.headers, headerGetter);
+    const startedAt = performance.now();
+    return context.with(parentContext, () => pipelineTracer().startActiveSpan(
+    "http.request",
+    {
+      kind: SpanKind.SERVER,
+      attributes: sanitizeTelemetryAttributes({
+        "http.request.method": method,
+        "http.route": route
+      })
+    },
+    async (span) => {
+      let outcome = "success";
+      try {
+        return await operation();
+      } catch (error) {
+        outcome = "error";
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        span.setAttribute("error.type", boundedErrorType(error));
+        throw error;
+      } finally {
+        const responseStatus = Number(response.statusCode || 0);
+        const statusCode = outcome === "error" && responseStatus < 500 ? 500 : responseStatus;
+        span.setAttribute("http.response.status_code", statusCode);
+        if (statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+        span.end();
+        recordTelemetryHistogram("report_pilot.http.server.duration", performance.now() - startedAt, {
+          "http.request.method": method,
+          "http.route": route,
+          "http.response.status_code": statusCode,
+          outcome
+        });
+      }
     }
-  });
+    ));
+  } catch {
+    return operation();
+  }
+}
+
+export function bindTelemetryContext<Args extends unknown[], Result>(
+  callback: (...args: Args) => Result
+): (...args: Args) => Result {
+  try {
+    return context.bind(context.active(), callback);
+  } catch {
+    return callback;
+  }
+}
+
+export function normalizeHttpRoute(url: string | undefined): string {
+  const pathname = String(url || "/").split("?", 1)[0] || "/";
+  return pathname
+    .split("/")
+    .map((segment) => {
+      if (!segment) return segment;
+      if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment)) return "{id}";
+      if (/^\d+$/.test(segment) || segment.length > 48) return "{id}";
+      return segment;
+    })
+    .join("/")
+    .slice(0, 255);
 }
 
 export function recordTelemetryCounter(
@@ -121,7 +205,7 @@ export function recordTelemetryCounter(
   try {
     let counter = counters.get(name);
     if (!counter) {
-      counter = meter.createCounter(name);
+      counter = pipelineMeter().createCounter(name);
       counters.set(name, counter);
     }
     counter.add(value, sanitizeTelemetryAttributes(attributes));
@@ -140,7 +224,7 @@ export function recordTelemetryHistogram(
   try {
     let histogram = histograms.get(name);
     if (!histogram) {
-      histogram = meter.createHistogram(name, { unit });
+      histogram = pipelineMeter().createHistogram(name, { unit });
       histograms.set(name, histogram);
     }
     histogram.record(value, sanitizeTelemetryAttributes(attributes));
@@ -182,6 +266,14 @@ function sanitizeAttributeValue(value: unknown): AttributeValue | undefined {
 function boundedErrorType(error: unknown): string {
   if (error instanceof Error && error.name) return error.name.slice(0, 80);
   return "Error";
+}
+
+function pipelineTracer() {
+  return trace.getTracer("report-pilot.pipeline", "0.1.0");
+}
+
+function pipelineMeter() {
+  return metrics.getMeter("report-pilot.pipeline", "0.1.0");
 }
 
 function noOpHandle(config: TelemetryConfig): TelemetryHandle {

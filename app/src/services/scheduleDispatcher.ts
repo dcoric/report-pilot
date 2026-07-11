@@ -18,6 +18,7 @@
 
 import * as scheduleService from "./savedQueryScheduleService";
 import { logEvent } from "../lib/observability";
+import { withTelemetrySpan } from "../lib/telemetry";
 
 let intervalHandle: NodeJS.Timeout | null = null;
 let runningTick = false;
@@ -30,6 +31,12 @@ export interface TickResult {
 }
 
 export async function tickOnce(): Promise<TickResult> {
+  return withTelemetrySpan("background.schedule_dispatch", {
+    "pipeline.stage": "schedule_dispatch"
+  }, tickOnceInternal);
+}
+
+async function tickOnceInternal(): Promise<TickResult> {
   if (runningTick) return { skipped: true };
   runningTick = true;
   try {
