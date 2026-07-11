@@ -16,32 +16,37 @@ export interface HttpError extends Error {
  * `server.js`. Use them by passing the matching OpenAPI schema, e.g.
  * `RouteHandler<LoginRequest, AuthMeResponse>`.
  */
-export type RouteHandler<TBody = unknown, TResp = unknown> = (
+type RouteContract<TBody, TResp> = {
+  readonly __requestBody?: TBody;
+  readonly __responseBody?: TResp;
+};
+
+export type RouteHandler<TBody = unknown, TResp = unknown> = ((
   req: AuthedRequest,
   res: ServerResponse
-) => Promise<void>;
+) => Promise<void>) & RouteContract<TBody, TResp>;
 
 /** Handler variant for routes whose path captures a single id. */
-export type RouteHandlerWithId<TBody = unknown, TResp = unknown> = (
+export type RouteHandlerWithId<TBody = unknown, TResp = unknown> = ((
   req: AuthedRequest,
   res: ServerResponse,
   id: string
-) => Promise<void>;
+) => Promise<void>) & RouteContract<TBody, TResp>;
 
 /** Handler variant for nested resources that capture two ids. */
-export type RouteHandlerWithIds<TBody = unknown, TResp = unknown> = (
+export type RouteHandlerWithIds<TBody = unknown, TResp = unknown> = ((
   req: AuthedRequest,
   res: ServerResponse,
   idA: string,
   idB: string
-) => Promise<void>;
+) => Promise<void>) & RouteContract<TBody, TResp>;
 
 /** Handler variant for routes that receive the parsed request URL. */
-export type RouteHandlerWithUrl<TBody = unknown, TResp = unknown> = (
+export type RouteHandlerWithUrl<TBody = unknown, TResp = unknown> = ((
   req: AuthedRequest,
   res: ServerResponse,
   requestUrl: URL
-) => Promise<void>;
+) => Promise<void>) & RouteContract<TBody, TResp>;
 
 /** Shape returned by typed services in `app/src/services/*`. */
 export interface ServiceResult<TBody = unknown> {

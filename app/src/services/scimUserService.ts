@@ -45,7 +45,7 @@ interface ScimName {
   familyName?: string;
 }
 
-interface ScimUserBody {
+export interface ScimUserBody {
   id?: string;
   externalId?: string;
   userName?: string;
@@ -61,7 +61,7 @@ interface ScimOperation {
   value?: unknown;
 }
 
-interface ScimPatchBody {
+export interface ScimPatchBody {
   Operations?: ScimOperation[];
 }
 

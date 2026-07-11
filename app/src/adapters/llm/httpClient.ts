@@ -8,7 +8,15 @@ export interface PostJsonOptions {
 }
 
 /** Provider response payloads are unknown JSON; callers downcast as needed. */
-export type ProviderResponse = any;
+export type ProviderResponse = unknown;
+
+function providerErrorMessage(payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object") return null;
+  const error = (payload as Record<string, unknown>).error;
+  if (error === null || typeof error !== "object") return null;
+  const message = (error as Record<string, unknown>).message;
+  return typeof message === "string" && message.trim() ? message : null;
+}
 
 /**
  * POST a JSON body to `url` and return the parsed JSON response.
@@ -49,7 +57,7 @@ async function postJson(
 
     if (!response.ok) {
       const error: LlmAdapterError = new Error(
-        `HTTP ${response.status} from provider: ${parsed?.error?.message || text || "unknown error"}`
+        `HTTP ${response.status} from provider: ${providerErrorMessage(parsed) || text || "unknown error"}`
       );
       error.statusCode = response.status;
       throw error;

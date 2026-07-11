@@ -62,7 +62,7 @@ interface ScimOperation {
   value?: unknown;
 }
 
-interface ScimGroupBody {
+export interface ScimGroupBody {
   id?: string;
   externalId?: string;
   displayName?: string;
@@ -170,7 +170,7 @@ function groupToScim({ providerId, body }: { providerId: string; body: ScimGroup
 }
 
 export async function createOrReplaceGroup(
-  { providerId, body, actorUserId = null }: { providerId: string; body: ScimGroupBody; actorUserId?: string | null }
+  { providerId, body, actorUserId = null }: { providerId: string; body?: ScimGroupBody; actorUserId?: string | null }
 ): Promise<ScimErrorResult> {
   if (!body || typeof body.displayName !== "string" || !body.displayName.trim()) {
     return scimUserService.scimError(400, "displayName is required", "invalidValue");
@@ -193,7 +193,7 @@ export async function createOrReplaceGroup(
 }
 
 export async function patchGroup(
-  { providerId, body, actorUserId = null }: { providerId: string; body: ScimGroupBody; actorUserId?: string | null }
+  { providerId, body, actorUserId = null }: { providerId: string; body?: ScimGroupBody; actorUserId?: string | null }
 ): Promise<ScimErrorResult> {
   if (!body || !Array.isArray(body.Operations)) {
     return scimUserService.scimError(400, "Operations array is required", "invalidSyntax");

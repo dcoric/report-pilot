@@ -10,6 +10,43 @@ import type {
   SqlValidationResult
 } from "./types";
 
+interface PgTableRow extends PgRow {
+  table_schema: string;
+  table_name: string;
+  table_type: string;
+}
+
+interface PgColumnRow extends PgRow {
+  table_schema: string;
+  table_name: string;
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  ordinal_position: number;
+}
+
+interface PgPrimaryKeyRow extends PgRow {
+  table_schema: string;
+  table_name: string;
+  column_name: string;
+}
+
+interface PgForeignKeyRow extends PgRow {
+  from_schema: string;
+  from_table: string;
+  from_column: string;
+  to_schema: string;
+  to_table: string;
+  to_column: string;
+}
+
+interface PgIndexRow extends PgRow {
+  schemaname: string;
+  tablename: string;
+  indexname: string;
+  indexdef: string;
+}
+
 const { validateAstReadOnly } = require("../services/sqlAstValidator");
 const { replaceNamedPlaceholders } = require("../services/queryParameterParser");
 
@@ -103,50 +140,48 @@ class PostgresAdapter implements DbAdapter {
     `;
 
     const [tablesResult, columnsResult, pkResult, fkResult, indexesResult] = await Promise.all([
-      this.pool.query<PgRow>(tablesSql),
-      this.pool.query<PgRow>(columnsSql),
-      this.pool.query<PgRow>(pkSql),
-      this.pool.query<PgRow>(fkSql),
-      this.pool.query<PgRow>(indexesSql)
+      this.pool.query<PgTableRow>(tablesSql),
+      this.pool.query<PgColumnRow>(columnsSql),
+      this.pool.query<PgPrimaryKeyRow>(pkSql),
+      this.pool.query<PgForeignKeyRow>(fkSql),
+      this.pool.query<PgIndexRow>(indexesSql)
     ]);
 
     const pkSet = new Set(
-      pkResult.rows.map(
-        (row: any) => `${row.table_schema}.${row.table_name}.${row.column_name}`
-      )
+      pkResult.rows.map((row) => `${row.table_schema}.${row.table_name}.${row.column_name}`)
     );
 
-    const objects = tablesResult.rows.map((row: any) => ({
-      schemaName: row.table_schema as string,
-      objectName: row.table_name as string,
+    const objects = tablesResult.rows.map((row) => ({
+      schemaName: row.table_schema,
+      objectName: row.table_name,
       objectType: (row.table_type === "VIEW" ? "view" : "table") as "table" | "view"
     }));
 
-    const columns = columnsResult.rows.map((row: any) => ({
-      schemaName: row.table_schema as string,
-      objectName: row.table_name as string,
-      columnName: row.column_name as string,
-      dataType: row.data_type as string,
+    const columns = columnsResult.rows.map((row) => ({
+      schemaName: row.table_schema,
+      objectName: row.table_name,
+      columnName: row.column_name,
+      dataType: row.data_type,
       nullable: row.is_nullable === "YES",
       isPk: pkSet.has(`${row.table_schema}.${row.table_name}.${row.column_name}`),
-      ordinalPosition: row.ordinal_position as number
+      ordinalPosition: row.ordinal_position
     }));
 
-    const relationships = fkResult.rows.map((row: any) => ({
-      fromSchema: row.from_schema as string,
-      fromObject: row.from_table as string,
-      fromColumn: row.from_column as string,
-      toSchema: row.to_schema as string,
-      toObject: row.to_table as string,
-      toColumn: row.to_column as string,
+    const relationships = fkResult.rows.map((row) => ({
+      fromSchema: row.from_schema,
+      fromObject: row.from_table,
+      fromColumn: row.from_column,
+      toSchema: row.to_schema,
+      toObject: row.to_table,
+      toColumn: row.to_column,
       relationshipType: "fk" as const
     }));
 
-    const indexes = indexesResult.rows.map((row: any) => ({
-      schemaName: row.schemaname as string,
-      objectName: row.tablename as string,
-      indexName: row.indexname as string,
-      columns: parseIndexColumns(row.indexdef as string),
+    const indexes = indexesResult.rows.map((row) => ({
+      schemaName: row.schemaname,
+      objectName: row.tablename,
+      indexName: row.indexname,
+      columns: parseIndexColumns(row.indexdef),
       isUnique: String(row.indexdef).toLowerCase().includes(" unique ")
     }));
 
@@ -198,10 +233,10 @@ class PostgresAdapter implements DbAdapter {
         `SET LOCAL statement_timeout = ${Number.isFinite(timeoutMs) ? timeoutMs : 20000}`
       );
       const built = buildQuery();
-      const result: PgQueryResult =
+      const result: PgQueryResult<QueryResultRow> =
         typeof built === "string"
-          ? await client.query(built)
-          : await client.query(built.text, built.values as any[]);
+          ? await client.query<QueryResultRow>(built)
+          : await client.query<QueryResultRow, unknown[]>(built.text, built.values);
       await client.query("COMMIT");
 
       const rows = Array.isArray(result.rows) ? (result.rows as QueryResultRow[]) : [];

@@ -14,32 +14,32 @@ function buildHealthAdapter(provider: string, apiKeyRef: string | null, defaultM
   if (provider === "openai") {
     return new OpenAiAdapter({
       apiKey: resolveApiKey(apiKeyRef, "OPENAI_API_KEY"),
-      defaultModel
+      defaultModel: defaultModel ?? undefined
     });
   }
   if (provider === "gemini") {
     return new GeminiAdapter({
       apiKey: resolveApiKey(apiKeyRef, "GEMINI_API_KEY"),
-      defaultModel
+      defaultModel: defaultModel ?? undefined
     });
   }
   if (provider === "deepseek") {
     return new DeepSeekAdapter({
       apiKey: resolveApiKey(apiKeyRef, "DEEPSEEK_API_KEY"),
-      defaultModel
+      defaultModel: defaultModel ?? undefined
     });
   }
   if (provider === "openrouter") {
     return new OpenRouterAdapter({
       apiKey: resolveApiKey(apiKeyRef, "OPENROUTER_API_KEY"),
-      defaultModel
+      defaultModel: defaultModel ?? undefined
     });
   }
   if (baseUrl) {
     return new CustomAdapter({
       provider,
       apiKey: resolveApiKey(apiKeyRef, null),
-      defaultModel,
+      defaultModel: defaultModel ?? undefined,
       baseUrl
     });
   }

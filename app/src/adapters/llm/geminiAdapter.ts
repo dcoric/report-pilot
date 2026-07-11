@@ -10,6 +10,19 @@ import type {
 
 const { postJson, extractJsonObject } = require("./httpClient");
 
+interface GeminiGenerateResponse {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+}
+
+interface GeminiEmbeddingResponse {
+  embedding?: { values?: unknown[] };
+}
+
 /**
  * Adapter for Google's Gemini generative-language REST API. Note that
  * embeddings use a separate `:embedContent` endpoint and must be requested
@@ -68,9 +81,9 @@ export class GeminiAdapter implements LlmAdapter {
       };
     }
 
-    const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs });
+    const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs }) as GeminiGenerateResponse;
     const parts = response?.candidates?.[0]?.content?.parts || [];
-    const text = parts.map((p: any) => p.text || "").join("\n").trim();
+    const text = parts.map((part) => part.text || "").join("\n").trim();
 
     if (!text) {
       throw new Error("Gemini returned an empty completion");
@@ -119,9 +132,9 @@ export class GeminiAdapter implements LlmAdapter {
         }
       };
 
-      const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs });
+      const response = await postJson(endpoint, payload, { timeoutMs: this.timeoutMs }) as GeminiEmbeddingResponse;
       const values = response?.embedding?.values;
-      if (!Array.isArray(values) || values.length === 0) {
+      if (!Array.isArray(values) || values.length === 0 || !values.every((value) => typeof value === "number")) {
         throw new Error("Gemini returned an empty embedding vector");
       }
       vectors.push(values);

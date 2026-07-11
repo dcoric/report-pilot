@@ -1,5 +1,5 @@
 import * as sql from "mssql";
-import type { ConnectionPool, IResult, IRecordSet, config as MssqlConfig, Request as MssqlRequest } from "mssql";
+import type { ConnectionPool, IResult, IRecordSet, ISqlType, config as MssqlConfig, Request as MssqlRequest } from "mssql";
 import type {
   DbAdapter,
   DbDialect,
@@ -145,41 +145,41 @@ class MssqlAdapter implements DbAdapter {
 
     const pkSet = new Set(
       tablesRows(pkResult).map(
-        (row: any) => `${row.schema_name}.${row.object_name}.${row.column_name}`
+        (row) => `${String(row.schema_name)}.${String(row.object_name)}.${String(row.column_name)}`
       )
     );
 
-    const objects = tablesRows(tablesResult).map((row: any) => ({
-      schemaName: row.schema_name as string,
-      objectName: row.object_name as string,
+    const objects = tablesRows(tablesResult).map((row) => ({
+      schemaName: String(row.schema_name),
+      objectName: String(row.object_name),
       objectType: (row.table_type === "VIEW" ? "view" : "table") as "table" | "view"
     }));
 
-    const columns = tablesRows(columnsResult).map((row: any) => ({
-      schemaName: row.schema_name as string,
-      objectName: row.object_name as string,
-      columnName: row.column_name as string,
-      dataType: row.data_type as string,
+    const columns = tablesRows(columnsResult).map((row) => ({
+      schemaName: String(row.schema_name),
+      objectName: String(row.object_name),
+      columnName: String(row.column_name),
+      dataType: String(row.data_type),
       nullable: String(row.is_nullable).toUpperCase() === "YES",
       isPk: pkSet.has(`${row.schema_name}.${row.object_name}.${row.column_name}`),
-      ordinalPosition: row.ordinal_position as number
+      ordinalPosition: Number(row.ordinal_position)
     }));
 
-    const relationships = tablesRows(fkResult).map((row: any) => ({
-      fromSchema: row.from_schema as string,
-      fromObject: row.from_table as string,
-      fromColumn: row.from_column as string,
-      toSchema: row.to_schema as string,
-      toObject: row.to_table as string,
-      toColumn: row.to_column as string,
+    const relationships = tablesRows(fkResult).map((row) => ({
+      fromSchema: String(row.from_schema),
+      fromObject: String(row.from_table),
+      fromColumn: String(row.from_column),
+      toSchema: String(row.to_schema),
+      toObject: String(row.to_table),
+      toColumn: String(row.to_column),
       relationshipType: "fk" as const
     }));
 
-    const indexes = tablesRows(indexesResult).map((row: any) => ({
-      schemaName: row.schema_name as string,
-      objectName: row.object_name as string,
-      indexName: row.index_name as string,
-      columns: parseIndexColumns(row.index_columns as string),
+    const indexes = tablesRows(indexesResult).map((row) => ({
+      schemaName: String(row.schema_name),
+      objectName: String(row.object_name),
+      indexName: String(row.index_name),
+      columns: parseIndexColumns(String(row.index_columns || "")),
       isUnique: Boolean(row.is_unique)
     }));
 
@@ -214,15 +214,15 @@ class MssqlAdapter implements DbAdapter {
       ${normalizedSql};
       SET SHOWPLAN_JSON OFF;
     `);
-    return Array.isArray((planResult as any).recordsets)
-      ? ((planResult as any).recordsets as unknown[][]).flat()
+    return Array.isArray(planResult.recordsets)
+      ? planResult.recordsets.flatMap((recordset) => Array.from(recordset))
       : tablesRows(planResult);
   }
 
   async execute(sqlText: string, params: unknown[] = []): Promise<QueryResult> {
     return this.executeWithRequest((request) => {
       params.forEach((value, index) => {
-        request.input(`p${index}`, value as any);
+        request.input(`p${index}`, value);
       });
       return request.query(sqlText);
     }, {});
@@ -282,11 +282,7 @@ class MssqlAdapter implements DbAdapter {
 
     await this.poolConnect;
     const request = this.pool.request();
-    if (Number.isFinite(timeoutMs)) {
-      (request as any).timeout = timeoutMs;
-    }
-
-    const result = await runQuery(request);
+    const result = await runMssqlRequestWithTimeout(request, timeoutMs, () => runQuery(request));
     const rows = tablesRows(result);
     const columns = extractColumns(result, rows);
     const truncated = rows.length > maxRows;
@@ -310,7 +306,7 @@ class MssqlAdapter implements DbAdapter {
   async describeFirstResultSet(sqlText: string): Promise<IResult<unknown>> {
     await this.poolConnect;
     const request = this.pool.request();
-    request.input("tsql", (sql as any).NVarChar((sql as any).MAX), String(sqlText || "").trim());
+    request.input("tsql", sql.NVarChar(sql.MAX), String(sqlText || "").trim());
     return request.query(`
       EXEC sys.sp_describe_first_result_set
         @tsql = @tsql,
@@ -322,10 +318,7 @@ class MssqlAdapter implements DbAdapter {
   async query(sqlText: string, timeoutMs?: number): Promise<IResult<unknown>> {
     await this.poolConnect;
     const request = this.pool.request();
-    if (Number.isFinite(timeoutMs)) {
-      (request as any).timeout = timeoutMs;
-    }
-    return request.query(sqlText);
+    return runMssqlRequestWithTimeout(request, timeoutMs, () => request.query(sqlText));
   }
 }
 
@@ -448,11 +441,39 @@ function parseBoolean(value: unknown, fallback: boolean = false): boolean {
   return ["true", "1", "yes", "y"].includes(normalized);
 }
 
-function tablesRows(result: any): QueryResultRow[] {
-  return Array.isArray(result?.recordset) ? (result.recordset as QueryResultRow[]) : [];
+async function runMssqlRequestWithTimeout<T>(
+  request: MssqlRequest,
+  timeoutMs: number | undefined,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return operation();
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      try {
+        request.cancel();
+      } catch {
+        // The request may have completed between the timer firing and cancellation.
+      }
+      reject(new Error(`MSSQL request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation(), timedOut]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
-function extractColumns(result: any, rows: QueryResultRow[]): string[] {
+function tablesRows(result: IResult<unknown>): QueryResultRow[] {
+  return Array.isArray(result.recordset) ? (result.recordset as QueryResultRow[]) : [];
+}
+
+function extractColumns(result: IResult<unknown>, rows: QueryResultRow[]): string[] {
   if (rows.length > 0) {
     return Object.keys(rows[0]);
   }
@@ -501,24 +522,23 @@ function parseIndexColumns(rawColumns: string): string[] {
     .filter(Boolean);
 }
 
-function getMssqlParameterType(type: string): any {
-  const s: any = sql;
+function getMssqlParameterType(type: string): ISqlType | (() => ISqlType) {
   if (type === "integer") {
-    return s.Int;
+    return sql.Int;
   }
   if (type === "decimal") {
-    return s.Decimal(18, 6);
+    return sql.Decimal(18, 6);
   }
   if (type === "date") {
-    return s.Date;
+    return sql.Date;
   }
   if (type === "boolean") {
-    return s.Bit;
+    return sql.Bit;
   }
   if (type === "timestamp") {
-    return s.DateTime2;
+    return sql.DateTime2;
   }
-  return s.NVarChar(s.MAX);
+  return sql.NVarChar(sql.MAX);
 }
 
 function convertMssqlParameterValue(type: string, value: unknown): unknown {
@@ -534,11 +554,28 @@ function convertMssqlParameterValue(type: string, value: unknown): unknown {
   return value;
 }
 
-function normalizeMssqlValidationError(err: any): string {
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function nestedMessage(value: unknown, ...path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    const record = asRecord(current);
+    if (!record) return undefined;
+    current = record[key];
+  }
+  return current;
+}
+
+function normalizeMssqlValidationError(err: unknown): string {
+  const precedingErrors = nestedMessage(err, "precedingErrors");
   const candidates = [
-    err?.originalError?.info?.message,
-    Array.isArray(err?.precedingErrors) ? err.precedingErrors[0]?.message : null,
-    err?.message
+    nestedMessage(err, "originalError", "info", "message"),
+    Array.isArray(precedingErrors) ? nestedMessage(precedingErrors[0], "message") : null,
+    nestedMessage(err, "message")
   ];
 
   const message =
@@ -552,8 +589,8 @@ function normalizeMssqlValidationError(err: any): string {
   );
 }
 
-function isDescribeFirstResultUnavailable(err: any): boolean {
-  const message = String(err?.message || "").toLowerCase();
+function isDescribeFirstResultUnavailable(err: unknown): boolean {
+  const message = String(nestedMessage(err, "message") || "").toLowerCase();
   return (
     message.includes("sp_describe_first_result_set") &&
     (message.includes("permission") || message.includes("could not find stored procedure"))
