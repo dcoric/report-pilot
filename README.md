@@ -171,6 +171,15 @@ The provider-free schema-linking comparison can be run without databases or API 
 npm run benchmark:large-schema
 ```
 
+This command is also a required backend CI gate. It exits with code `2` when
+table recall@15 falls below 95%, join-path accuracy falls below 100%, table
+recall no longer improves over the legacy global prompt, or the hierarchical
+prompt is no longer smaller than the legacy prompt. The JSON output includes
+`gate_diagnostics` with the pipeline stage, metric, actual value, comparator,
+and target for every gate; failed gates are also printed as concise stderr
+messages. Runtime fallback, repair, and request-correlation diagnostics are
+tracked separately from this provider-free schema-linking benchmark.
+
 Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by dynamic offsets so the latest rental and latest payment land around yesterday (relative to system time), then caps shifted values at current system date/time to avoid future-dated rows.
 
 Report outputs:
