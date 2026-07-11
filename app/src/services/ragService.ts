@@ -4,6 +4,7 @@ import appDb = require("../lib/appDb");
 import { embedTextsForIndexing } from "./embeddingRouter";
 import { buildRagDocuments } from "./ragDocumentBuilder";
 import { invalidateSchemaArtifacts } from "./schemaArtifactCache";
+import { bindTelemetryContext, withTelemetrySpan } from "../lib/telemetry";
 
 interface ReindexResult {
   data_source_id: string;
@@ -89,13 +90,15 @@ function triggerRagReindexAsync(dataSourceId: string | null | undefined): void {
 
   invalidateSchemaArtifacts(dataSourceId);
 
-  setImmediate(() => {
+  setImmediate(bindTelemetryContext(() => {
     // Read through the export object so test monkey-patches of
     // ragService.reindexRagDocuments are honored.
-    moduleExports.reindexRagDocuments(dataSourceId).catch((err: Error) => {
+    withTelemetrySpan("background.rag.reindex", {
+      "pipeline.stage": "rag_reindex"
+    }, () => moduleExports.reindexRagDocuments(dataSourceId)).catch((err: Error) => {
       console.error(`[rag] reindex failed for ${dataSourceId}: ${err.message}`);
     });
-  });
+  }));
 }
 
 function sha256(content: string): string {

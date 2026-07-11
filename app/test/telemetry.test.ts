@@ -1,13 +1,22 @@
 import "./helpers/setupEnv";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor
+} from "@opentelemetry/sdk-trace-base";
 
 import { loadTelemetryConfig } from "../src/lib/telemetryConfig";
 import {
   initializeTelemetry,
+  bindTelemetryContext,
+  normalizeHttpRoute,
   recordTelemetryCounter,
   recordTelemetryHistogram,
   withTelemetrySpan,
+  withHttpServerTelemetry,
   sanitizeTelemetryAttributes
 } from "../src/lib/telemetry";
 
@@ -113,4 +122,53 @@ test("no-op spans and metrics preserve application behavior", async () => {
     recordTelemetryHistogram("report_pilot.query.duration", 12, { outcome: "success" });
     recordTelemetryCounter("report_pilot.query.repairs", Number.NaN);
   });
+});
+
+test("HTTP trace context parents pipeline and queued background spans", async () => {
+  const exporter = new InMemorySpanExporter();
+  const processor = new SimpleSpanProcessor(exporter);
+  const sdk = new NodeSDK({
+    spanProcessors: [processor],
+    metricReaders: [],
+    logRecordProcessors: []
+  });
+  sdk.start();
+  const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const incomingSpanId = "00f067aa0ba902b7";
+  const request = {
+    method: "POST",
+    url: "/v1/query/sessions/00000000-0000-4000-8000-000000000123/run?debug=true",
+    headers: { traceparent: `00-${traceId}-${incomingSpanId}-01` }
+  } as unknown as IncomingMessage;
+  const response = { statusCode: 200 } as unknown as ServerResponse;
+  const queuedWork: { run?: () => Promise<void> } = {};
+
+  await withHttpServerTelemetry(request, response, async () => {
+    await withTelemetrySpan("query.run", { "pipeline.stage": "end_to_end" }, async () => undefined);
+    queuedWork.run = bindTelemetryContext(() => withTelemetrySpan(
+      "background.rag.reindex",
+      { "pipeline.stage": "rag_reindex" },
+      async () => undefined
+    ));
+  });
+  assert.ok(queuedWork.run);
+  await queuedWork.run();
+  await processor.forceFlush();
+
+  const spans = exporter.getFinishedSpans();
+  const serverSpan = spans.find((span) => span.name === "http.request");
+  const querySpan = spans.find((span) => span.name === "query.run");
+  const backgroundSpan = spans.find((span) => span.name === "background.rag.reindex");
+  assert.ok(serverSpan);
+  assert.ok(querySpan);
+  assert.ok(backgroundSpan);
+  assert.equal(serverSpan.spanContext().traceId, traceId);
+  assert.equal(serverSpan.parentSpanContext?.spanId, incomingSpanId);
+  assert.equal(querySpan.parentSpanContext?.spanId, serverSpan.spanContext().spanId);
+  assert.equal(backgroundSpan.parentSpanContext?.spanId, serverSpan.spanContext().spanId);
+  assert.equal(serverSpan.attributes["http.route"], "/v1/query/sessions/{id}/run");
+  assert.equal(serverSpan.attributes["http.response.status_code"], 200);
+  assert.equal(normalizeHttpRoute("/v1/jobs/123?token=secret"), "/v1/jobs/{id}");
+
+  await sdk.shutdown();
 });

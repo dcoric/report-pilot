@@ -56,6 +56,12 @@ fallbacks, repairs, token totals, and terminal errors. Provider and datasource
 type are included; model names, datasource IDs, user IDs, questions, prompts,
 SQL, parameters, connection details, and raw error messages are excluded.
 
+Incoming W3C `traceparent`/`tracestate` headers are extracted into the HTTP
+server span, so all query-pipeline spans share the caller's trace. Query strings
+and concrete resource IDs are removed from `http.route` attributes. Active
+context is explicitly bound to queued RAG reindex work, and scheduled-delivery
+ticks start their own background spans.
+
 ## Sensitive Data
 
 Report Pilot's telemetry attribute sanitizer drops prompt, question, SQL,

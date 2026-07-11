@@ -1,6 +1,7 @@
 import * as http from "http";
 import type { IncomingMessage, ServerResponse } from "http";
 import { createRequestId, logEvent } from "./lib/observability";
+import { withHttpServerTelemetry } from "./lib/telemetry";
 import { json, notFound, badRequest, internalError, errorMessage } from "./lib/http";
 import { PORT } from "./lib/constants";
 import {
@@ -692,7 +693,7 @@ export function startServer(): Promise<http.Server> {
     });
 
     try {
-      await routeRequest(authedReq, res);
+      await withHttpServerTelemetry(req, res, () => routeRequest(authedReq, res));
     } catch (err) {
       if (statusCodeFromError(err) === 400) {
         return badRequest(res, (err as HttpishError).message);
