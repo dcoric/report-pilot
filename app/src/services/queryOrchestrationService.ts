@@ -78,10 +78,48 @@ interface BuildValidationJsonInput {
     provider: string;
     model: string | null;
     prompt_version: string;
+    prompt_chars: number;
   }>;
   schemaLinking: SchemaLinkingDiagnostics | null;
   noExecute: boolean;
   requestId?: string | null;
+}
+
+function buildResponseDiagnostics(
+  context: QueryContext,
+  schemaLinking: SchemaLinkingDiagnostics | null,
+  generationPromptChars: number,
+  repairs: Array<{ prompt_chars: number }>
+): Record<string, unknown> {
+  const linker = schemaLinking?.linker;
+  const expansion = schemaLinking?.expansion;
+  const repairPromptChars = repairs.reduce((total, repair) => total + repair.prompt_chars, 0);
+  return {
+    schema_linking: schemaLinking ? {
+      status: expansion?.status || "not_run",
+      fallback_used: linker?.status === "fallback",
+      candidate_tables: schemaLinking.candidates,
+      selected_core_table_ids: linker?.selection.table_ids || [],
+      expanded_tables: context.schemaObjects.map((object) => ({
+        id: object.id,
+        ref: `${object.schema_name}.${object.object_name}`
+      })),
+      connector_table_ids: expansion?.connector_object_ids || [],
+      join_edges: (expansion?.edges || []).map((edge) => ({
+        id: edge.id,
+        left_ref: edge.left_ref,
+        right_ref: edge.right_ref,
+        source: edge.source
+      }))
+    } : null,
+    prompts: {
+      linker_chars: linker?.prompt_chars || 0,
+      generation_chars: generationPromptChars,
+      repair_chars: repairPromptChars,
+      total_chars: (linker?.prompt_chars || 0) + generationPromptChars + repairPromptChars
+    },
+    repair_count: repairs.length
+  };
 }
 
 function buildValidationJson(input: BuildValidationJsonInput): Record<string, unknown> {
@@ -188,6 +226,7 @@ export async function orchestrateQueryRun({
   let generationAttempts: ProviderAttempt[] = [];
   let generationTokenUsage: unknown = null;
   let promptVersion = "v3-scoped-generation";
+  let generationPromptChars = 0;
 
   if (sqlOverride) {
     generatedSql = sqlOverride;
@@ -218,6 +257,7 @@ export async function orchestrateQueryRun({
       generationAttempts = generation.attempts || [];
       generationTokenUsage = generation.tokenUsage || null;
       promptVersion = generation.promptVersion || promptVersion;
+      generationPromptChars = generation.promptChars || 0;
     } catch (err) {
       await markSessionStatus(sessionId, "failed");
       return failure(502, {
@@ -233,6 +273,7 @@ export async function orchestrateQueryRun({
     provider: string;
     model: string | null;
     prompt_version: string;
+    prompt_chars: number;
   }> = [];
 
   try {
@@ -347,7 +388,8 @@ export async function orchestrateQueryRun({
             errors: validationErrors,
             provider: repair.provider,
             model: repair.model,
-            prompt_version: repair.promptVersion
+            prompt_version: repair.promptVersion,
+            prompt_chars: repair.promptChars || 0
           });
           continue;
         }
@@ -431,7 +473,8 @@ export async function orchestrateQueryRun({
               errors: budget.errors,
               provider: repair.provider,
               model: repair.model,
-              prompt_version: repair.promptVersion
+              prompt_version: repair.promptVersion,
+              prompt_chars: repair.promptChars || 0
             });
             continue;
           }
@@ -484,6 +527,7 @@ export async function orchestrateQueryRun({
 
     validationJson.citations = citations;
     validationJson.confidence = confidence;
+    const diagnostics = buildResponseDiagnostics(context, schemaLinking, generationPromptChars, repairs);
 
     const attemptId = await insertQueryAttempt({
       sessionId,
@@ -512,7 +556,8 @@ export async function orchestrateQueryRun({
           name: usedProvider,
           model: usedModel
         },
-        citations
+        citations,
+        diagnostics
       });
     }
 
@@ -539,7 +584,8 @@ export async function orchestrateQueryRun({
         name: usedProvider,
         model: usedModel
       },
-      citations
+      citations,
+      diagnostics
     });
   } catch (err) {
     await markSessionStatus(sessionId, "failed");

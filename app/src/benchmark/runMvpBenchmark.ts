@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { Client } from "pg";
 import { errorMessage } from "../lib/http";
+import type { LargeSchemaBenchmarkResult } from "./largeSchemaBenchmark";
 
 const APP_BASE_URL = String(process.env.BENCHMARK_APP_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const BENCHMARK_FILE = process.env.BENCHMARK_FILE || path.join(process.cwd(), "docs", "evals", "dvdrental-mvp-benchmark.json");
@@ -38,6 +39,9 @@ interface BenchmarkCase {
   nl_question: string;
   oracle_sql: string;
   result_assertion?: string;
+  expected_tables?: string[];
+  risk_level?: string;
+  complexity?: string;
 }
 
 interface RequestJsonResult<T = unknown> {
@@ -64,11 +68,20 @@ interface CaseResult {
   provider?: string | null;
   row_count_generated?: number;
   row_count_oracle?: number;
+  expected_tables?: string[];
+  schema_size?: number;
+  schema_size_bucket?: "small" | "medium" | "large";
+  complexity?: string;
+  table_recall_at_15?: number | null;
+  join_path_correct?: boolean | null;
+  repair_count?: number;
+  prompt_chars?: number | null;
 }
 
 interface RunContext {
   dataSourceId: string;
   targetClient: Client;
+  schemaObjectCount: number;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -200,7 +213,16 @@ interface SessionResponse {
 interface RunResponse {
   sql?: string;
   rows?: Array<Record<string, unknown>>;
-  provider?: string;
+  provider?: string | { name?: string; model?: string };
+  diagnostics?: {
+    schema_linking?: null | {
+      candidate_tables?: Array<{ id?: string; ref?: string }>;
+      expanded_tables?: Array<{ id?: string; ref?: string }>;
+      join_edges?: Array<{ id?: string; left_ref?: string; right_ref?: string }>;
+    };
+    prompts?: { total_chars?: number };
+    repair_count?: number;
+  };
 }
 
 interface RunBody {
@@ -211,6 +233,17 @@ interface RunBody {
 }
 
 async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<CaseResult> {
+  const expectedTables = Array.isArray(caseDef.expected_tables) ? caseDef.expected_tables : [];
+  const metadata = {
+    expected_tables: expectedTables,
+    schema_size: context.schemaObjectCount,
+    schema_size_bucket: schemaSizeBucket(context.schemaObjectCount),
+    complexity: caseDef.complexity || inferComplexity(expectedTables, caseDef.risk_level),
+    table_recall_at_15: null,
+    join_path_correct: null,
+    repair_count: 0,
+    prompt_chars: null
+  } as const;
   const sessionResponse = await requestJson<SessionResponse>("POST", "/v1/query/sessions", {
     data_source_id: context.dataSourceId,
     question: caseDef.nl_question
@@ -224,7 +257,8 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
       error: `create_session_failed: ${stringifyPayload(sessionResponse.payload)}`,
       correct: false,
       critical_safety_violation: false,
-      e2e_latency_ms: null
+      e2e_latency_ms: null,
+      ...metadata
     };
   }
 
@@ -237,7 +271,8 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
       error: "create_session_failed: missing session_id",
       correct: false,
       critical_safety_violation: false,
-      e2e_latency_ms: null
+      e2e_latency_ms: null,
+      ...metadata
     };
   }
 
@@ -265,7 +300,8 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
       correct: false,
       critical_safety_violation: false,
       e2e_latency_ms: e2eLatencyMs,
-      generated_sql: runResponse.payload?.sql || null
+      generated_sql: runResponse.payload?.sql || null,
+      ...metadata
     };
   }
 
@@ -285,12 +321,15 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
       correct: false,
       critical_safety_violation: false,
       e2e_latency_ms: e2eLatencyMs,
-      generated_sql: generatedSql
+      generated_sql: generatedSql,
+      ...metadata
     };
   }
 
   const assertion = String(caseDef.result_assertion || "row_set_equivalent");
   const evaluation = evaluateAssertion(assertion, generatedRows, oracleRows);
+  const generationDiagnostics = evaluateGenerationDiagnostics(expectedTables, runResponse.payload?.diagnostics);
+  const provider = runResponse.payload?.provider;
 
   return {
     id: caseDef.id,
@@ -302,10 +341,64 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
     critical_safety_violation: detectCriticalSafetyViolation(generatedSql),
     e2e_latency_ms: e2eLatencyMs,
     generated_sql: generatedSql,
-    provider: runResponse.payload?.provider || null,
+    provider: typeof provider === "string" ? provider : provider?.name || null,
     row_count_generated: generatedRows.length,
-    row_count_oracle: oracleRows.length
+    row_count_oracle: oracleRows.length,
+    ...metadata,
+    ...generationDiagnostics
   };
+}
+
+function evaluateGenerationDiagnostics(
+  expectedTables: string[],
+  diagnostics: RunResponse["diagnostics"]
+): Pick<CaseResult, "table_recall_at_15" | "join_path_correct" | "repair_count" | "prompt_chars"> {
+  const linking = diagnostics?.schema_linking;
+  const candidateRefs = new Set((linking?.candidate_tables || []).map((table) => normalizeTableRef(table.ref)));
+  const expandedRefs = new Set((linking?.expanded_tables || []).map((table) => normalizeTableRef(table.ref)));
+  const normalizedExpected = expectedTables.map(normalizeTableRef).filter(Boolean);
+  const tableRecall = normalizedExpected.length > 0
+    ? ratio(normalizedExpected.filter((table) => candidateRefs.has(table)).length, normalizedExpected.length)
+    : null;
+  const expandedContainsExpected = normalizedExpected.length > 0
+    && normalizedExpected.every((table) => expandedRefs.has(table));
+  const joinPathCorrect = normalizedExpected.length === 0
+    ? null
+    : expandedContainsExpected && (normalizedExpected.length === 1 || (linking?.join_edges || []).length > 0);
+
+  return {
+    table_recall_at_15: tableRecall === null ? null : round4(tableRecall),
+    join_path_correct: joinPathCorrect,
+    repair_count: Math.max(0, Number(diagnostics?.repair_count || 0)),
+    prompt_chars: Number.isFinite(Number(diagnostics?.prompts?.total_chars))
+      ? Number(diagnostics?.prompts?.total_chars)
+      : null
+  };
+}
+
+function normalizeTableRef(value: unknown): string {
+  const parts = String(value || "").trim().toLowerCase().replace(/["'`\[\]]/g, "").split(".").filter(Boolean);
+  return parts[parts.length - 1] || "";
+}
+
+function schemaSizeBucket(tableCount: number): "small" | "medium" | "large" {
+  if (tableCount <= 50) {
+    return "small";
+  }
+  if (tableCount <= 250) {
+    return "medium";
+  }
+  return "large";
+}
+
+function inferComplexity(expectedTables: string[], riskLevel: string | undefined): string {
+  if (expectedTables.length >= 3) {
+    return "multi_hop";
+  }
+  if (expectedTables.length === 2) {
+    return "direct_join";
+  }
+  return riskLevel === "high" ? "complex_single_table" : "single_table";
 }
 
 function evaluateAssertion(
@@ -438,16 +531,37 @@ interface BenchmarkSummary {
   p95_latency_ms: number | null;
   p50_latency_ms: number | null;
   average_latency_ms: number | null;
+  execution_accuracy: number;
+  table_recall_at_15: number;
+  join_path_accuracy: number;
+  repair_rate: number;
+  average_prompt_chars: number | null;
+  stratified: {
+    by_schema_size: Record<string, BenchmarkSliceSummary>;
+    by_complexity: Record<string, BenchmarkSliceSummary>;
+  };
   release_gates: {
     correctness_ge_85pct: boolean;
     critical_safety_violations_eq_0: boolean;
     p95_latency_le_8s: boolean;
     sql_validation_pass_rate_ge_98pct: boolean;
+    table_recall_at_15_ge_95pct: boolean;
+    join_path_accuracy_ge_95pct: boolean;
+    large_schema_comparison_passed: boolean;
     all_passed: boolean;
   };
 }
 
-function summarizeResults(results: CaseResult[]): BenchmarkSummary {
+interface BenchmarkSliceSummary {
+  cases: number;
+  execution_accuracy: number;
+  table_recall_at_15: number | null;
+  join_path_accuracy: number | null;
+  repair_rate: number;
+  average_latency_ms: number | null;
+}
+
+function summarizeResults(results: CaseResult[], largeSchema: LargeSchemaBenchmarkResult): BenchmarkSummary {
   const total = results.length;
   const sqlValid = results.filter((item) => item.run_status === 200).length;
   const correct = results.filter((item) => item.correct).length;
@@ -460,12 +574,24 @@ function summarizeResults(results: CaseResult[]): BenchmarkSummary {
   const sqlValidityRate = ratio(sqlValid, total);
   const p95Latency = percentile(latencies, 0.95);
   const p50Latency = percentile(latencies, 0.5);
+  const retrievalCases = results.filter((item) => (item.expected_tables || []).length > 0);
+  const tableRecallValues = retrievalCases.map((item) => Number(item.table_recall_at_15 || 0));
+  const joinPathValues = retrievalCases.map((item) => item.join_path_correct === true);
+  const promptCharValues = results
+    .map((item) => item.prompt_chars)
+    .filter((value): value is number => Number.isFinite(value));
+  const tableRecall = average(tableRecallValues);
+  const joinPathAccuracy = ratio(joinPathValues.filter(Boolean).length, joinPathValues.length);
+  const repairRate = ratio(results.filter((item) => Number(item.repair_count || 0) > 0).length, total);
 
   const gates = {
     correctness_ge_85pct: correctnessRate >= 0.85,
     critical_safety_violations_eq_0: safetyViolations === 0,
     p95_latency_le_8s: Number.isFinite(p95Latency) ? p95Latency <= 8000 : false,
-    sql_validation_pass_rate_ge_98pct: sqlValidityRate >= 0.98
+    sql_validation_pass_rate_ge_98pct: sqlValidityRate >= 0.98,
+    table_recall_at_15_ge_95pct: tableRecall >= 0.95,
+    join_path_accuracy_ge_95pct: joinPathAccuracy >= 0.95,
+    large_schema_comparison_passed: largeSchema.release_gates.all_passed
   };
 
   return {
@@ -478,6 +604,15 @@ function summarizeResults(results: CaseResult[]): BenchmarkSummary {
     p95_latency_ms: Number.isFinite(p95Latency) ? Math.round(p95Latency) : null,
     p50_latency_ms: Number.isFinite(p50Latency) ? Math.round(p50Latency) : null,
     average_latency_ms: latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
+    execution_accuracy: round4(correctnessRate),
+    table_recall_at_15: round4(tableRecall),
+    join_path_accuracy: round4(joinPathAccuracy),
+    repair_rate: round4(repairRate),
+    average_prompt_chars: promptCharValues.length > 0 ? Math.round(average(promptCharValues)) : null,
+    stratified: {
+      by_schema_size: stratifyResults(results, (item) => item.schema_size_bucket || "unknown"),
+      by_complexity: stratifyResults(results, (item) => item.complexity || "unknown")
+    },
     release_gates: {
       ...gates,
       all_passed: Object.values(gates).every(Boolean)
@@ -485,11 +620,44 @@ function summarizeResults(results: CaseResult[]): BenchmarkSummary {
   };
 }
 
+function stratifyResults(
+  results: CaseResult[],
+  keyFn: (item: CaseResult) => string
+): Record<string, BenchmarkSliceSummary> {
+  const groups = new Map<string, CaseResult[]>();
+  for (const result of results) {
+    const key = keyFn(result);
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key)!.push(result);
+  }
+
+  return Object.fromEntries([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, items]) => {
+    const retrievalItems = items.filter((item) => (item.expected_tables || []).length > 0);
+    const recallValues = retrievalItems.map((item) => Number(item.table_recall_at_15 || 0));
+    const joinValues = retrievalItems.map((item) => item.join_path_correct === true);
+    const latencyValues = items.map((item) => item.e2e_latency_ms).filter((value): value is number => Number.isFinite(value));
+    return [key, {
+      cases: items.length,
+      execution_accuracy: round4(ratio(items.filter((item) => item.correct).length, items.length)),
+      table_recall_at_15: recallValues.length > 0 ? round4(average(recallValues)) : null,
+      join_path_accuracy: joinValues.length > 0 ? round4(ratio(joinValues.filter(Boolean).length, joinValues.length)) : null,
+      repair_rate: round4(ratio(items.filter((item) => Number(item.repair_count || 0) > 0).length, items.length)),
+      average_latency_ms: latencyValues.length > 0 ? Math.round(average(latencyValues)) : null
+    }];
+  }));
+}
+
 function ratio(numerator: number, denominator: number): number {
   if (!denominator) {
     return 0;
   }
   return numerator / denominator;
+}
+
+function average(values: number[]): number {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
 function round4(value: number): number {
@@ -525,6 +693,7 @@ interface BenchmarkReport {
   model: string | null;
   summary: BenchmarkSummary;
   observability: unknown;
+  large_schema_comparison: LargeSchemaBenchmarkResult;
   cases: CaseResult[];
 }
 
@@ -576,13 +745,29 @@ function buildMarkdownReport(payload: BenchmarkReport): string {
     `- P95 latency: ${summary.p95_latency_ms === null ? "n/a" : `${summary.p95_latency_ms} ms`}`,
     `- P50 latency: ${summary.p50_latency_ms === null ? "n/a" : `${summary.p50_latency_ms} ms`}`,
     `- Average latency: ${summary.average_latency_ms === null ? "n/a" : `${summary.average_latency_ms} ms`}`,
+    `- Table recall@15: ${(summary.table_recall_at_15 * 100).toFixed(2)}%`,
+    `- Join-path accuracy: ${(summary.join_path_accuracy * 100).toFixed(2)}%`,
+    `- Repair rate: ${(summary.repair_rate * 100).toFixed(2)}%`,
+    `- Average prompt size: ${summary.average_prompt_chars === null ? "n/a" : `${summary.average_prompt_chars} chars`}`,
     "",
     "## Release Gates",
     `- Correctness >= 85%: ${gateMark(gates.correctness_ge_85pct)}`,
     `- Critical safety violations = 0: ${gateMark(gates.critical_safety_violations_eq_0)}`,
     `- P95 latency <= 8s: ${gateMark(gates.p95_latency_le_8s)}`,
     `- SQL validation pass rate >= 98%: ${gateMark(gates.sql_validation_pass_rate_ge_98pct)}`,
+    `- Table recall@15 >= 95%: ${gateMark(gates.table_recall_at_15_ge_95pct)}`,
+    `- Join-path accuracy >= 95%: ${gateMark(gates.join_path_accuracy_ge_95pct)}`,
+    `- Large-schema comparison passed: ${gateMark(gates.large_schema_comparison_passed)}`,
     `- All gates passed: ${gateMark(gates.all_passed)}`,
+    "",
+    "## Large-Schema Comparison",
+    `- Synthetic schema tables: ${payload.large_schema_comparison.schema.table_count}`,
+    `- Legacy table recall@40: ${(payload.large_schema_comparison.legacy_global.table_recall_at_40 * 100).toFixed(2)}%`,
+    `- Hierarchical table recall@15: ${(payload.large_schema_comparison.hierarchical.table_recall_at_15 * 100).toFixed(2)}%`,
+    `- Legacy join-path accuracy: ${(payload.large_schema_comparison.legacy_global.join_path_accuracy * 100).toFixed(2)}%`,
+    `- Hierarchical join-path accuracy: ${(payload.large_schema_comparison.hierarchical.join_path_accuracy * 100).toFixed(2)}%`,
+    `- Legacy average prompt size: ${payload.large_schema_comparison.legacy_global.average_prompt_chars} chars`,
+    `- Hierarchical average prompt size: ${payload.large_schema_comparison.hierarchical.average_prompt_chars} chars`,
     "",
     "## Observability Snapshot",
     payload.observability ? `\n\`\`\`json\n${JSON.stringify(payload.observability, null, 2)}\n\`\`\`` : "- unavailable",
@@ -617,14 +802,18 @@ function timestampForFile(date: Date = new Date()): string {
 async function main(): Promise<void> {
   const cases = await readCases(BENCHMARK_FILE);
   const dataSourceId = await ensureDataSourceId();
-  await ensureIntrospectionReady(dataSourceId);
+  const schemaObjects = await ensureIntrospectionReady(dataSourceId);
+  process.env.DATABASE_URL ||= "postgresql://benchmark:benchmark@127.0.0.1:1/unused";
+  const { runLargeSchemaBenchmark } = await import("./largeSchemaBenchmark");
+  const largeSchemaComparison = await runLargeSchemaBenchmark();
 
   const targetClient = new Client({ connectionString: BENCHMARK_ORACLE_CONN });
   await targetClient.connect();
 
   const context: RunContext = {
     dataSourceId,
-    targetClient
+    targetClient,
+    schemaObjectCount: schemaObjects.length
   };
 
   const runDate = new Date().toISOString();
@@ -643,7 +832,7 @@ async function main(): Promise<void> {
     await targetClient.end();
   }
 
-  const summary = summarizeResults(results);
+  const summary = summarizeResults(results, largeSchemaComparison);
   const observability = await fetchObservabilityMetrics().catch((err: unknown) => ({ error: errorMessage(err) }));
 
   const report: BenchmarkReport = {
@@ -654,6 +843,7 @@ async function main(): Promise<void> {
     model: BENCHMARK_MODEL || null,
     summary,
     observability,
+    large_schema_comparison: largeSchemaComparison,
     cases: results
   };
 

@@ -47,6 +47,7 @@ export interface GenerateSqlWithRoutingResult {
   attempts: ProviderAttempt[];
   tokenUsage: NormalizedTokenUsage | null;
   promptVersion: string;
+  promptChars: number;
 }
 
 export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput): Promise<GenerateSqlWithRoutingResult> {
@@ -155,7 +156,8 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
         model: output.model || model,
         attempts,
         tokenUsage: usage,
-        promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation"
+        promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation",
+        promptChars: prompt.length
       };
     } catch (err) {
       const latencyMs = Date.now() - startedAt;
@@ -212,6 +214,7 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     model: "rule-based-v0",
     attempts,
     tokenUsage: null,
-    promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation"
+    promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation",
+    promptChars: prompt.length
   };
 }

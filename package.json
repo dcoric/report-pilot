@@ -15,6 +15,7 @@
     "start": "node dist/src/start.js",
     "migrate": "tsx app/src/migrate.ts",
     "benchmark:mvp": "tsx app/src/benchmark/runMvpBenchmark.ts",
+    "benchmark:large-schema": "tsx app/src/benchmark/runLargeSchemaBenchmark.ts",
     "create-user": "tsx scripts/create-user.ts",
     "test": "node --import tsx --test app/test/**/*.test.{js,ts}",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",

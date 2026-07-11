@@ -3614,7 +3614,94 @@ components:
         preview:
           type: boolean
           description: True when the request was handled as a dry-run and no query was executed.
-      required: [attempt_id, sql, columns, rows, row_count, duration_ms, confidence, preview]
+        diagnostics:
+          $ref: "#/components/schemas/QueryGenerationDiagnostics"
+      required: [attempt_id, sql, columns, rows, row_count, duration_ms, confidence, preview, diagnostics]
+    QueryGenerationDiagnostics:
+      type: object
+      description: Compact generation metadata for debugging and benchmark measurement. Prompt contents are never included.
+      properties:
+        schema_linking:
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                status:
+                  type: string
+                  enum: [complete, ambiguous, disconnected, not_run]
+                fallback_used:
+                  type: boolean
+                candidate_tables:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      ref:
+                        type: string
+                      score:
+                        type: number
+                      lexical_score:
+                        type: number
+                      rag_score:
+                        type: number
+                      matched_terms:
+                        type: array
+                        items:
+                          type: string
+                    required: [id, ref, score, lexical_score, rag_score, matched_terms]
+                selected_core_table_ids:
+                  type: array
+                  items:
+                    type: string
+                expanded_tables:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      ref:
+                        type: string
+                    required: [id, ref]
+                connector_table_ids:
+                  type: array
+                  items:
+                    type: string
+                join_edges:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      left_ref:
+                        type: string
+                      right_ref:
+                        type: string
+                      source:
+                        type: string
+                        enum: [approved_policy, relationship]
+                    required: [id, left_ref, right_ref, source]
+              required: [status, fallback_used, candidate_tables, selected_core_table_ids, expanded_tables, connector_table_ids, join_edges]
+        prompts:
+          type: object
+          properties:
+            linker_chars:
+              type: integer
+            generation_chars:
+              type: integer
+            repair_chars:
+              type: integer
+            total_chars:
+              type: integer
+          required: [linker_chars, generation_chars, repair_chars, total_chars]
+        repair_count:
+          type: integer
+          minimum: 0
+          maximum: 1
+      required: [schema_linking, prompts, repair_count]
     FeedbackRequest:
       type: object
       properties:
@@ -3935,6 +4022,15 @@ components:
         summary:
           type: object
           additionalProperties: true
+        observability: {}
+        large_schema_comparison:
+          type: object
+          additionalProperties: true
+        cases:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
       required: [run_date, dataset_file, summary]
     ExportRequest:
       type: object

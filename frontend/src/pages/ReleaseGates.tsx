@@ -185,6 +185,30 @@ function normalizeBackendShape(data: AnyRecord): ReleaseGateData | null {
             '>= 98%',
             `${(toNumber(summary.sql_validation_pass_rate) * 100).toFixed(2)}%`,
             releaseGates ? toBool(releaseGates.sql_validation_pass_rate_ge_98pct) : null
+        ),
+        makeCheck(
+            'table_recall_at_15_ge_95pct',
+            'Candidate Table Recall@15',
+            'Expected tables must appear in the top 15 schema candidates at least 95% of the time',
+            '>= 95%',
+            `${(toNumber(summary.table_recall_at_15) * 100).toFixed(2)}%`,
+            releaseGates ? toBool(releaseGates.table_recall_at_15_ge_95pct) : null
+        ),
+        makeCheck(
+            'join_path_accuracy_ge_95pct',
+            'Join-Path Accuracy',
+            'Expected tables must be connected through validated schema paths at least 95% of the time',
+            '>= 95%',
+            `${(toNumber(summary.join_path_accuracy) * 100).toFixed(2)}%`,
+            releaseGates ? toBool(releaseGates.join_path_accuracy_ge_95pct) : null
+        ),
+        makeCheck(
+            'large_schema_comparison_passed',
+            'Large-Schema Comparison',
+            'Provider-free large-schema retrieval, path, and prompt-size gates must all pass',
+            'PASS',
+            releaseGates && toBool(releaseGates.large_schema_comparison_passed) ? 'PASS' : 'FAIL',
+            releaseGates ? toBool(releaseGates.large_schema_comparison_passed) : null
         )
     ];
 

@@ -70,6 +70,16 @@ test("orchestrateQueryRun repairs invalid SQL once and reruns the safety pipelin
   assert.match(insertedSql[0], /^DELETE/i);
   assert.match(insertedSql[1], /^SELECT/i);
   assert.deepEqual(statuses, ["completed"]);
+  const diagnostics = (result.body as {
+    diagnostics: { repair_count: number; prompts: { generation_chars: number; repair_chars: number; total_chars: number } };
+  }).diagnostics;
+  assert.equal(diagnostics.repair_count, 1);
+  assert.deepEqual(diagnostics.prompts, {
+    linker_chars: 0,
+    generation_chars: 600,
+    repair_chars: 800,
+    total_chars: 1400
+  });
 });
 
 test("orchestrateQueryRun stops after one failed repair and marks it exhausted", async () => {
@@ -186,7 +196,8 @@ function generation(sql: string, stage: "generation" | "repair"): GenerateSqlWit
       stage
     }],
     tokenUsage: null,
-    promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation"
+    promptVersion: stage === "repair" ? "v3-scoped-repair" : "v3-scoped-generation",
+    promptChars: stage === "repair" ? 800 : 600
   };
 }
 
