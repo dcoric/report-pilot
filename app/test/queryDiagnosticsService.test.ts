@@ -29,6 +29,7 @@ test("query diagnostics are bounded, correlated, and exclude sensitive content",
     },
     expandedTableIds: ids,
     ragDocumentCount: 12,
+    ragExampleCount: 3,
     provider: "local-fallback",
     model: "rule-based-v0",
     providerAttempts: Array.from({ length: 10 }, () => ({
@@ -55,6 +56,7 @@ test("query diagnostics are bounded, correlated, and exclude sensitive content",
   assert.equal(payload.schema_linking?.candidate_table_ids.length, 20);
   assert.equal(payload.generation.attempts.length, 8);
   assert.equal(payload.generation.attempts_truncated, true);
+  assert.deepEqual(payload.retrieval, { rag_document_count: 12, example_count: 3 });
   assert.deepEqual(payload.generation.token_usage, { prompt_tokens: 18, completion_tokens: 9, total_tokens: 27 });
   const serialized = JSON.stringify(payload);
   assert.doesNotMatch(serialized, /secret/);

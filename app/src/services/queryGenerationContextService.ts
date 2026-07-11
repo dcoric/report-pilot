@@ -13,6 +13,7 @@ import {
 } from "./schemaGraphService";
 import type { QueryContext } from "./queryOrchestrationStore";
 import type { RagRetrievalDoc } from "./ragRetrieval";
+import { rankValidatedExamples } from "./exampleRankingService";
 
 const { retrieveRagContext } = ragRetrieval;
 
@@ -137,9 +138,21 @@ function selectFinalRagDocuments(
   limit: number
 ): RagRetrievalDoc[] {
   const selectedIds = new Set(expanded.expansion.object_ids);
+  const selectedSchemaRefs = expanded.context?.schemaObjects.map(
+    (object) => `${object.schema_name}.${object.object_name}`
+  ) || [];
   const relevantSchema = documents.filter((doc) => doc.doc_type === "schema" && selectedIds.has(String(doc.ref_id)));
-  const supporting = documents.filter((doc) => doc.doc_type !== "schema");
-  return uniqueDocuments([...relevantSchema, ...supporting]).slice(0, limit);
+  const examples = rankValidatedExamples(documents, {
+    selectedSchemaRefs,
+    maxExamples: Math.min(4, Math.max(1, Math.floor(limit / 3)))
+  });
+  const supporting = documents.filter((doc) => doc.doc_type !== "schema" && doc.doc_type !== "example");
+  const schemaLimit = Math.max(0, limit - examples.length);
+  return uniqueDocuments([
+    ...relevantSchema.slice(0, schemaLimit),
+    ...examples,
+    ...supporting
+  ]).slice(0, limit);
 }
 
 function summarizeCandidates(candidates: TableCandidate[]): SchemaLinkingDiagnostics["candidates"] {

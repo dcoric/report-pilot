@@ -49,3 +49,70 @@ test("buildRagDocuments includes active rag_notes as policy documents", async ()
     appDb.query = originalQuery;
   }
 });
+
+test("buildRagDocuments records current-schema validation metadata for examples", async () => {
+  const dataSourceId = "00000000-0000-4000-8000-000000000333";
+  const originalQuery = appDb.query;
+
+  appDb.query = (async (sql: string) => {
+    const normalized = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.includes("from schema_objects") && !normalized.includes("join")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          id: "table-payment",
+          object_type: "table",
+          schema_name: "public",
+          object_name: "payment",
+          description: null
+        }]
+      };
+    }
+    if (normalized.includes("from nl_sql_examples")) {
+      return {
+        rowCount: 2,
+        rows: [
+          {
+            id: "valid-example",
+            question: "Total payments",
+            sql: "SELECT SUM(amount) FROM public.payment",
+            quality_score: 0.9,
+            source: "manual"
+          },
+          {
+            id: "stale-example",
+            question: "Inventory",
+            sql: "SELECT * FROM public.inventory",
+            quality_score: 1,
+            source: "manual"
+          }
+        ]
+      };
+    }
+    if (normalized === "select db_type from data_sources where id = $1") {
+      return { rowCount: 1, rows: [{ db_type: "postgres" }] };
+    }
+    return { rowCount: 0, rows: [] };
+  }) as unknown as typeof appDb.query;
+
+  try {
+    const docs = await __private.buildRagDocuments(dataSourceId);
+    const valid = docs.find((document) => document.refId === "valid-example");
+    const stale = docs.find((document) => document.refId === "stale-example");
+
+    assert.deepEqual(valid?.metadata, {
+      source: "manual",
+      quality_score: 0.9,
+      validation_state: "validated",
+      schema_refs: ["public.payment"]
+    });
+    assert.deepEqual(stale?.metadata, {
+      source: "manual",
+      quality_score: 1,
+      validation_state: "rejected",
+      schema_refs: ["public.inventory"]
+    });
+  } finally {
+    appDb.query = originalQuery;
+  }
+});

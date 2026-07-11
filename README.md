@@ -141,6 +141,11 @@ RAG:
   datasource and current RAG schema version. Reindex entrypoints invalidate all
   artifact kinds immediately, and a completed reindex naturally moves reads to
   the new version key.
+- Few-shot examples are validated against the current datasource schema during
+  reindexing. Prompt selection excludes stale, unsafe, schema-incompatible, and
+  low-quality feedback examples, removes near duplicates, and enforces count
+  and character budgets. Query diagnostics report the selected example count,
+  and MVP benchmark reports stratify accuracy and repair rate by example usage.
 - Embeddings:
   - `RAG_EMBED_PROVIDER=auto|openai|gemini|local`
   - `RAG_EMBED_MODEL_OPENAI=text-embedding-3-small`

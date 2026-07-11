@@ -16,6 +16,7 @@ export interface QueryDiagnosticInput {
   schemaLinking: SchemaLinkingDiagnostics | null;
   expandedTableIds: string[];
   ragDocumentCount: number;
+  ragExampleCount: number;
   provider: string;
   model: string | null;
   providerAttempts: ProviderAttempt[];
@@ -46,7 +47,7 @@ export interface QueryDiagnosticPayload {
     fallback_used: boolean;
     fallback_category: "none" | "no_provider" | "provider_failure";
   } | null;
-  retrieval: { rag_document_count: number };
+  retrieval: { rag_document_count: number; example_count: number };
   generation: {
     provider: string;
     model: string | null;
@@ -115,7 +116,8 @@ export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnost
         : linkerAttempts.length === 0 ? "no_provider" : "provider_failure"
     } : null,
     retrieval: {
-      rag_document_count: Math.max(0, Math.floor(input.ragDocumentCount))
+      rag_document_count: Math.max(0, Math.floor(input.ragDocumentCount)),
+      example_count: Math.max(0, Math.floor(input.ragExampleCount))
     },
     generation: {
       provider: boundedLabel(input.provider, 64),

@@ -95,7 +95,8 @@ function buildResponseDiagnostics(
   context: QueryContext,
   schemaLinking: SchemaLinkingDiagnostics | null,
   generationPromptChars: number,
-  repairs: Array<{ prompt_chars: number }>
+  repairs: Array<{ prompt_chars: number }>,
+  ragDocuments: RagRetrievalDoc[]
 ): Record<string, unknown> {
   const linker = schemaLinking?.linker;
   const expansion = schemaLinking?.expansion;
@@ -123,6 +124,10 @@ function buildResponseDiagnostics(
       generation_chars: generationPromptChars,
       repair_chars: repairPromptChars,
       total_chars: (linker?.prompt_chars || 0) + generationPromptChars + repairPromptChars
+    },
+    retrieval: {
+      rag_document_count: ragDocuments.length,
+      example_count: ragDocuments.filter((document) => document.doc_type === "example").length
     },
     repair_count: repairs.length
   };
@@ -222,6 +227,7 @@ export async function orchestrateQueryRun({
       schemaLinking,
       expandedTableIds,
       ragDocumentCount: ragDocuments.length,
+      ragExampleCount: ragDocuments.filter((document) => document.doc_type === "example").length,
       provider: usedProvider,
       model: usedModel,
       providerAttempts: generationAttempts,
@@ -575,7 +581,7 @@ export async function orchestrateQueryRun({
 
     validationJson.citations = citations;
     validationJson.confidence = confidence;
-    const diagnostics = buildResponseDiagnostics(context, schemaLinking, generationPromptChars, repairs);
+    const diagnostics = buildResponseDiagnostics(context, schemaLinking, generationPromptChars, repairs, ragDocuments);
 
     const attemptId = await insertQueryAttempt({
       sessionId,
