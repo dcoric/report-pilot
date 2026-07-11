@@ -48,6 +48,7 @@ export interface LinkTablesResult {
   attempts: SchemaLinkerAttempt[];
   fallback_reason: string | null;
   prompt_version: "v3-schema-linker";
+  prompt_chars: number;
 }
 
 export interface SchemaLinkerDependencies {
@@ -135,7 +136,8 @@ export async function linkTablesWithRouting(
         model: output.model || model,
         attempts,
         fallback_reason: null,
-        prompt_version: "v3-schema-linker"
+        prompt_version: "v3-schema-linker",
+        prompt_chars: prompt.length
       };
     } catch (err) {
       const error = err as { statusCode?: number | string; message?: string };
@@ -180,7 +182,8 @@ export async function linkTablesWithRouting(
     model: null,
     attempts,
     fallback_reason: fallbackReason || "No enabled schema-linker provider",
-    prompt_version: "v3-schema-linker"
+    prompt_version: "v3-schema-linker",
+    prompt_chars: prompt.length
   };
 }
 

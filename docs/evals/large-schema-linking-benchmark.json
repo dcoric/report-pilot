@@ -1,0 +1,50 @@
+{
+  "version": "large-schema-v1",
+  "distractor_table_count": 300,
+  "distractor_columns_per_table": 8,
+  "candidate_limit": 15,
+  "legacy_table_limit": 40,
+  "legacy_column_limit": 120,
+  "cases": [
+    {
+      "id": "ls001",
+      "question": "How much revenue did we collect in total?",
+      "expected_core_refs": ["public.payment"],
+      "expected_path_refs": ["public.payment"],
+      "expected_status": "complete",
+      "complexity": "single_table"
+    },
+    {
+      "id": "ls002",
+      "question": "Rank customers by sales amount",
+      "expected_core_refs": ["public.payment", "public.customer"],
+      "expected_path_refs": ["public.payment", "public.customer"],
+      "expected_status": "complete",
+      "complexity": "direct_join"
+    },
+    {
+      "id": "ls003",
+      "question": "Which film categories generated the most revenue?",
+      "expected_core_refs": ["public.payment", "public.category"],
+      "expected_path_refs": ["public.payment", "public.rental", "public.inventory", "public.film_category", "public.category"],
+      "expected_status": "complete",
+      "complexity": "multi_hop"
+    },
+    {
+      "id": "ls004",
+      "question": "Show the customer activity profile risk segment",
+      "expected_core_refs": ["analytics.customer_activity_wide"],
+      "expected_path_refs": ["analytics.customer_activity_wide"],
+      "expected_status": "complete",
+      "complexity": "wide_table"
+    },
+    {
+      "id": "ls005",
+      "question": "Summarize ambiguous orders by ambiguous customer",
+      "expected_core_refs": ["public.ambiguous_orders", "public.ambiguous_customer"],
+      "expected_path_refs": [],
+      "expected_status": "ambiguous",
+      "complexity": "ambiguous_join"
+    }
+  ]
+}

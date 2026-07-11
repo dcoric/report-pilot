@@ -49,8 +49,32 @@ Secondary:
 
 - SQL validity rate.
 - First-attempt success rate.
+- Candidate table recall@15.
+- Deterministic join-path accuracy.
+- Repair rate.
+- Prompt size in characters (linker, generation, and repair).
 - Average token usage (prompt/completion).
 - Estimated cost per query.
+
+Stratify correctness, retrieval, join-path, repair, and latency metrics by:
+
+- Schema size: small (up to 50 tables), medium (51-250), and large (251+).
+- Query complexity: single-table, direct join, multi-hop, wide-table, and ambiguous join.
+
+## Large-Schema Comparison
+
+The provider-free comparison fixture generates more than 300 tables, including
+overlapping payment/customer/category archive names, a 250-column table,
+multi-hop connector tables, and an intentionally ambiguous join graph.
+
+Run it independently with:
+
+```bash
+npm run benchmark:large-schema
+```
+
+The regular MVP benchmark embeds the same comparison in its JSON and Markdown
+reports under `large_schema_comparison`.
 
 ## Pass/Fail Gates (MVP)
 
@@ -58,6 +82,9 @@ Secondary:
 - Critical safety violations = 0.
 - P95 latency <= 8s on staging profile.
 - SQL validation pass rate >= 98%.
+- Candidate table recall@15 >= 95%.
+- Join-path accuracy >= 95%.
+- Provider-free large-schema comparison gates all pass.
 
 ## Report Template
 

@@ -5090,6 +5090,43 @@ export interface components {
             confidence: number;
             /** @description True when the request was handled as a dry-run and no query was executed. */
             preview: boolean;
+            diagnostics: components["schemas"]["QueryGenerationDiagnostics"];
+        };
+        /** @description Compact generation metadata for debugging and benchmark measurement. Prompt contents are never included. */
+        QueryGenerationDiagnostics: {
+            schema_linking: null | {
+                /** @enum {string} */
+                status: "complete" | "ambiguous" | "disconnected" | "not_run";
+                fallback_used: boolean;
+                candidate_tables: {
+                    id: string;
+                    ref: string;
+                    score: number;
+                    lexical_score: number;
+                    rag_score: number;
+                    matched_terms: string[];
+                }[];
+                selected_core_table_ids: string[];
+                expanded_tables: {
+                    id: string;
+                    ref: string;
+                }[];
+                connector_table_ids: string[];
+                join_edges: {
+                    id: string;
+                    left_ref: string;
+                    right_ref: string;
+                    /** @enum {string} */
+                    source: "approved_policy" | "relationship";
+                }[];
+            };
+            prompts: {
+                linker_chars: number;
+                generation_chars: number;
+                repair_chars: number;
+                total_chars: number;
+            };
+            repair_count: number;
         };
         FeedbackRequest: {
             rating: number;
@@ -5261,6 +5298,13 @@ export interface components {
             summary: {
                 [key: string]: unknown;
             };
+            observability?: unknown;
+            large_schema_comparison?: {
+                [key: string]: unknown;
+            };
+            cases?: {
+                [key: string]: unknown;
+            }[];
         };
         ExportRequest: {
             /**

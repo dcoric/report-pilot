@@ -144,6 +144,7 @@ curl -X POST http://localhost:8080/v1/llm/providers \
 Benchmark assets:
 
 - Dataset: `docs/evals/dvdrental-mvp-benchmark.json` (60 reporting prompts)
+- Large-schema fixture: `docs/evals/large-schema-linking-benchmark.json` (300 distractor tables plus multi-hop, wide-table, paraphrase, and ambiguity cases)
 - Runner: `app/src/benchmark/runMvpBenchmark.ts`
 
 Recommended flow with the dvdrental fixture:
@@ -162,6 +163,12 @@ BENCHMARK_ORACLE_CONN=postgresql://postgres:postgres@localhost:5440/dvdrental \
 npm run benchmark:mvp
 ```
 
+The provider-free schema-linking comparison can be run without databases or API keys:
+
+```bash
+npm run benchmark:large-schema
+```
+
 Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by dynamic offsets so the latest rental and latest payment land around yesterday (relative to system time), then caps shifted values at current system date/time to avoid future-dated rows.
 
 Report outputs:
@@ -169,6 +176,8 @@ Report outputs:
 - JSON and Markdown reports in `docs/evals/reports`
 - Benchmark summary is also persisted to the app DB via `POST /v1/observability/release-gates/report`
 - Runner exits with code `2` when one or more MVP release gates fail.
+- Reports include table recall@15, join-path accuracy, repair rate, prompt size,
+  schema-size/complexity stratification, and a legacy-global versus hierarchical comparison.
 
 Progress tracker:
 

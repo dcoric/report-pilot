@@ -97,7 +97,8 @@ function baseDependencies(cards: TableCard[], docs: RagRetrievalDoc[]): Generati
       model: "test-model",
       attempts: [],
       fallback_reason: null,
-      prompt_version: "v3-schema-linker"
+      prompt_version: "v3-schema-linker",
+      prompt_chars: 500
     }),
     loadExpandedSchemaContext: async (_dataSourceId, coreIds) => ({
       graph: { nodes: [], edges: [] },
