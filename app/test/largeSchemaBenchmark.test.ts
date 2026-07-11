@@ -21,8 +21,13 @@ test("large-schema benchmark compares legacy caps with hierarchical linking", as
   assert.equal(result.cases.find((item) => item.id === "ls003")?.hierarchical.expansion_status, "complete");
   assert.equal(result.cases.find((item) => item.id === "ls005")?.hierarchical.expansion_status, "ambiguous");
   assert.equal(result.release_gates.all_passed, true);
-  assert.equal(result.gate_diagnostics.length, 4);
+  assert.equal(result.gate_diagnostics.length, 8);
   assert.equal(result.gate_diagnostics.every((gate) => gate.passed), true);
+  assert.deepEqual(result.scaling.map((item) => item.distractor_table_count), [100, 300, 1000]);
+  assert.equal(result.scaling.every((item) => item.table_recall_at_15 >= 0.95), true);
+  assert.equal(result.scaling.every((item) => item.join_path_accuracy === 1), true);
+  assert.equal(result.scaling.every((item) => item.max_candidate_count <= 15), true);
+  assert.equal(result.scaling.every((item) => item.p95_linking_latency_ms <= 250), true);
   assert.deepEqual(formatLargeSchemaGateFailures(result), []);
 });
 
