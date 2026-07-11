@@ -9,6 +9,7 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 - `npm run build` — builds frontend (`npm run build:fe`) and backend (`npm run build:be`); backend output goes to `dist/` (compiled by `tsc`)
 - `npm start` — runs the compiled backend via `node dist/src/start.js` (used by the Docker image)
 - `npm test` — runs `node --test` with the `tsx` loader against `app/test/**/*.test.ts`
+- `npm run test:e2e` — runs the Playwright Chromium smoke suite against a local Vite server
 - `npm run typecheck`
 - `npm run migrate`
 - `npm run types:openapi` — regenerate `app/src/types/openapi.ts` from `docs/api/openapi.yaml`

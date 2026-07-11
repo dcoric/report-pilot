@@ -14,6 +14,8 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 .cache/
+frontend/playwright-report/
+frontend/test-results/
 
 # ---- Build artifacts ----
 dist/
