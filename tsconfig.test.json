@@ -9,11 +9,9 @@
     "node_modules",
     "dist",
     "frontend",
-    "app/test/accountLinkingApi.test.ts",
     "app/test/adminUsersApi.test.ts",
     "app/test/savedQueriesApi.test.ts",
     "app/test/savedQueryFoldersApi.test.ts",
-    "app/test/savedQuerySchedulesApi.test.ts",
-    "app/test/scimApi.test.ts"
+    "app/test/savedQuerySchedulesApi.test.ts"
   ]
 }

@@ -20,22 +20,56 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import scimTokenService = require("../src/services/scimTokenService");
+import type { PoolClient } from "pg";
+import type { ProviderRow } from "../src/services/authProviderService";
+import type { AuthUserRow } from "../src/services/authService";
+import type { LinkedIdentity } from "../src/services/linkedIdentityService";
+import type { ScimTokenPublic } from "../src/services/scimTokenService";
+
+interface ScimTokenRow extends ScimTokenPublic {
+  token_hash: string;
+}
+
+interface AuditRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+interface ScimUserPayload {
+  id: string;
+  userName: string;
+  externalId: string;
+  active: boolean;
+}
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
 let originalQuery: typeof appDb.query;
 let originalWithTransaction: typeof appDb.withTransaction;
 
-let providers;
-let users;
-let linkedIdentities;
-let scimTokens;
-let auditRows;
-let userRoleLinks; // Set of "userId:roleName"
-let userCounter;
-let identityCounter;
-let auditCounter;
-let tokenCounter;
+let providers: Map<string, ProviderRow>;
+let users: Map<string, AuthUserRow>;
+let linkedIdentities: Map<string, LinkedIdentity>;
+let scimTokens: Map<string, ScimTokenRow>;
+let auditRows: AuditRow[];
+let userRoleLinks: Set<string>; // Set of "userId:roleName"
+let userCounter: number;
+let identityCounter: number;
+let auditCounter: number;
+let tokenCounter: number;
 
 function uuid(prefix: string, counter: number) {
   return `00000000-0000-4000-8000-${prefix}${String(counter).padStart(8, "0")}`;
@@ -50,11 +84,11 @@ function nextIdentityId(): string { identityCounter += 1; return uuid("ffff", id
 function nextAuditId() { auditCounter += 1; return uuid("dddd", auditCounter); }
 function nextTokenId() { tokenCounter += 1; return uuid("9999", tokenCounter); }
 
-function seedProvider(overrides: Record<string, unknown> = {}) {
-  const row = {
-    id: overrides.id || uuid("eeee", 1),
+function seedProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
+  const row: ProviderRow = {
+    id: overrides.id ?? uuid("eeee", 1),
     type: "oidc",
-    name: overrides.name || "okta",
+    name: overrides.name ?? "okta",
     display_name: "Okta",
     issuer: "https://okta.example.com",
     client_id: "test-client",
@@ -68,7 +102,7 @@ function seedProvider(overrides: Record<string, unknown> = {}) {
     jit_default_role: "viewer",
     jit_allowed_domains: [],
     require_email_verified: true,
-    scim_group_mappings: overrides.scim_group_mappings || {},
+    scim_group_mappings: overrides.scim_group_mappings ?? {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -76,9 +110,10 @@ function seedProvider(overrides: Record<string, unknown> = {}) {
   return row;
 }
 
-function seedToken(providerId, { label = "okta", revoked = false } = {}) {
+function seedToken(providerId: string, { label = "okta", revoked = false }: { label?: string; revoked?: boolean } = {}) {
   const raw = scimTokenService.generateRawToken();
   const hash = scimTokenService.hashToken(raw);
+  assert.ok(hash, "expected SCIM token hash");
   const id = nextTokenId();
   scimTokens.set(id, {
     id,
@@ -92,7 +127,11 @@ function seedToken(providerId, { label = "okta", revoked = false } = {}) {
   return { id, token: raw };
 }
 
-async function call(method: string, path: string, { authToken, body }: { authToken?: string; body?: unknown } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { authToken, body }: { authToken?: string; body?: unknown } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/scim+json" };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -100,12 +139,12 @@ async function call(method: string, path: string, { authToken, body }: { authTok
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   const text = await response.text();
   if (text) {
     try { payload = JSON.parse(text); } catch { payload = null; }
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
 before(async () => {
@@ -122,17 +161,19 @@ before(async () => {
   auditCounter = 0;
   tokenCounter = 0;
 
-  appDb.withTransaction = (async (handler) => {
-    const txClient = { query: async (sql, params) => appDb.query(sql, params) };
-    return handler(txClient);
-  }) as unknown as typeof appDb.withTransaction;
+  const txClient = {
+    query: (sql: string, params: unknown[] = []) => appDb.query(sql, params)
+  } as unknown as PoolClient;
+  appDb.withTransaction = (async <T>(handler: (client: PoolClient) => Promise<T>): Promise<T> => (
+    handler(txClient)
+  )) as typeof appDb.withTransaction;
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const n = normalize(sql);
 
     // scimTokenService.verifyToken — SELECT by hash
     if (n.startsWith("select id, provider_id, label, token_hash, created_at, last_used_at, revoked_at from scim_tokens where token_hash = $1")) {
-      const [hash] = params;
+      const [hash] = params as [string];
       const row = [...scimTokens.values()].find((t) => t.token_hash === hash);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -143,19 +184,19 @@ before(async () => {
 
     // findProviderById (used by SCIM group sync)
     if (n.startsWith("select") && /from auth_providers\s+where id = \$1/.test(n)) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = providers.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     // scimUserService.listUsers — count + page
     if (n.startsWith("select count(*)::int as total from linked_identities li join users u on u.id = li.user_id where li.provider_id =")) {
-      const [providerId] = params;
+      const [providerId] = params as [string];
       const links = [...linkedIdentities.values()].filter((li) => li.provider_id === providerId);
       return { rowCount: 1, rows: [{ total: links.length }] };
     }
     if (n.startsWith("select u.id, u.email, u.display_name, u.is_active, u.created_at, u.updated_at, li.subject as external_id from linked_identities li join users u on u.id = li.user_id where li.provider_id =")) {
-      const [providerId] = params;
+      const [providerId] = params as [string];
       const out = [];
       for (const li of linkedIdentities.values()) {
         if (li.provider_id !== providerId) continue;
@@ -168,7 +209,7 @@ before(async () => {
 
     // scimUserService.findUserByExternalId
     if (n.startsWith("select u.id, u.email, u.password_hash, u.display_name, u.is_active, u.last_login_at, u.created_at, u.updated_at from linked_identities li join users u on u.id = li.user_id where li.provider_id = $1 and li.subject = $2")) {
-      const [providerId, subject] = params;
+      const [providerId, subject] = params as [string, string];
       const link = [...linkedIdentities.values()].find(
         (li) => li.provider_id === providerId && li.subject === subject
       );
@@ -178,7 +219,7 @@ before(async () => {
     }
     // findUserByExternalIdOrUserId (by users.id + linked_identities join)
     if (n.startsWith("select u.id, u.email, u.display_name, u.is_active, u.created_at, u.updated_at from users u join linked_identities li on li.user_id = u.id where u.id = $1 and li.provider_id = $2")) {
-      const [userId, providerId] = params;
+      const [userId, providerId] = params as [string, string];
       const link = [...linkedIdentities.values()].find(
         (li) => li.user_id === userId && li.provider_id === providerId
       );
@@ -189,15 +230,15 @@ before(async () => {
 
     // Lookup by lower(email) inside the SCIM create flow
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const [emailLower] = params as [string];
       const row = [...users.values()].find((u) => u.email.toLowerCase() === emailLower);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     // INSERT users (SCIM create new local user)
     if (n.startsWith("insert into users")) {
-      const [email, displayName, isActive] = params;
-      const row = {
+      const [email, displayName, isActive] = params as [string, string | null, boolean];
+      const row: AuthUserRow = {
         id: nextUserId(),
         email,
         password_hash: null,
@@ -213,7 +254,7 @@ before(async () => {
 
     // UPDATE users (SCIM replace/patch/deactivate)
     if (n.startsWith("update users set email = $2, display_name = $3, is_active = $4, updated_at = now() where id = $1")) {
-      const [id, email, displayName, isActive] = params;
+      const [id, email, displayName, isActive] = params as [string, string, string | null, boolean];
       const row = users.get(id);
       if (!row) return { rowCount: 0, rows: [] };
       row.email = email;
@@ -224,7 +265,7 @@ before(async () => {
       return { rowCount: 1, rows: [row] };
     }
     if (n.startsWith("update users set is_active = false, updated_at = now() where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = users.get(id);
       if (row) { row.is_active = false; row.updated_at = new Date().toISOString(); }
       return { rowCount: row ? 1 : 0, rows: [] };
@@ -232,14 +273,14 @@ before(async () => {
 
     // INSERT linked_identities
     if (n.startsWith("insert into linked_identities")) {
-      const [userId, providerId, subject, email] = params;
+      const [userId, providerId, subject, email] = params as [string, string, string, string | null];
       const dup = [...linkedIdentities.values()].some(
         (li) => li.provider_id === providerId && li.subject === subject
       );
       if (dup) {
         const err = Object.assign(new Error("duplicate"), { code: "23505" }); throw err;
       }
-      const row = {
+      const row: LinkedIdentity = {
         id: nextIdentityId(),
         user_id: userId, provider_id: providerId, subject, email_at_link: email || null,
         created_at: new Date().toISOString(), last_seen_at: new Date().toISOString()
@@ -249,7 +290,7 @@ before(async () => {
     }
     // SELECT subject linked for user
     if (n.startsWith("select subject from linked_identities where provider_id = $1 and user_id = $2")) {
-      const [providerId, userId] = params;
+      const [providerId, userId] = params as [string, string];
       const row = [...linkedIdentities.values()].find(
         (li) => li.provider_id === providerId && li.user_id === userId
       );
@@ -257,7 +298,7 @@ before(async () => {
     }
     // Unlink
     if (n.startsWith("delete from linked_identities where user_id = $1 and provider_id = $2")) {
-      const [userId, providerId] = params;
+      const [userId, providerId] = params as [string, string];
       for (const [key, row] of linkedIdentities) {
         if (row.user_id === userId && row.provider_id === providerId) {
           linkedIdentities.delete(key);
@@ -269,18 +310,18 @@ before(async () => {
 
     // roleService.assignRolesByName / revokeRolesByName
     if (n.startsWith("select id, name from roles where lower(name) = any($1::text[])")) {
-      const [names] = params;
-      return { rowCount: (names || []).length, rows: (names || []).map((name, idx) => ({ id: uuid("ccc1", idx + 1), name })) };
+      const [names] = params as [string[]];
+      return { rowCount: names.length, rows: names.map((name, idx) => ({ id: uuid("ccc1", idx + 1), name })) };
     }
     if (n.startsWith("insert into user_roles")) {
-      const [userId, roleId] = params;
+      const [userId, roleId] = params as [string, string];
       const key = `${userId}:${roleId}`;
       const had = userRoleLinks.has(key);
       userRoleLinks.add(key);
       return { rowCount: had ? 0 : 1, rows: had ? [] : [{ role_id: roleId }] };
     }
     if (n.startsWith("delete from user_roles where user_id = $1 and role_id = $2 returning role_id")) {
-      const [userId, roleId] = params;
+      const [userId, roleId] = params as [string, string];
       const key = `${userId}:${roleId}`;
       const had = userRoleLinks.has(key);
       userRoleLinks.delete(key);
@@ -289,12 +330,21 @@ before(async () => {
 
     // Audit insert
     if (n.startsWith("insert into auth_audit_log")) {
-      const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params;
+      const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params as [
+        string | null,
+        string | null,
+        string | null,
+        string,
+        string | null,
+        string,
+        string | null,
+        string | null
+      ];
       auditRows.push({
         id: nextAuditId(),
         actor_user_id: actorUserId, actor_email: actorEmail,
         target_user_id: targetUserId, action, outcome,
-        details: JSON.parse(detailsJson),
+        details: JSON.parse(detailsJson) as Record<string, unknown>,
         ip_address: ipAddress, user_agent: userAgent,
         created_at: new Date().toISOString()
       });
@@ -330,7 +380,7 @@ beforeEach(() => {
 });
 
 test("SCIM endpoints require a bearer token", async () => {
-  const noToken = await call("GET", "/scim/v2/ServiceProviderConfig");
+  const noToken = await call<{ schemas: string[] }>("GET", "/scim/v2/ServiceProviderConfig");
   assert.equal(noToken.status, 401);
   assert.ok(noToken.payload && noToken.payload.schemas.includes("urn:ietf:params:scim:api:messages:2.0:Error"));
 
@@ -341,14 +391,14 @@ test("SCIM endpoints require a bearer token", async () => {
 test("revoked tokens are rejected", async () => {
   const provider = seedProvider();
   const { token } = seedToken(provider.id, { revoked: true });
-  const result = await call("GET", "/scim/v2/ServiceProviderConfig", { authToken: token });
+  const result = await call<{ patch: { supported: boolean }; authenticationSchemes: unknown[] }>("GET", "/scim/v2/ServiceProviderConfig", { authToken: token });
   assert.equal(result.status, 401);
 });
 
 test("ServiceProviderConfig is bearer-authenticated and advertises PATCH support", async () => {
   const provider = seedProvider();
   const { token } = seedToken(provider.id);
-  const result = await call("GET", "/scim/v2/ServiceProviderConfig", { authToken: token });
+  const result = await call<{ patch: { supported: boolean }; authenticationSchemes: unknown[] }>("GET", "/scim/v2/ServiceProviderConfig", { authToken: token });
   assert.equal(result.status, 200);
   assert.equal(result.payload.patch.supported, true);
   assert.ok(Array.isArray(result.payload.authenticationSchemes));
@@ -358,7 +408,7 @@ test("POST /scim/v2/Users creates a local user, links the identity, and audits",
   const provider = seedProvider();
   const { token } = seedToken(provider.id);
 
-  const result = await call("POST", "/scim/v2/Users", {
+  const result = await call<ScimUserPayload>("POST", "/scim/v2/Users", {
     authToken: token,
     body: {
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
@@ -396,7 +446,7 @@ test("POST with the same externalId returns 409 uniqueness", async () => {
   };
   const first = await call("POST", "/scim/v2/Users", { authToken: token, body });
   assert.equal(first.status, 201);
-  const second = await call("POST", "/scim/v2/Users", { authToken: token, body });
+  const second = await call<{ scimType: string }>("POST", "/scim/v2/Users", { authToken: token, body });
   assert.equal(second.status, 409);
   assert.equal(second.payload.scimType, "uniqueness");
 });
@@ -404,7 +454,7 @@ test("POST with the same externalId returns 409 uniqueness", async () => {
 test("PATCH active=false deactivates the user and emits scim.user.deactivated", async () => {
   const provider = seedProvider();
   const { token } = seedToken(provider.id);
-  const created = await call("POST", "/scim/v2/Users", {
+  const created = await call<ScimUserPayload>("POST", "/scim/v2/Users", {
     authToken: token,
     body: {
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
@@ -416,7 +466,7 @@ test("PATCH active=false deactivates the user and emits scim.user.deactivated", 
   });
   assert.equal(created.status, 201);
 
-  const patched = await call("PATCH", `/scim/v2/Users/${created.payload.id}`, {
+  const patched = await call<ScimUserPayload>("PATCH", `/scim/v2/Users/${created.payload.id}`, {
     authToken: token,
     body: {
       schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
@@ -433,7 +483,7 @@ test("PATCH /scim/v2/Groups syncs members to the mapped local role", async () =>
   const { token } = seedToken(provider.id);
 
   // Create two SCIM users so we have valid member IDs.
-  const u1 = await call("POST", "/scim/v2/Users", {
+  const u1 = await call<ScimUserPayload>("POST", "/scim/v2/Users", {
     authToken: token,
     body: {
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
@@ -441,7 +491,7 @@ test("PATCH /scim/v2/Groups syncs members to the mapped local role", async () =>
       emails: [{ value: "dan@example.com", primary: true }]
     }
   });
-  const u2 = await call("POST", "/scim/v2/Users", {
+  const u2 = await call<ScimUserPayload>("POST", "/scim/v2/Users", {
     authToken: token,
     body: {
       schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
