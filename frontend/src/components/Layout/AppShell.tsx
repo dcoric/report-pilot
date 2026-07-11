@@ -13,6 +13,7 @@ import {
     Home,
     KeyRound,
     Plus,
+    RefreshCw,
     Settings as SettingsIcon,
     Star,
     Terminal,
@@ -92,7 +93,14 @@ function NavItem({ to, label, Icon, stub }: { to: string; label: string; Icon: t
 
 function HeaderInner() {
     const location = useLocation();
-    const { dataSources, selectedDataSourceId, setSelectedDataSourceId } = useDataSource();
+    const {
+        dataSources,
+        selectedDataSourceId,
+        setSelectedDataSourceId,
+        isLoadingDataSources,
+        dataSourceLoadError,
+        refreshDataSources,
+    } = useDataSource();
     const { actions } = useWorkspaceActions();
     const [showConnectionMenu, setShowConnectionMenu] = useState(false);
 
@@ -110,9 +118,14 @@ function HeaderInner() {
                         type="button"
                         onClick={() => setShowConnectionMenu((current) => !current)}
                         className="flex items-center gap-1.5 rounded font-medium text-slate-600 hover:text-slate-900"
+                        aria-haspopup="menu"
+                        aria-expanded={showConnectionMenu}
                     >
                         <Database size={14} className="text-oxblood" />
-                        <span>{selectedDataSource?.name || 'Select connection'}</span>
+                        <span>
+                            {selectedDataSource?.name
+                                || (isLoadingDataSources ? 'Loading connections…' : 'Select connection')}
+                        </span>
                         <ChevronDown size={14} />
                     </button>
                     {showConnectionMenu && (
@@ -139,7 +152,31 @@ function HeaderInner() {
                                         </div>
                                     </button>
                                 ))}
-                                {dataSources.length === 0 && (
+                                {isLoadingDataSources && dataSources.length === 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-2 text-sm text-slate-500">
+                                        <RefreshCw size={14} className="animate-spin" aria-hidden="true" />
+                                        Loading connections…
+                                    </div>
+                                )}
+                                {dataSourceLoadError && (
+                                    <div className="border-t border-outline-variant px-3 py-2 text-sm" role="alert">
+                                        <p className="text-red-700">Connections unavailable.</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => void refreshDataSources()}
+                                            disabled={isLoadingDataSources}
+                                            className="mt-1 inline-flex items-center gap-1 font-medium text-oxblood hover:underline disabled:opacity-60"
+                                        >
+                                            <RefreshCw
+                                                size={13}
+                                                className={isLoadingDataSources ? 'animate-spin' : ''}
+                                                aria-hidden="true"
+                                            />
+                                            Try again
+                                        </button>
+                                    </div>
+                                )}
+                                {!isLoadingDataSources && !dataSourceLoadError && dataSources.length === 0 && (
                                     <div className="px-3 py-2 text-sm italic text-slate-400">No connections available</div>
                                 )}
                             </div>
