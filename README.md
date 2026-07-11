@@ -21,7 +21,7 @@ npm --prefix frontend exec -- playwright install chromium
 npm run test:e2e
 ```
 
-The smoke suite starts the Vite frontend automatically and provides in-browser API fixtures, so it does not require PostgreSQL, a reporting database, or LLM credentials. Pull request CI runs the same test after the frontend lint and build gates.
+The smoke suite starts the Vite frontend automatically and provides in-browser API fixtures, so it does not require PostgreSQL, a reporting database, or LLM credentials. It also checks keyboard-only sign-in and query submission plus automated WCAG A/AA scans before and after execution. Pull request CI runs the same test after the frontend lint and build gates.
 
 ## Run
 

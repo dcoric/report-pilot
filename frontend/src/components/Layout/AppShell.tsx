@@ -81,7 +81,7 @@ function NavItem({ to, label, Icon, stub }: { to: string; label: string; Icon: t
                 isActive
                     ? 'bg-white/10 text-white border-l-2 border-oxblood'
                     : 'text-slate-400 hover:bg-white/5 hover:text-white',
-                stub ? 'opacity-60' : '',
+                stub ? 'text-slate-400' : '',
             ].filter(Boolean).join(' ')}
             title={stub ? 'Coming soon' : undefined}
         >
@@ -252,7 +252,7 @@ function AppShellInner() {
                     </div>
                     <div>
                         <div className="text-base font-semibold leading-tight text-white">Workbench</div>
-                        <div className="text-[10px] font-medium text-slate-500">v2.4.0</div>
+                        <div className="text-[10px] font-medium text-slate-400">v2.4.0</div>
                     </div>
                 </div>
 
@@ -264,7 +264,7 @@ function AppShellInner() {
                     ))}
                     {adminNav.length > 0 && (
                         <div className="mt-4 space-y-1 border-t border-white/5 pt-3">
-                            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Admin</div>
+                            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Admin</div>
                             {adminNav.map((item) => (
                                 <NavItem key={item.path} to={item.path} label={item.label} Icon={item.icon} stub={item.stub} />
                             ))}

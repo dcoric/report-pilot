@@ -23,7 +23,7 @@ export function SqlSection({
     return (
         <div className="flex flex-[0.45] flex-col overflow-hidden border-b border-outline-variant bg-white">
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-outline-variant bg-surface-container-low px-4">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                     Generated SQL
                 </span>
                 <div className="flex items-center gap-1">
@@ -61,7 +61,7 @@ export function SqlSection({
             </div>
             <div className="min-h-0 flex-1 bg-white">
                 {isGenerating ? (
-                    <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                    <div className="flex h-full items-center justify-center text-sm text-slate-600">
                         <Loader2 className="mr-2 animate-spin" size={16} />
                         Generating SQL…
                     </div>
@@ -83,7 +83,7 @@ export function SqlSection({
                         }}
                     />
                 ) : (
-                    <div className="flex h-full items-center justify-center p-4 text-center text-sm text-slate-400">
+                    <div className="flex h-full items-center justify-center p-4 text-center text-sm text-slate-600">
                         Generate a query or load a saved one to start editing SQL.
                     </div>
                 )}
