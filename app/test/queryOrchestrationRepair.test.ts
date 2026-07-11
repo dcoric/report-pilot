@@ -11,6 +11,7 @@ import {
 } from "../src/services/queryOrchestrationService";
 import type { GenerateSqlWithRoutingInput, GenerateSqlWithRoutingResult } from "../src/services/llmSqlService";
 import type { DbAdapter } from "../src/adapters/types";
+import type { QueryDiagnosticInput } from "../src/services/queryDiagnosticsService";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000101";
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
@@ -20,6 +21,7 @@ const ATTEMPT_ID = "00000000-0000-4000-8000-000000000301";
 let originalQuery: typeof appDb.query;
 let insertedSql: string[];
 let statuses: string[];
+let emittedDiagnostics: QueryDiagnosticInput[];
 
 before(() => {
   originalQuery = appDb.query;
@@ -45,6 +47,7 @@ before(() => {
 beforeEach(() => {
   insertedSql = [];
   statuses = [];
+  emittedDiagnostics = [];
 });
 
 after(() => {
@@ -80,6 +83,11 @@ test("orchestrateQueryRun repairs invalid SQL once and reruns the safety pipelin
     repair_chars: 800,
     total_chars: 1400
   });
+  assert.equal(emittedDiagnostics.length, 1);
+  assert.equal(emittedDiagnostics[0].requestId, "request-1");
+  assert.equal(emittedDiagnostics[0].outcome, "succeeded");
+  assert.equal(emittedDiagnostics[0].terminalStage, "validation");
+  assert.equal(emittedDiagnostics[0].repairCount, 1);
 });
 
 test("orchestrateQueryRun stops after one failed repair and marks it exhausted", async () => {
@@ -100,6 +108,9 @@ test("orchestrateQueryRun stops after one failed repair and marks it exhausted",
   assert.deepEqual(stages, ["generation", "repair"]);
   assert.equal(insertedSql.length, 2);
   assert.deepEqual(statuses, ["failed"]);
+  assert.equal(emittedDiagnostics.length, 1);
+  assert.equal(emittedDiagnostics[0].outcome, "failed");
+  assert.equal(emittedDiagnostics[0].errorCode, "invalid_sql");
 });
 
 test("orchestrateQueryRun repairs adapter validation errors before EXPLAIN and execution", async () => {
@@ -136,6 +147,7 @@ function baseInput() {
     sessionId: SESSION_ID,
     question: "What is total revenue?",
     dataSourceId: DATA_SOURCE_ID,
+    requestId: "request-1",
     connectionRef: "postgresql://unused",
     dbType: "postgres",
     maxRows: 100,
@@ -175,6 +187,9 @@ function dependenciesWithGenerator(
       }
     }),
     generateSqlWithRouting: generate,
+    emitQueryDiagnostic: (diagnostic) => {
+      emittedDiagnostics.push(diagnostic);
+    },
     createDatabaseAdapter: () => {
       throw new Error("Adapter must not be created for no_execute tests");
     }

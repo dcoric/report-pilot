@@ -23,6 +23,10 @@ import type { DbAdapter } from "../adapters/types";
 import { prepareQueryGenerationContext, type SchemaLinkingDiagnostics } from "./queryGenerationContextService";
 import type { QueryContext } from "./queryOrchestrationStore";
 import type { RagRetrievalDoc } from "./ragRetrieval";
+import {
+  emitQueryDiagnostic,
+  type QueryDiagnosticInput
+} from "./queryDiagnosticsService";
 
 const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
 const { retrieveRagContext } = ragRetrieval;
@@ -52,12 +56,14 @@ export interface QueryOrchestrationDependencies {
   prepareQueryGenerationContext: typeof prepareQueryGenerationContext;
   generateSqlWithRouting: typeof generateSqlWithRouting;
   createDatabaseAdapter: typeof createDatabaseAdapter;
+  emitQueryDiagnostic: typeof emitQueryDiagnostic;
 }
 
 const defaultDependencies: QueryOrchestrationDependencies = {
   prepareQueryGenerationContext,
   generateSqlWithRouting,
-  createDatabaseAdapter
+  createDatabaseAdapter,
+  emitQueryDiagnostic
 };
 
 function success<T>(body: T, statusCode = 200): OrchestrateResult<T> {
@@ -181,8 +187,52 @@ export async function orchestrateQueryRun({
   const sqlDialect: "postgres" | "mssql" = session.db_type === "mssql" ? "mssql" : "postgres";
   const generationStartedAt = Date.now();
   let context: QueryContext;
-  let ragDocuments: RagRetrievalDoc[];
+  let ragDocuments: RagRetrievalDoc[] = [];
   let schemaLinking: SchemaLinkingDiagnostics | null = null;
+  let expandedTableIds: string[] = [];
+  let usedProvider = "unknown";
+  let usedModel: string | null = requestedModel || "unknown";
+  let generationAttempts: ProviderAttempt[] = [];
+  let generationTokenUsage: unknown = null;
+  let promptVersion = "v3-scoped-generation";
+  let generationPromptChars = 0;
+  let schemaLinkingDurationMs = 0;
+  let executionDurationMs = 0;
+  const repairs: Array<{
+    errors: string[];
+    provider: string;
+    model: string | null;
+    prompt_version: string;
+    prompt_chars: number;
+  }> = [];
+
+  const emitTerminalDiagnostic = (
+    outcome: QueryDiagnosticInput["outcome"],
+    terminalStage: QueryDiagnosticInput["terminalStage"],
+    errorCode: string | null = null
+  ): void => {
+    dependencies.emitQueryDiagnostic({
+      requestId,
+      sessionId,
+      outcome,
+      terminalStage,
+      errorCode,
+      durationMs: Date.now() - generationStartedAt,
+      schemaLinkingDurationMs,
+      schemaLinking,
+      expandedTableIds,
+      ragDocumentCount: ragDocuments.length,
+      provider: usedProvider,
+      model: usedModel,
+      providerAttempts: generationAttempts,
+      repairCount: repairs.length,
+      linkerPromptChars: schemaLinking?.linker?.prompt_chars || 0,
+      generationPromptChars,
+      repairPromptChars: repairs.reduce((total, repair) => total + repair.prompt_chars, 0),
+      tokenUsage: generationTokenUsage,
+      executionDurationMs
+    });
+  };
 
   if (sqlOverride) {
     [context, ragDocuments] = await Promise.all([
@@ -191,6 +241,7 @@ export async function orchestrateQueryRun({
     ]);
   } else {
     let prepared;
+    const schemaLinkingStartedAt = Date.now();
     try {
       prepared = await dependencies.prepareQueryGenerationContext({
         dataSourceId: session.data_source_id,
@@ -200,15 +251,19 @@ export async function orchestrateQueryRun({
         requestId
       });
     } catch (err) {
+      schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
       await markSessionStatus(sessionId, "failed");
+      emitTerminalDiagnostic("failed", "schema_linking", "schema_linking_failed");
       return failure(502, {
         error: "schema_linking_failed",
         message: (err as Error).message
       });
     }
+    schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
     schemaLinking = prepared.diagnostics;
     if (prepared.ok === false) {
       await markSessionStatus(sessionId, "failed");
+      emitTerminalDiagnostic("failed", "schema_linking", prepared.code);
       return failure(422, {
         error: prepared.code,
         message: prepared.message,
@@ -218,15 +273,10 @@ export async function orchestrateQueryRun({
     context = prepared.context;
     ragDocuments = prepared.ragDocuments;
   }
+  expandedTableIds = context.schemaObjects.map((object) => object.id);
   const forbiddenColumns = extractForbiddenColumnsFromRagNotes(context.ragNotes, context.columns);
 
   let generatedSql: string;
-  let usedProvider = "unknown";
-  let usedModel: string = requestedModel || "unknown";
-  let generationAttempts: ProviderAttempt[] = [];
-  let generationTokenUsage: unknown = null;
-  let promptVersion = "v3-scoped-generation";
-  let generationPromptChars = 0;
 
   if (sqlOverride) {
     generatedSql = sqlOverride;
@@ -260,6 +310,7 @@ export async function orchestrateQueryRun({
       generationPromptChars = generation.promptChars || 0;
     } catch (err) {
       await markSessionStatus(sessionId, "failed");
+      emitTerminalDiagnostic("failed", "generation", "llm_generation_failed");
       return failure(502, {
         error: "llm_generation_failed",
         message: (err as Error).message
@@ -268,14 +319,6 @@ export async function orchestrateQueryRun({
   }
 
   let adapter: DbAdapter | null = null;
-  const repairs: Array<{
-    errors: string[];
-    provider: string;
-    model: string | null;
-    prompt_version: string;
-    prompt_chars: number;
-  }> = [];
-
   try {
     let safeSql = generatedSql;
     let safety = validateAndNormalizeSql(generatedSql, {
@@ -313,6 +356,7 @@ export async function orchestrateQueryRun({
             try {
               adapter = dependencies.createDatabaseAdapter(session.db_type, session.connection_ref);
             } catch (err) {
+              emitTerminalDiagnostic("failed", "execution", "unsupported_database_adapter");
               return failure(400, { error: "bad_request", message: (err as Error).message });
             }
           }
@@ -368,6 +412,7 @@ export async function orchestrateQueryRun({
             });
           } catch (err) {
             await markSessionStatus(sessionId, "failed");
+            emitTerminalDiagnostic("failed", "generation", "llm_repair_failed");
             return failure(502, {
               error: "llm_repair_failed",
               message: (err as Error).message,
@@ -405,6 +450,7 @@ export async function orchestrateQueryRun({
           generationTokenUsage
         });
         await markSessionStatus(sessionId, "failed");
+        emitTerminalDiagnostic("failed", "validation", "invalid_sql");
         return failure(400, {
           error: "invalid_sql",
           details: validationErrors,
@@ -456,6 +502,7 @@ export async function orchestrateQueryRun({
               });
             } catch (err) {
               await markSessionStatus(sessionId, "failed");
+              emitTerminalDiagnostic("failed", "generation", "llm_repair_failed");
               return failure(502, {
                 error: "llm_repair_failed",
                 message: (err as Error).message,
@@ -489,6 +536,7 @@ export async function orchestrateQueryRun({
             generationTokenUsage
           });
           await markSessionStatus(sessionId, "failed");
+          emitTerminalDiagnostic("failed", "budget", "query_budget_exceeded");
           return failure(400, {
             error: "query_budget_exceeded",
             details: budget.errors,
@@ -543,6 +591,7 @@ export async function orchestrateQueryRun({
 
     if (noExecute) {
       await markSessionStatus(sessionId, "completed");
+      emitTerminalDiagnostic("succeeded", "validation");
       return success({
         attempt_id: attemptId,
         sql: safeSql,
@@ -562,6 +611,7 @@ export async function orchestrateQueryRun({
     }
 
     const execution = await adapter!.executeReadOnly(safeSql, { timeoutMs, maxRows });
+    executionDurationMs = execution.durationMs;
     await insertQueryResultMeta({
       attemptId: attemptId as string,
       rowCount: execution.rowCount,
@@ -570,6 +620,7 @@ export async function orchestrateQueryRun({
     });
 
     await markSessionStatus(sessionId, "completed");
+    emitTerminalDiagnostic("succeeded", "execution");
 
     return success({
       attempt_id: attemptId,
@@ -591,6 +642,7 @@ export async function orchestrateQueryRun({
     await markSessionStatus(sessionId, "failed");
 
     if (isLikelyInvalidSqlExecutionError(err, sqlDialect)) {
+      emitTerminalDiagnostic("failed", "execution", "invalid_sql");
       return failure(400, {
         error: "invalid_sql",
         details: [(err as Error).message],
@@ -598,6 +650,7 @@ export async function orchestrateQueryRun({
       });
     }
 
+    emitTerminalDiagnostic("failed", "execution", "query_execution_failed");
     return failure(500, {
       error: "query_execution_failed",
       message: (err as Error).message,
