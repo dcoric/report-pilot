@@ -5126,6 +5126,11 @@ export interface components {
                 repair_chars: number;
                 total_chars: number;
             };
+            retrieval: {
+                rag_document_count: number;
+                /** @description Number of validated, schema-compatible examples included in the generation prompt. */
+                example_count: number;
+            };
             repair_count: number;
         };
         FeedbackRequest: {

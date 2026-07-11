@@ -77,6 +77,7 @@ interface CaseResult {
   join_path_correct?: boolean | null;
   repair_count?: number;
   prompt_chars?: number | null;
+  example_count?: number;
 }
 
 interface RunContext {
@@ -223,6 +224,7 @@ interface RunResponse {
       join_edges?: Array<{ id?: string; left_ref?: string; right_ref?: string }>;
     };
     prompts?: { total_chars?: number };
+    retrieval?: { rag_document_count?: number; example_count?: number };
     repair_count?: number;
   };
 }
@@ -244,7 +246,8 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
     table_recall_at_15: null,
     join_path_correct: null,
     repair_count: 0,
-    prompt_chars: null
+    prompt_chars: null,
+    example_count: 0
   } as const;
   const sessionResponse = await requestJson<SessionResponse>("POST", "/v1/query/sessions", {
     data_source_id: context.dataSourceId,
@@ -355,7 +358,7 @@ async function runCase(caseDef: BenchmarkCase, context: RunContext): Promise<Cas
 function evaluateGenerationDiagnostics(
   expectedTables: string[],
   diagnostics: RunResponse["diagnostics"]
-): Pick<CaseResult, "table_recall_at_15" | "join_path_correct" | "repair_count" | "prompt_chars"> {
+): Pick<CaseResult, "table_recall_at_15" | "join_path_correct" | "repair_count" | "prompt_chars" | "example_count"> {
   const linking = diagnostics?.schema_linking;
   const candidateRefs = new Set((linking?.candidate_tables || []).map((table) => normalizeTableRef(table.ref)));
   const expandedRefs = new Set((linking?.expanded_tables || []).map((table) => normalizeTableRef(table.ref)));
@@ -375,7 +378,8 @@ function evaluateGenerationDiagnostics(
     repair_count: Math.max(0, Number(diagnostics?.repair_count || 0)),
     prompt_chars: Number.isFinite(Number(diagnostics?.prompts?.total_chars))
       ? Number(diagnostics?.prompts?.total_chars)
-      : null
+      : null,
+    example_count: Math.max(0, Number(diagnostics?.retrieval?.example_count || 0))
   };
 }
 
@@ -548,6 +552,7 @@ interface BenchmarkSummary {
   stratified: {
     by_schema_size: Record<string, BenchmarkSliceSummary>;
     by_complexity: Record<string, BenchmarkSliceSummary>;
+    by_example_usage: Record<string, BenchmarkSliceSummary>;
   };
   release_gates: {
     correctness_ge_85pct: boolean;
@@ -630,7 +635,8 @@ function summarizeResults(results: CaseResult[], largeSchema: LargeSchemaBenchma
     average_prompt_chars: promptCharValues.length > 0 ? Math.round(average(promptCharValues)) : null,
     stratified: {
       by_schema_size: stratifyResults(results, (item) => item.schema_size_bucket || "unknown"),
-      by_complexity: stratifyResults(results, (item) => item.complexity || "unknown")
+      by_complexity: stratifyResults(results, (item) => item.complexity || "unknown"),
+      by_example_usage: stratifyResults(results, (item) => Number(item.example_count || 0) > 0 ? "with_examples" : "without_examples")
     },
     release_gates: {
       ...gates,

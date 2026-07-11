@@ -3697,11 +3697,22 @@ components:
             total_chars:
               type: integer
           required: [linker_chars, generation_chars, repair_chars, total_chars]
+        retrieval:
+          type: object
+          properties:
+            rag_document_count:
+              type: integer
+              minimum: 0
+            example_count:
+              type: integer
+              minimum: 0
+              description: Number of validated, schema-compatible examples included in the generation prompt.
+          required: [rag_document_count, example_count]
         repair_count:
           type: integer
           minimum: 0
           maximum: 1
-      required: [schema_linking, prompts, repair_count]
+      required: [schema_linking, prompts, retrieval, repair_count]
     FeedbackRequest:
       type: object
       properties:

@@ -1,4 +1,6 @@
 import appDb = require("../lib/appDb");
+import { validateAstReadOnly } from "./sqlAstValidator";
+import type { SqlDialect } from "./sqlGenerator";
 
 export interface RagDocument {
   docType: "schema" | "semantic" | "policy" | "example";
@@ -67,6 +69,10 @@ interface NlSqlExampleRow {
   source: string | null;
 }
 
+interface DataSourceRow {
+  db_type: string;
+}
+
 interface RagNoteRow {
   id: string;
   title: string;
@@ -82,7 +88,8 @@ export async function buildRagDocuments(dataSourceId: string): Promise<RagDocume
     metricDefinitionsResult,
     joinPoliciesResult,
     examplesResult,
-    ragNotesResult
+    ragNotesResult,
+    dataSourceResult
   ] = await Promise.all([
     appDb.query<SchemaObjectRow>(
       `
@@ -174,6 +181,10 @@ export async function buildRagDocuments(dataSourceId: string): Promise<RagDocume
         WHERE data_source_id = $1 AND active = TRUE
         ORDER BY created_at DESC
       `,
+      [dataSourceId]
+    ),
+    appDb.query<DataSourceRow>(
+      "SELECT db_type FROM data_sources WHERE id = $1",
       [dataSourceId]
     )
   ]);
@@ -275,12 +286,19 @@ export async function buildRagDocuments(dataSourceId: string): Promise<RagDocume
   }
 
   for (const example of examplesResult.rows) {
+    const validation = validateAstReadOnly(
+      example.sql,
+      schemaObjectsResult.rows,
+      normalizeDialect(dataSourceResult.rows[0]?.db_type)
+    );
     docs.push({
       docType: "example",
       refId: String(example.id),
       metadata: {
         source: example.source,
-        quality_score: example.quality_score
+        quality_score: example.quality_score,
+        validation_state: validation.ok && validation.refs.length > 0 ? "validated" : "rejected",
+        schema_refs: [...new Set(validation.refs.map((ref) => ref.raw))].sort()
       },
       content: [
         `example question ${example.question}`,
@@ -302,6 +320,10 @@ export async function buildRagDocuments(dataSourceId: string): Promise<RagDocume
   }
 
   return docs;
+}
+
+function normalizeDialect(dbType: string | null | undefined): SqlDialect {
+  return String(dbType || "postgres").toLowerCase() === "mssql" ? "mssql" : "postgres";
 }
 
 function groupBy<T>(rows: T[], keyFn: (row: T) => string): Map<string, T[]> {

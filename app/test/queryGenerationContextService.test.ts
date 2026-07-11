@@ -34,6 +34,32 @@ test("prepareQueryGenerationContext returns only expanded scoped context and rel
   }
 });
 
+test("prepareQueryGenerationContext reserves prompt space for compatible ranked examples", async () => {
+  const payment = card(PAYMENT, "payment", ["Revenue"]);
+  const docs = [
+    rag("payment-doc", "schema", PAYMENT, 2),
+    exampleRag("compatible", "public.payment", 0.9),
+    exampleRag("incompatible", "public.inventory", 1),
+    rag("policy-doc", "policy", "note", 0.8)
+  ];
+  const dependencies = baseDependencies([payment], docs);
+
+  const result = await prepareQueryGenerationContext({
+    dataSourceId: "source",
+    question: "Total revenue",
+    finalRagLimit: 3
+  }, dependencies);
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.ragDocuments.map((document) => document.id), [
+      "payment-doc",
+      "compatible",
+      "policy-doc"
+    ]);
+  }
+});
+
 test("prepareQueryGenerationContext fails before the linker when no candidates match", async () => {
   let linkerCalled = false;
   const dependencies = baseDependencies([card(PAYMENT, "payment")], []);
@@ -153,5 +179,18 @@ function rag(id: string, docType: string, refId: string, score: number): RagRetr
     score,
     rerank_score: score,
     embedding_model: "test"
+  };
+}
+
+function exampleRag(id: string, schemaRef: string, quality: number): RagRetrievalDoc {
+  return {
+    ...rag(id, "example", id, 1),
+    content: `example question Revenue\nexample sql SELECT amount FROM ${schemaRef}`,
+    metadata_json: {
+      source: "manual",
+      quality_score: quality,
+      validation_state: "validated",
+      schema_refs: [schemaRef]
+    }
   };
 }
