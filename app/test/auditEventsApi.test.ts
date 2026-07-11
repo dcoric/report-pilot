@@ -20,16 +20,50 @@ process.env.PORT = "0";
 process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
-import authService = require("../src/services/authService");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { ListEventsResult } from "../src/services/auditService";
+
+type TestUser = ReturnType<import("./helpers/authTestStub").AuthTestStub["seedUser"]>;
+
+interface AuditRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+interface ListFilters {
+  _action: string | null;
+  _actorUserId: string | null;
+  _targetUserId: string | null;
+  _outcome: string | null;
+  _since: string | null;
+  _until: string | null;
+  _limit: number;
+  _offset: number;
+}
+
+type FilterValueKey = "_action" | "_actorUserId" | "_targetUserId" | "_outcome" | "_since" | "_until";
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+  setCookie: string | null;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
 let originalQuery: typeof appDb.query;
-let auditRows;
-let auditCounter;
-let users; // additional users not seeded via the stub (kept by id)
+let auditRows: AuditRow[];
+let auditCounter: number;
+let users: Map<string, TestUser>; // additional users not seeded via the stub (kept by id)
 
 function uuid(prefix: string, counter: number) {
   return `00000000-0000-4000-8000-${prefix}${String(counter).padStart(8, "0")}`;
@@ -39,7 +73,11 @@ function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-async function call(method: string, path: string, { cookie, body }: { cookie?: string; body?: unknown } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { cookie, body }: { cookie?: string; body?: unknown } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -47,32 +85,30 @@ async function call(method: string, path: string, { cookie, body }: { cookie?: s
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try { payload = await response.json(); } catch { payload = null; }
   }
-  return { status: response.status, payload, setCookie: response.headers.get("set-cookie") };
+  return { status: response.status, payload: payload as T, setCookie: response.headers.get("set-cookie") };
 }
 
-function parseSessionCookieValue(setCookieHeader) {
+function parseSessionCookieValue(setCookieHeader: string | null): string | null {
   if (!setCookieHeader) return null;
   const match = setCookieHeader.match(/rp_session=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-function applyFilters(rows, params) {
+function applyFilters(rows: AuditRow[], params: ListFilters): AuditRow[] {
   let out = [...rows];
-  const conditions = []; // mirror order auditService.listEvents builds
+  const { _action, _actorUserId, _targetUserId, _outcome, _since, _until } = params;
   // We replay the same predicate set here. params start at $1 in the SQL but
   // we already know the JS-side order; just check by name supplied at call.
-  if (params._action) out = out.filter((r) => r.action === params._action);
-  if (params._actorUserId) out = out.filter((r) => r.actor_user_id === params._actorUserId);
-  if (params._targetUserId) out = out.filter((r) => r.target_user_id === params._targetUserId);
-  if (params._outcome) out = out.filter((r) => r.outcome === params._outcome);
-  if (params._since) out = out.filter((r) => r.created_at >= params._since);
-  if (params._until) out = out.filter((r) => r.created_at < params._until);
-  // unused; conditions stay separate so we can audit them later if needed
-  void conditions;
+  if (_action) out = out.filter((r) => r.action === _action);
+  if (_actorUserId) out = out.filter((r) => r.actor_user_id === _actorUserId);
+  if (_targetUserId) out = out.filter((r) => r.target_user_id === _targetUserId);
+  if (_outcome) out = out.filter((r) => r.outcome === _outcome);
+  if (_since) out = out.filter((r) => r.created_at >= _since);
+  if (_until) out = out.filter((r) => r.created_at < _until);
   return out;
 }
 
@@ -90,7 +126,7 @@ before(async () => {
   const analyst = authStub.seedUser({ email: "alice@example.com", roles: ["analyst"], password: "hunter22ok" });
   users.set(analyst.id, analyst);
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     // First let the shared auth stub handle session/role lookups.
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
@@ -99,7 +135,7 @@ before(async () => {
 
     // findUserByEmail
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const emailLower = String(params[0]);
       const row = [...users.values()].find((u) => u.email.toLowerCase() === emailLower);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -120,14 +156,14 @@ before(async () => {
       auditCounter += 1;
       auditRows.push({
         id: uuid("dddd", auditCounter),
-        actor_user_id: actorUserId,
-        actor_email: actorEmail,
-        target_user_id: targetUserId,
-        action,
-        outcome,
-        details: JSON.parse(detailsJson),
-        ip_address: ipAddress,
-        user_agent: userAgent,
+        actor_user_id: typeof actorUserId === "string" ? actorUserId : null,
+        actor_email: typeof actorEmail === "string" ? actorEmail : null,
+        target_user_id: typeof targetUserId === "string" ? targetUserId : null,
+        action: String(action),
+        outcome: typeof outcome === "string" ? outcome : null,
+        details: JSON.parse(String(detailsJson)) as Record<string, unknown>,
+        ip_address: typeof ipAddress === "string" ? ipAddress : null,
+        user_agent: typeof userAgent === "string" ? userAgent : null,
         // ensure stable ordering: insertion order also reflects time order
         created_at: new Date(Date.now() + auditCounter).toISOString()
       });
@@ -185,8 +221,8 @@ beforeEach(() => {
 // predicates the auditService built. The service appends parameters in a known
 // order, ending with $LIMIT and $OFFSET. We don't try to parse the SQL —
 // instead, the helper mirrors the construction in auditService.listEvents.
-function parseListFilters(sql, params) {
-  const filters = {
+function parseListFilters(sql: string, params: unknown[]): ListFilters {
+  const filters: ListFilters = {
     _action: null,
     _actorUserId: null,
     _targetUserId: null,
@@ -198,7 +234,7 @@ function parseListFilters(sql, params) {
   };
   // Match the predicates that exist in the SQL to figure out which params slot
   // into which filter (count vs list queries share the WHERE clause).
-  const order = [];
+  const order: FilterValueKey[] = [];
   if (/a\.action = \$/.test(sql)) order.push("_action");
   if (/a\.actor_user_id = \$/.test(sql)) order.push("_actorUserId");
   if (/a\.target_user_id = \$/.test(sql)) order.push("_targetUserId");
@@ -206,9 +242,10 @@ function parseListFilters(sql, params) {
   if (/a\.created_at >= \$/.test(sql)) order.push("_since");
   if (/a\.created_at < \$/.test(sql)) order.push("_until");
 
-  for (let i = 0; i < order.length; i += 1) {
-    filters[order[i]] = params[i];
-  }
+  order.forEach((key, index) => {
+    const value = params[index];
+    filters[key] = typeof value === "string" ? value : null;
+  });
   const isListQuery = /limit \$/i.test(sql);
   if (isListQuery) {
     filters._limit = Number(params[params.length - 2]);
@@ -240,6 +277,7 @@ test("successful login and logout each record an audit event tied to the user", 
   });
   assert.equal(login.status, 200);
   const token = parseSessionCookieValue(login.setCookie);
+  assert.ok(token, "expected session token");
   await new Promise((r) => setImmediate(r));
 
   const success = auditRows.find((r) => r.action === "auth.login.success");
@@ -262,6 +300,7 @@ test("successful login and logout each record an audit event tied to the user", 
 
 test("GET /v1/admin/audit-events lists events newest-first with pagination", async () => {
   const adminUser = [...users.values()].find((u) => u.email === "admin@example.com");
+  assert.ok(adminUser, "expected admin fixture");
   const adminCookie = authStub.cookieFor(authStub.seedSession(adminUser.id).token);
 
   // Trigger a few events.
@@ -269,7 +308,7 @@ test("GET /v1/admin/audit-events lists events newest-first with pagination", asy
   await call("POST", "/v1/auth/login", { body: { email: "alice@example.com", password: "hunter22ok" } });
   await new Promise((r) => setImmediate(r));
 
-  const list = await call("GET", "/v1/admin/audit-events", { cookie: adminCookie });
+  const list = await call<ListEventsResult>("GET", "/v1/admin/audit-events", { cookie: adminCookie });
   assert.equal(list.status, 200);
   assert.equal(list.payload.limit, 50);
   assert.equal(list.payload.offset, 0);
@@ -279,30 +318,32 @@ test("GET /v1/admin/audit-events lists events newest-first with pagination", asy
   assert.ok(actions.indexOf("auth.login.success") < actions.indexOf("auth.login.failure"));
 
   // Pagination
-  const paged = await call("GET", "/v1/admin/audit-events?limit=1", { cookie: adminCookie });
+  const paged = await call<ListEventsResult>("GET", "/v1/admin/audit-events?limit=1", { cookie: adminCookie });
   assert.equal(paged.payload.items.length, 1);
   assert.equal(paged.payload.limit, 1);
 });
 
 test("GET /v1/admin/audit-events filters by action and outcome", async () => {
   const adminUser = [...users.values()].find((u) => u.email === "admin@example.com");
+  assert.ok(adminUser, "expected admin fixture");
   const adminCookie = authStub.cookieFor(authStub.seedSession(adminUser.id).token);
 
   await call("POST", "/v1/auth/login", { body: { email: "nobody@example.com", password: "x".repeat(10) } });
   await call("POST", "/v1/auth/login", { body: { email: "alice@example.com", password: "hunter22ok" } });
   await new Promise((r) => setImmediate(r));
 
-  const byAction = await call("GET", "/v1/admin/audit-events?action=auth.login.failure", { cookie: adminCookie });
+  const byAction = await call<ListEventsResult>("GET", "/v1/admin/audit-events?action=auth.login.failure", { cookie: adminCookie });
   assert.equal(byAction.status, 200);
   assert.ok(byAction.payload.items.every((it) => it.action === "auth.login.failure"));
   assert.ok(byAction.payload.items.length >= 1);
 
-  const byOutcome = await call("GET", "/v1/admin/audit-events?outcome=failure", { cookie: adminCookie });
+  const byOutcome = await call<ListEventsResult>("GET", "/v1/admin/audit-events?outcome=failure", { cookie: adminCookie });
   assert.ok(byOutcome.payload.items.every((it) => it.outcome === "failure"));
 });
 
 test("GET /v1/admin/audit-events is admin-only", async () => {
   const analystUser = [...users.values()].find((u) => u.email === "alice@example.com");
+  assert.ok(analystUser, "expected analyst fixture");
   const analystCookie = authStub.cookieFor(authStub.seedSession(analystUser.id).token);
 
   const forbidden = await call("GET", "/v1/admin/audit-events", { cookie: analystCookie });
@@ -314,6 +355,7 @@ test("GET /v1/admin/audit-events is admin-only", async () => {
 
 test("audit list rejects malformed uuid filters", async () => {
   const adminUser = [...users.values()].find((u) => u.email === "admin@example.com");
+  assert.ok(adminUser, "expected admin fixture");
   const adminCookie = authStub.cookieFor(authStub.seedSession(adminUser.id).token);
 
   const badActor = await call("GET", "/v1/admin/audit-events?actor_user_id=not-a-uuid", { cookie: adminCookie });
@@ -322,7 +364,3 @@ test("audit list rejects malformed uuid filters", async () => {
   const badTarget = await call("GET", "/v1/admin/audit-events?target_user_id=not-a-uuid", { cookie: adminCookie });
   assert.equal(badTarget.status, 400);
 });
-
-// Silence the variable-unused warning by exporting the helper modules used at
-// the top — keeps lint happy without changing runtime behavior.
-void authService;

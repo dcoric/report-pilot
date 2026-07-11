@@ -12,7 +12,6 @@
   "include": [
     "app/test/accountLinkingApi.test.ts",
     "app/test/adminUsersApi.test.ts",
-    "app/test/auditEventsApi.test.ts",
     "app/test/authApi.test.ts",
     "app/test/authProvidersAdminApi.test.ts",
     "app/test/dataSourceAccessApi.test.ts",
@@ -23,7 +22,6 @@
     "app/test/savedQueryFoldersApi.test.ts",
     "app/test/savedQuerySchedulesApi.test.ts",
     "app/test/scimApi.test.ts",
-    "app/test/securityHardeningApi.test.ts",
     "app/src/types/**/*.d.ts"
   ],
   "exclude": ["node_modules", "dist", "frontend"]
