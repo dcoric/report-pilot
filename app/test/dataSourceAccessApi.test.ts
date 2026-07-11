@@ -12,6 +12,32 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { PoolClient } from "pg";
+import type { ApiSchema } from "../src/types";
+
+type DataSourceListResponse = ApiSchema<"DataSourceListResponse">;
+type DataSourceAccessChange = ApiSchema<"DataSourceAccessChange">;
+
+interface AccessRow {
+  granted_at: string;
+  granted_by_user_id: string | null;
+}
+
+interface AuditEntry {
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+}
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+}
 
 const DS_ALLOWED = "00000000-0000-4000-8000-000000000d51";
 const DS_DENIED = "00000000-0000-4000-8000-000000000d52";
@@ -19,16 +45,20 @@ const DS_DENIED = "00000000-0000-4000-8000-000000000d52";
 let server: import("http").Server;
 let baseUrl: string;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-let adminCookie;
-let analystCookie;
-let analystUserId;
-let adminUserId;
+let adminCookie: string;
+let analystCookie: string;
+let analystUserId: string;
+let adminUserId: string;
 let originalQuery: typeof appDb.query;
 let originalWithTransaction: typeof appDb.withTransaction;
-let dataSourceAccessRows;
-let auditEntries;
+let dataSourceAccessRows: Map<string, AccessRow>;
+let auditEntries: AuditEntry[];
 
-async function call(method: string, path: string, { cookie, body }: { cookie?: string; body?: unknown } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { cookie, body }: { cookie?: string; body?: unknown } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -36,13 +66,13 @@ async function call(method: string, path: string, { cookie, body }: { cookie?: s
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
     payload = null;
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
 function normalize(sql: string) {
@@ -67,14 +97,14 @@ before(async () => {
   adminCookie = authStub.cookieFor(authStub.seedSession(admin.id).token);
   analystCookie = authStub.cookieFor(authStub.seedSession(analyst.id).token);
 
-  async function runQuery(sql, params = []) {
+  async function runQuery(sql: string, params: unknown[] = []) {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const n = normalize(sql);
 
     if (n === "select id from data_sources where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       if (id === DS_ALLOWED || id === DS_DENIED) {
         return { rowCount: 1, rows: [{ id }] };
       }
@@ -82,7 +112,7 @@ before(async () => {
     }
 
     if (n === "select id from users where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       if (id === analystUserId || id === adminUserId) {
         return { rowCount: 1, rows: [{ id }] };
       }
@@ -90,7 +120,7 @@ before(async () => {
     }
 
     if (n.startsWith("select u.id, u.email, u.display_name, u.is_active, a.granted_at, a.granted_by_user_id")) {
-      const [dataSourceId] = params;
+      const [dataSourceId] = params as [string];
       const rows = [];
       for (const [key, row] of dataSourceAccessRows.entries()) {
         const [userId, dsId] = key.split("::");
@@ -109,7 +139,7 @@ before(async () => {
     }
 
     if (n.startsWith("insert into user_data_source_access (user_id, data_source_id, granted_by_user_id)")) {
-      const [userId, dataSourceId, actorUserId] = params;
+      const [userId, dataSourceId, actorUserId] = params as [string, string, string | null];
       const key = `${userId}::${dataSourceId}`;
       if (dataSourceAccessRows.has(key)) {
         return { rowCount: 0, rows: [] };
@@ -124,7 +154,7 @@ before(async () => {
     }
 
     if (n.startsWith("delete from user_data_source_access where user_id = $1 and data_source_id = $2 returning user_id")) {
-      const [userId, dataSourceId] = params;
+      const [userId, dataSourceId] = params as [string, string];
       const key = `${userId}::${dataSourceId}`;
       const had = dataSourceAccessRows.delete(key);
       if (had) {
@@ -138,14 +168,23 @@ before(async () => {
       // ip_address, and user_agent. New positional layout is:
       //   $1 actor_user_id, $2 actor_email, $3 target_user_id, $4 action,
       //   $5 outcome, $6 details, $7 ip_address, $8 user_agent.
-      const [actor, actorEmail, target, action, outcome, details, ipAddress, userAgent] = params;
+      const [actor, actorEmail, target, action, outcome, details, ipAddress, userAgent] = params as [
+        string | null,
+        string | null,
+        string | null,
+        string,
+        string | null,
+        string,
+        string | null,
+        string | null
+      ];
       auditEntries.push({
         actor_user_id: actor,
         actor_email: actorEmail,
         target_user_id: target,
         action,
         outcome,
-        details: JSON.parse(details),
+        details: JSON.parse(details) as Record<string, unknown>,
         ip_address: ipAddress,
         user_agent: userAgent
       });
@@ -158,7 +197,10 @@ before(async () => {
   }
 
   appDb.query = runQuery as unknown as typeof appDb.query;
-  appDb.withTransaction = (async (handler) => handler({ query: runQuery } as unknown as Parameters<typeof appDb.withTransaction>[0] extends (c: infer C) => unknown ? C : never)) as unknown as typeof appDb.withTransaction;
+  const transactionClient = { query: runQuery } as unknown as PoolClient;
+  appDb.withTransaction = (async <T>(handler: (client: PoolClient) => Promise<T>): Promise<T> => (
+    handler(transactionClient)
+  )) as typeof appDb.withTransaction;
 
   delete require.cache[require.resolve("../src/server")];
   const { startServer } = require("../src/server");
@@ -256,7 +298,7 @@ test("GET /v1/data-sources lists only what the analyst can see (admin sees all)"
   const adminList = await call("GET", "/v1/data-sources", { cookie: adminCookie });
   assert.equal(adminList.status, 200);
 
-  const analystList = await call("GET", "/v1/data-sources", { cookie: analystCookie });
+  const analystList = await call<DataSourceListResponse>("GET", "/v1/data-sources", { cookie: analystCookie });
   assert.equal(analystList.status, 200);
   const ids = (analystList.payload.items || []).map((d) => d.id);
   assert.ok(!ids.includes(DS_DENIED), "analyst should not see DS_DENIED in list");
@@ -264,12 +306,13 @@ test("GET /v1/data-sources lists only what the analyst can see (admin sees all)"
 
 test("admin grant + revoke endpoints update access and audit log", async () => {
   // Initially analyst lacks DS_DENIED
-  assert.equal(authStub.handleSql(
+  const initialAccess = authStub.handleSql(
     "SELECT 1 FROM user_data_source_access WHERE user_id = $1 AND data_source_id = $2",
     [analystUserId, DS_DENIED]
-  ).rowCount, 0);
+  );
+  assert.equal(initialAccess?.rowCount, 0);
 
-  const grant = await call("POST", `/v1/admin/data-sources/${DS_DENIED}/access`, {
+  const grant = await call<DataSourceAccessChange>("POST", `/v1/admin/data-sources/${DS_DENIED}/access`, {
     cookie: adminCookie,
     body: { user_id: analystUserId }
   });
@@ -277,7 +320,7 @@ test("admin grant + revoke endpoints update access and audit log", async () => {
   assert.equal(grant.payload.granted, true);
 
   // Granting again is idempotent (200, granted=false)
-  const grantAgain = await call("POST", `/v1/admin/data-sources/${DS_DENIED}/access`, {
+  const grantAgain = await call<DataSourceAccessChange>("POST", `/v1/admin/data-sources/${DS_DENIED}/access`, {
     cookie: adminCookie,
     body: { user_id: analystUserId }
   });
@@ -297,7 +340,7 @@ test("admin grant + revoke endpoints update access and audit log", async () => {
   assert.notEqual(allowedNow.status, 403);
 
   // Revoke
-  const revoke = await call("DELETE", `/v1/admin/data-sources/${DS_DENIED}/access/${analystUserId}`, { cookie: adminCookie });
+  const revoke = await call<DataSourceAccessChange>("DELETE", `/v1/admin/data-sources/${DS_DENIED}/access/${analystUserId}`, { cookie: adminCookie });
   assert.equal(revoke.status, 200);
   assert.equal(revoke.payload.revoked, true);
 

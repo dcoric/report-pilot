@@ -10,18 +10,35 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type {
+  PromptPreset,
+  PromptPresetRow,
+  PresetVisibility
+} from "../src/services/promptPresetService";
+
+interface ErrorPayload {
+  code: string;
+}
+
+interface PromptPresetListPayload {
+  items: PromptPreset[];
+}
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
 let originalQuery: typeof appDb.query;
-let presets;       // id -> row
-let dataSources;   // id -> row
-let presetCounter;
-let aliceCookie;
-let bobCookie;
-let aliceId;
-let bobId;
+let presets: Map<string, PromptPresetRow>;       // id -> row
+let dataSources: Map<string, { id: string }>;   // id -> row
+let presetCounter: number;
+let aliceCookie: string;
+let bobCookie: string;
+let aliceId: string;
 
 function uuid(prefix: string, counter: number) {
   return `00000000-0000-4000-8000-${prefix}${String(counter).padStart(8, "0")}`;
@@ -32,7 +49,11 @@ function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-async function call(method: string, path: string, { cookie, body }: { cookie?: string; body?: unknown } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { cookie, body }: { cookie?: string; body?: unknown } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -40,11 +61,11 @@ async function call(method: string, path: string, { cookie, body }: { cookie?: s
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try { payload = await response.json(); } catch { payload = null; }
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
 before(async () => {
@@ -57,40 +78,46 @@ before(async () => {
   const alice = authStub.seedUser({ email: "alice@example.com", roles: ["analyst"], password: "Hunter22ok!" });
   const bob = authStub.seedUser({ email: "bob@example.com", roles: ["analyst"], password: "Hunter22ok!" });
   aliceId = alice.id;
-  bobId = bob.id;
   aliceCookie = authStub.cookieFor(authStub.seedSession(alice.id).token);
   bobCookie = authStub.cookieFor(authStub.seedSession(bob.id).token);
 
   // Pre-seed one data source so the FK check has something to find.
   dataSources.set("00000000-0000-4000-8000-d5d5d5d5d5d5", { id: "00000000-0000-4000-8000-d5d5d5d5d5d5" });
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const n = normalize(sql);
 
     if (n.startsWith("select id, owner_user_id, title, prompt_text, data_source_id, tags, visibility, created_at, updated_at from prompt_presets where owner_user_id = $1 or visibility = 'shared'")) {
-      const [userId] = params;
+      const [userId] = params as [string];
       const rows = [...presets.values()]
         .filter((p) => p.owner_user_id === userId || p.visibility === "shared")
-        .sort((a, b) => b.created_at.localeCompare(a.created_at));
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
       return { rowCount: rows.length, rows };
     }
     if (n.startsWith("select id, owner_user_id, title, prompt_text, data_source_id, tags, visibility, created_at, updated_at from prompt_presets where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = presets.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (n.startsWith("select id from data_sources where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       return dataSources.has(id) ? { rowCount: 1, rows: [{ id }] } : { rowCount: 0, rows: [] };
     }
 
     if (n.startsWith("insert into prompt_presets")) {
-      const [ownerUserId, title, promptText, dataSourceId, tags, visibility] = params;
-      const row = {
+      const [ownerUserId, title, promptText, dataSourceId, tags, visibility] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        string[] | null,
+        PresetVisibility
+      ];
+      const row: PromptPresetRow = {
         id: nextPresetId(),
         owner_user_id: ownerUserId,
         title,
@@ -106,7 +133,14 @@ before(async () => {
     }
 
     if (n.startsWith("update prompt_presets set title = $2, prompt_text = $3, data_source_id = $4, tags = $5, visibility = $6, updated_at = now() where id = $1")) {
-      const [id, title, promptText, dataSourceId, tags, visibility] = params;
+      const [id, title, promptText, dataSourceId, tags, visibility] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        string[] | null,
+        PresetVisibility
+      ];
       const row = presets.get(id);
       if (!row) return { rowCount: 0, rows: [] };
       row.title = title;
@@ -120,7 +154,7 @@ before(async () => {
     }
 
     if (n.startsWith("delete from prompt_presets where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const had = presets.delete(id);
       return { rowCount: had ? 1 : 0, rows: [] };
     }
@@ -150,7 +184,7 @@ test("GET is unauthenticated → 401", async () => {
 });
 
 test("POST creates a private preset for the caller", async () => {
-  const result = await call("POST", "/v1/users/me/prompt-presets", {
+  const result = await call<PromptPreset>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "Revenue YoY", prompt_text: "Show revenue YoY by region" }
   });
@@ -161,7 +195,7 @@ test("POST creates a private preset for the caller", async () => {
 });
 
 test("POST rejects invalid input with a stable code", async () => {
-  const result = await call("POST", "/v1/users/me/prompt-presets", {
+  const result = await call<ErrorPayload>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "" }
   });
@@ -170,7 +204,7 @@ test("POST rejects invalid input with a stable code", async () => {
 });
 
 test("POST with unknown data_source_id returns 400", async () => {
-  const result = await call("POST", "/v1/users/me/prompt-presets", {
+  const result = await call<ErrorPayload>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "Foo", prompt_text: "bar", data_source_id: "00000000-0000-4000-8000-deadbeef0001" }
   });
@@ -195,14 +229,14 @@ test("GET returns the caller's own presets + shared presets from others", async 
     body: { title: "Bob shared", prompt_text: "p3", visibility: "shared" }
   });
 
-  const aliceList = await call("GET", "/v1/users/me/prompt-presets", { cookie: aliceCookie });
+  const aliceList = await call<PromptPresetListPayload>("GET", "/v1/users/me/prompt-presets", { cookie: aliceCookie });
   assert.equal(aliceList.status, 200);
   const titles = aliceList.payload.items.map((it) => it.title).sort();
   assert.deepEqual(titles, ["Alice private", "Bob shared"]);
 });
 
 test("PUT enforces ownership: a non-owner gets 403", async () => {
-  const created = await call("POST", "/v1/users/me/prompt-presets", {
+  const created = await call<PromptPreset>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "Alice's", prompt_text: "p", visibility: "shared" }
   });
@@ -215,11 +249,11 @@ test("PUT enforces ownership: a non-owner gets 403", async () => {
 });
 
 test("PUT by owner applies a partial update", async () => {
-  const created = await call("POST", "/v1/users/me/prompt-presets", {
+  const created = await call<PromptPreset>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "Draft", prompt_text: "x" }
   });
-  const update = await call("PUT", `/v1/users/me/prompt-presets/${created.payload.id}`, {
+  const update = await call<PromptPreset>("PUT", `/v1/users/me/prompt-presets/${created.payload.id}`, {
     cookie: aliceCookie,
     body: { visibility: "shared", tags: ["finance"] }
   });
@@ -230,7 +264,7 @@ test("PUT by owner applies a partial update", async () => {
 });
 
 test("DELETE enforces ownership and returns 404 for unknown ids", async () => {
-  const created = await call("POST", "/v1/users/me/prompt-presets", {
+  const created = await call<PromptPreset>("POST", "/v1/users/me/prompt-presets", {
     cookie: aliceCookie,
     body: { title: "x", prompt_text: "y" }
   });
@@ -251,6 +285,3 @@ test("malformed ids return 400 before touching the DB", async () => {
   });
   assert.equal(bad.status, 400);
 });
-
-// Quiet noise — both ids are used implicitly via cookies / assertions.
-void bobId;
