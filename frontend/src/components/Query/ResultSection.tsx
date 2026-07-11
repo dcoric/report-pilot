@@ -63,13 +63,13 @@ export function ResultSection({ queryResult, isRunning, isDryRun }: ResultSectio
                 )}
 
                 {!queryResult && !isRunning && (
-                    <div className="flex h-full flex-col items-center justify-center p-8 text-slate-400">
+                    <div className="flex h-full flex-col items-center justify-center p-8 text-slate-600">
                         <p>No results yet. {isDryRun ? 'Preview SQL to inspect the generated response.' : 'Run a query to see results.'}</p>
                     </div>
                 )}
 
                 {isRunning && (
-                    <div className="flex h-full items-center justify-center text-slate-400">
+                    <div className="flex h-full items-center justify-center text-slate-600">
                         <Loader2 className="mr-2 animate-spin" size={20} />
                         {isDryRun ? 'Generating preview…' : 'Executing query…'}
                     </div>
@@ -77,7 +77,7 @@ export function ResultSection({ queryResult, isRunning, isDryRun }: ResultSectio
 
                 {queryResult && !queryResult.preview && (
                     <table className="w-full border-collapse text-left">
-                        <thead className="sticky top-0 z-10 border-b border-outline-variant bg-surface-container-low text-slate-500">
+                        <thead className="sticky top-0 z-10 border-b border-outline-variant bg-surface-container-low text-slate-600">
                             <tr className="text-[11px] uppercase tracking-wider">
                                 <th className="border-r border-outline-variant/40 bg-surface-container px-4 py-2 font-bold">#</th>
                                 {queryResult.columns.map((column) => (
@@ -96,7 +96,7 @@ export function ResultSection({ queryResult, isRunning, isDryRun }: ResultSectio
                                     key={`${queryResult.attempt_id}-${rowIndex}`}
                                     className="border-b border-outline-variant/40 transition-colors hover:bg-surface-container-low"
                                 >
-                                    <td className="border-r border-outline-variant/40 bg-surface-container-low px-4 py-2 text-xs text-slate-400">
+                                    <td className="border-r border-outline-variant/40 bg-surface-container-low px-4 py-2 text-xs text-slate-600">
                                         {rowIndex + 1}
                                     </td>
                                     {queryResult.columns.map((column) => (

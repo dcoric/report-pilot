@@ -22,7 +22,7 @@ function formatTimestamp(value: string) {
 function MetricRow({ label, value }: { label: string; value: string }) {
     return (
         <div className="flex items-center justify-between border-b border-outline-variant/60 py-1.5 last:border-0">
-            <span className="text-[11px] text-slate-500">{label}</span>
+            <span className="text-[11px] text-slate-600">{label}</span>
             <span className="font-mono text-[11px] font-medium text-on-surface">{value}</span>
         </div>
     );
@@ -31,7 +31,7 @@ function MetricRow({ label, value }: { label: string; value: string }) {
 function renderDependencies(citations: CitationCollection | undefined) {
     const schemaObjects = citations?.schema_objects ?? [];
     if (schemaObjects.length === 0) {
-        return <p className="text-[11px] text-slate-400">No dependencies tracked.</p>;
+        return <p className="text-[11px] text-slate-600">No dependencies tracked.</p>;
     }
     return (
         <div className="space-y-1">
@@ -43,7 +43,7 @@ function renderDependencies(citations: CitationCollection | undefined) {
                             {entry.schema_name}.{entry.object_name}
                         </p>
                     </div>
-                    <p className="line-clamp-1 pl-6 text-[10px] text-slate-500">{entry.object_type}</p>
+                    <p className="line-clamp-1 pl-6 text-[10px] text-slate-600">{entry.object_type}</p>
                 </div>
             ))}
         </div>
@@ -59,50 +59,54 @@ export function InspectorPanel({
     const tags = loadedSavedQuery?.tags ?? [];
 
     return (
-        <aside className="flex w-80 flex-col overflow-y-auto border-l border-outline-variant bg-white p-4">
+        <aside
+            className="flex w-80 flex-col overflow-y-auto border-l border-outline-variant bg-white p-4 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-oxblood"
+            aria-label="Query inspector"
+            tabIndex={0}
+        >
             <div className="mb-6">
-                <h2 className="mb-4 flex items-center justify-between border-b border-outline-variant pb-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                <h2 className="mb-4 flex items-center justify-between border-b border-outline-variant pb-2 text-[10px] font-bold uppercase tracking-widest text-slate-600">
                     Inspector
                     <Info size={14} />
                 </h2>
 
                 <div className="mb-4 rounded border border-outline-variant bg-white p-3">
                     <div className="mb-4 flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase text-slate-500">Status</span>
-                        <span className="rounded border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-600">
+                        <span className="text-[10px] font-bold uppercase text-slate-600">Status</span>
+                        <span className="rounded border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
                             {loadedSavedQuery ? 'Saved' : 'Draft'}
                         </span>
                     </div>
                     <div className="space-y-3">
                         {loadedSavedQuery && (
                             <div>
-                                <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Source</p>
+                                <p className="mb-1 text-[10px] font-bold uppercase text-slate-600">Source</p>
                                 <p className="flex items-start gap-1.5 text-[12px] font-semibold text-on-surface">
                                     <Bookmark size={14} className="mt-0.5 shrink-0 text-oxblood" />
                                     <span className="break-words">{loadedSavedQuery.name}</span>
                                 </p>
                                 {loadedSavedQuery.description && (
-                                    <p className="mt-1 line-clamp-3 pl-5 text-[11px] text-slate-500">
+                                    <p className="mt-1 line-clamp-3 pl-5 text-[11px] text-slate-600">
                                         {loadedSavedQuery.description}
                                     </p>
                                 )}
-                                <p className="mt-1.5 flex items-center gap-1 pl-5 text-[10px] text-slate-400">
+                                <p className="mt-1.5 flex items-center gap-1 pl-5 text-[10px] text-slate-600">
                                     <Clock size={10} />
                                     Updated {formatTimestamp(loadedSavedQuery.updated_at)}
                                 </p>
                             </div>
                         )}
                         <div>
-                            <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Data Source</p>
+                            <p className="mb-1 text-[10px] font-bold uppercase text-slate-600">Data Source</p>
                             <p className="flex items-center gap-1.5 text-[12px] font-semibold text-on-surface">
                                 <Database size={14} className="text-oxblood" />
                                 {selectedDataSource?.name || 'No data source selected'}
                             </p>
                         </div>
                         <div>
-                            <p className="mb-2 text-[10px] font-bold uppercase text-slate-500">Tags</p>
+                            <p className="mb-2 text-[10px] font-bold uppercase text-slate-600">Tags</p>
                             {tags.length === 0 ? (
-                                <p className="text-[11px] text-slate-400">No tags assigned.</p>
+                                <p className="text-[11px] text-slate-600">No tags assigned.</p>
                             ) : (
                                 <div className="flex flex-wrap gap-1.5">
                                     {tags.map((tag) => (
@@ -148,7 +152,7 @@ export function InspectorPanel({
                             <MetricRow label="Model" value={queryResult.provider?.model || 'N/A'} />
                         </div>
                     ) : (
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-[11px] text-slate-600">
                             {isDryRun ? 'Preview SQL to see metadata.' : 'Run the query to see metadata.'}
                         </p>
                     )}
@@ -171,25 +175,25 @@ export function InspectorPanel({
                             <div className="h-1 flex-1 overflow-hidden rounded-full bg-outline-variant">
                                 <div className="h-full w-1/4 bg-emerald-500" />
                             </div>
-                            <span className="font-mono text-[9px] text-slate-500">JOIN</span>
+                            <span className="font-mono text-[9px] text-slate-600">JOIN</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <div className="h-1.5 w-1.5 rounded-full bg-amber-accent" />
                             <div className="h-1 flex-1 overflow-hidden rounded-full bg-outline-variant">
                                 <div className="h-full w-3/4 bg-amber-accent" />
                             </div>
-                            <span className="font-mono text-[9px] text-slate-500">SCAN</span>
+                            <span className="font-mono text-[9px] text-slate-600">SCAN</span>
                         </div>
                     </div>
                     <div className="mt-3 flex items-center justify-between border-t border-outline-variant pt-2">
-                        <span className="font-mono text-[9px] text-slate-500">PLACEHOLDER</span>
-                        <span className="text-[9px] uppercase text-slate-400">Coming soon</span>
+                        <span className="font-mono text-[9px] text-slate-600">PLACEHOLDER</span>
+                        <span className="text-[9px] uppercase text-slate-600">Coming soon</span>
                     </div>
                 </div>
             </div>
 
             <div className="mt-auto rounded border border-outline-variant bg-white p-4">
-                <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 opacity-70">System Health</p>
+                <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">System Health</p>
                 <p className="mb-2 text-sm font-bold tracking-tight text-on-surface">Performance Optimal</p>
                 <svg viewBox="0 0 200 32" className="h-8 w-full text-amber-accent" preserveAspectRatio="none">
                     <polyline

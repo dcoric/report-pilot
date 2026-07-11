@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 const DATA_SOURCE_ID = '00000000-0000-4000-8000-000000000101';
 const USER_ID = '00000000-0000-4000-8000-000000000201';
@@ -113,27 +114,48 @@ async function installApiFixture(page: Page) {
     };
 }
 
+async function expectNoWcagViolations(page: Page) {
+    const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze();
+    expect(results.violations).toEqual([]);
+}
+
 test('signs in and completes the natural-language query flow', async ({ page }) => {
     const api = await installApiFixture(page);
 
     await page.goto('/query');
     await expect(page).toHaveURL(/\/login$/);
 
-    await page.getByLabel('Email').fill('analyst@example.com');
-    await page.getByLabel('Password').fill('Password123');
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    const emailInput = page.getByLabel('Email');
+    const passwordInput = page.getByLabel('Password');
+    const signInButton = page.getByRole('button', { name: 'Sign in' });
+    await emailInput.focus();
+    await expect(emailInput).toBeFocused();
+    await emailInput.fill('analyst@example.com');
+    await page.keyboard.press('Tab');
+    await expect(passwordInput).toBeFocused();
+    await passwordInput.fill('Password123');
+    await page.keyboard.press('Tab');
+    await expect(signInButton).toBeFocused();
+    await page.keyboard.press('Enter');
 
     await expect(page).toHaveURL(/\/query$/);
     await expect(page.getByText('Sales Warehouse').first()).toBeVisible();
+    await expectNoWcagViolations(page);
 
     const question = 'Show total revenue by region';
-    await page.getByPlaceholder(/Adjust this query/).fill(question);
-    await page.getByRole('button', { name: 'Generate' }).click();
+    const questionInput = page.getByPlaceholder(/Adjust this query/);
+    await questionInput.focus();
+    await expect(questionInput).toBeFocused();
+    await questionInput.fill(question);
+    await page.keyboard.press('Enter');
 
     await expect(page.getByText('1 Rows')).toBeVisible();
     await expect(page.getByRole('cell', { name: 'North' })).toBeVisible();
     await expect(page.getByRole('cell', { name: '125000' })).toBeVisible();
     await expect(page.getByText('95.0%')).toBeVisible();
+    await expectNoWcagViolations(page);
     expect(api.getCreatedQuestion()).toBe(question);
     expect(api.getRunSessionId()).toBe(SESSION_ID);
 });
