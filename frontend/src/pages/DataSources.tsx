@@ -6,6 +6,7 @@ import { client } from '../lib/api/client';
 import { readSqlFile } from '../lib/readSqlFile';
 import { AddDataSourceDialog } from '../components/DataSources/AddDataSourceDialog';
 import { RagNotesDialog } from '../components/DataSources/RagNotesDialog';
+import { AsyncErrorState } from '../components/Layout/AsyncErrorState';
 import { useAuth } from '../hooks/useAuth';
 import type { components } from '../lib/api/types';
 
@@ -17,6 +18,7 @@ export const DataSources: React.FC = () => {
     const canReindex = hasPermission('rag.write');
     const [dataSources, setDataSources] = useState<DataSource[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [introspectingIds, setIntrospectingIds] = useState<Set<string>>(new Set());
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -27,13 +29,17 @@ export const DataSources: React.FC = () => {
 
     const fetchDataSources = async () => {
         setIsLoading(true);
+        setLoadError(null);
         try {
-            const { data } = await client.GET('/v1/data-sources');
-            if (data && data.items) {
-                setDataSources(data.items);
+            const { data, error } = await client.GET('/v1/data-sources');
+            if (error || !data?.items) {
+                throw new Error('The data sources request failed');
             }
+
+            setDataSources(data.items);
         } catch (error) {
             console.error("Failed to fetch data sources", error);
+            setLoadError('We could not load your database connections. Check your connection and try again.');
         } finally {
             setIsLoading(false);
         }
@@ -222,6 +228,13 @@ export const DataSources: React.FC = () => {
                             <RefreshCw className="animate-spin mb-2" size={24} />
                             <p>Loading data sources...</p>
                         </div>
+                    ) : loadError ? (
+                        <AsyncErrorState
+                            title="Data sources are unavailable"
+                            message={loadError}
+                            onRetry={() => void fetchDataSources()}
+                            isRetrying={isLoading}
+                        />
                     ) : dataSources.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                             <Database size={48} className="mb-4 opacity-20" />
