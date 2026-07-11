@@ -31,6 +31,20 @@ export function buildJoinPathClarification(expansion: SchemaExpansion): QueryCla
   };
 }
 
+export function findJoinPathByOptionId(
+  expansion: SchemaExpansion,
+  optionId: string
+): SchemaPath | null {
+  const normalized = String(optionId || "").trim();
+  if (!normalized) return null;
+  for (const ambiguity of expansion.ambiguities) {
+    for (const path of ambiguity.alternatives) {
+      if (optionIdForPath(path) === normalized) return path;
+    }
+  }
+  return null;
+}
+
 function toOption(path: SchemaPath, index: number, total: number): QueryClarificationOption {
   const tableRefs = path.object_ids
     .map((objectId) => refForObject(path.edges, objectId))
@@ -47,11 +61,15 @@ function toOption(path: SchemaPath, index: number, total: number): QueryClarific
     : baseLabel;
 
   return {
-    id: `join_path_${createHash("sha256").update(pathSignature(path)).digest("hex").slice(0, 12)}`,
+    id: optionIdForPath(path),
     label,
     description: `Uses ${path.edges.length} ${path.edges.length === 1 ? "relationship" : "relationships"} across ${tableRefs.join(", ")}.`,
     table_refs: tableRefs
   };
+}
+
+function optionIdForPath(path: SchemaPath): string {
+  return `join_path_${createHash("sha256").update(pathSignature(path)).digest("hex").slice(0, 12)}`;
 }
 
 function duplicateLabelRisk(path: SchemaPath): boolean {

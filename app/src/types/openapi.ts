@@ -3146,6 +3146,19 @@ export interface paths {
                         "application/json": components["schemas"]["RunSessionResponse"];
                     };
                 };
+                /** @description The clarification is no longer pending for this session */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            error: "clarification_not_pending";
+                            message: string;
+                        };
+                    };
+                };
                 /** @description Query intent requires clarification before generation can continue */
                 422: {
                     headers: {
@@ -5084,6 +5097,8 @@ export interface components {
             sql_override?: string;
             /** @description When true, generate and validate SQL without connecting to or executing against the source database. */
             no_execute?: boolean;
+            /** @description Opaque option ID returned by a prior 422 clarification response for this session. */
+            clarification_option_id?: string;
             max_rows?: number;
             timeout_ms?: number;
         };
@@ -5116,7 +5131,7 @@ export interface components {
         };
         QueryClarificationRequiredResponse: {
             /** @enum {string} */
-            error: "schema_linking_ambiguous";
+            error: "schema_linking_ambiguous" | "clarification_option_invalid";
             message: string;
             clarification: components["schemas"]["QueryClarification"];
         };

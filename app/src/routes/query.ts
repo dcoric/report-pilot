@@ -116,6 +116,12 @@ const handleRunSession: RouteHandlerWithId<RunSessionRequest, RunSessionResponse
   const requestedProvider = typeof body.llm_provider === "string" ? body.llm_provider : null;
   const requestedModel = typeof body.model === "string" ? body.model : null;
   const noExecute = body.no_execute === true;
+  const clarificationOptionId = typeof body.clarification_option_id === "string"
+    ? body.clarification_option_id.trim()
+    : null;
+  if (clarificationOptionId && !/^join_path_[a-f0-9]{12}$/.test(clarificationOptionId)) {
+    return badRequest(res, "clarification_option_id is invalid");
+  }
   const sqlOverride = typeof body.sql_override === "string" && body.sql_override.trim() ? body.sql_override.trim() : null;
   const maxRows = clamp(Number(body.max_rows || 1000), 1, 100000);
   const timeoutMs = clamp(Number(body.timeout_ms || 20000), 1000, 120000);
@@ -128,7 +134,8 @@ const handleRunSession: RouteHandlerWithId<RunSessionRequest, RunSessionResponse
     sqlOverride,
     maxRows,
     timeoutMs,
-    noExecute
+    noExecute,
+    clarificationOptionId
   });
 
   return json(res, result.statusCode, result.body);

@@ -8,6 +8,7 @@ import appDb = require("../src/lib/appDb");
 import {
   expandSchemaGraph,
   loadExpandedSchemaContext,
+  loadResolvedSchemaContext,
   type SchemaGraph,
   type SchemaGraphEdge,
   type SchemaGraphNode
@@ -165,6 +166,43 @@ test("loadExpandedSchemaContext loads full columns for core and connector tables
       "public.rental.inventory_id = public.inventory.inventory_id"
     ]
   );
+});
+
+test("loadResolvedSchemaContext applies the selected path and scopes its join policies", async () => {
+  const graph = makeGraph(
+    [node(A, "orders"), node(B, "customer_bridge"), node(C, "account_bridge"), node(D, "customer")],
+    [edge("ab", A, B), edge("bd", B, D), edge("ac", A, C), edge("cd", C, D)]
+  );
+  const expansion = expandSchemaGraph(graph, [A, D], { maxIntermediateHops: 1 });
+  const selectedPath = expansion.ambiguities[0].alternatives[1];
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
+    const normalized = normalizeSql(sql);
+    if (normalized.includes("from schema_objects") && normalized.includes("object_type in")) {
+      return result(graph.nodes
+        .filter((item) => (params[1] as string[]).includes(item.id))
+        .map((item) => ({
+          id: item.id,
+          schema_name: item.schema_name,
+          object_name: item.object_name,
+          object_type: item.object_type
+        })));
+    }
+    if (normalized.includes("from columns c")
+      || normalized.includes("from semantic_entities")
+      || normalized.includes("from metric_definitions")
+      || normalized.includes("from join_policies")
+      || normalized.includes("from rag_notes")) {
+      return result([]);
+    }
+    throw new Error(`Unexpected SQL: ${normalized}`);
+  }) as typeof appDb.query;
+
+  const resolved = await loadResolvedSchemaContext(DATA_SOURCE_ID, { graph, expansion, context: null }, selectedPath);
+
+  assert.equal(resolved.expansion.status, "complete");
+  assert.deepEqual(resolved.expansion.object_ids, [A, C, D]);
+  assert.deepEqual(resolved.expansion.connector_object_ids, [C]);
+  assert.deepEqual(resolved.context?.joinPolicies.map((policy) => policy.id), ["ac", "cd"]);
 });
 
 function node(id: string, objectName: string): SchemaGraphNode {

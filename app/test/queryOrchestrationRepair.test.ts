@@ -142,6 +142,52 @@ test("orchestrateQueryRun repairs adapter validation errors before EXPLAIN and e
   assert.equal(closed, true);
 });
 
+test("ambiguous generation persists clarification and returns the structured 422 response", async () => {
+  let recorded = false;
+  const dependencies = dependenciesWithGenerator(async () => generation("SELECT 1", "generation"));
+  dependencies.prepareQueryGenerationContext = async () => ({
+    ok: false,
+    code: "schema_linking_ambiguous",
+    message: "Multiple equally valid join paths were found",
+    clarification: {
+      kind: "join_path",
+      message: "Choose a relationship",
+      options: [
+        { id: "join_path_111111111111", label: "Path one", description: "First path", table_refs: ["public.a", "public.b"] },
+        { id: "join_path_222222222222", label: "Path two", description: "Second path", table_refs: ["public.a", "public.b"] }
+      ]
+    },
+    diagnostics: { candidates: [], linker: null, expansion: null }
+  });
+  dependencies.recordPendingClarification = async () => {
+    recorded = true;
+  };
+
+  const result = await orchestrateQueryRun(baseInput(), dependencies);
+
+  assert.equal(result.statusCode, 422);
+  assert.equal(recorded, true);
+  assert.equal((result.body as { clarification: { options: unknown[] } }).clarification.options.length, 2);
+});
+
+test("resume refuses a valid current option when the session has no pending clarification", async () => {
+  let generationCalled = false;
+  const dependencies = dependenciesWithGenerator(async () => {
+    generationCalled = true;
+    return generation("SELECT 1", "generation");
+  });
+  dependencies.resolvePendingClarification = async () => false;
+
+  const result = await orchestrateQueryRun({
+    ...baseInput(),
+    clarificationOptionId: "join_path_111111111111"
+  }, dependencies);
+
+  assert.equal(result.statusCode, 409);
+  assert.equal((result.body as { error: string }).error, "clarification_not_pending");
+  assert.equal(generationCalled, false);
+});
+
 function baseInput() {
   return {
     sessionId: SESSION_ID,
@@ -190,6 +236,8 @@ function dependenciesWithGenerator(
     emitQueryDiagnostic: (diagnostic) => {
       emittedDiagnostics.push(diagnostic);
     },
+    recordPendingClarification: async () => undefined,
+    resolvePendingClarification: async () => true,
     createDatabaseAdapter: () => {
       throw new Error("Adapter must not be created for no_execute tests");
     }
