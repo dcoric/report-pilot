@@ -120,6 +120,12 @@ Observability:
 - `GET /v1/observability/release-gates`
 - `GET /v1/observability/benchmark-command`
 - `POST /v1/observability/release-gates/report`
+- Each query run emits one `query_generation_diagnostics` JSON event correlated
+  by `request_id` and `session_id`. It contains bounded table IDs/counts,
+  expansion and fallback status, provider outcomes, stage latency, repair count,
+  prompt-size estimates, and token totals. It never includes the question,
+  prompt or SQL contents, query parameters, connection details, or raw provider
+  errors.
 
 RAG:
 
