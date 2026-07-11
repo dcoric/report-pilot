@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Database, Search, RefreshCw, Layers, Link as LinkIcon } from 'lucide-react';
 import { client } from '../lib/api/client';
 import { SchemaObjectList } from '../components/Schema/SchemaObjectList';
 import { JoinPolicyDialog } from '../components/Semantic/JoinPolicyDialog';
+import { AsyncErrorState } from '../components/Layout/AsyncErrorState';
 import { useAuth } from '../hooks/useAuth';
 import type { components } from '../lib/api/types';
 
@@ -17,58 +18,71 @@ export const SchemaExplorer: React.FC = () => {
     const [schemaObjects, setSchemaObjects] = useState<SchemaObject[]>([]);
     const [isLoadingSources, setIsLoadingSources] = useState(true);
     const [isLoadingObjects, setIsLoadingObjects] = useState(false);
+    const [sourceLoadError, setSourceLoadError] = useState<string | null>(null);
+    const [objectLoadError, setObjectLoadError] = useState<string | null>(null);
     const [filter, setFilter] = useState('');
     const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false); // Join Dialog State
 
-    // Fetch Data Sources on mount
-    useEffect(() => {
-        const fetchDataSources = async () => {
-            setIsLoadingSources(true);
-            try {
-                const { data } = await client.GET('/v1/data-sources');
-                if (data && data.items) {
-                    setDataSources(data.items);
-                    if (data.items.length > 0) {
-                        setSelectedDataSourceId(data.items[0].id);
-                    }
-                }
-            } catch (error) {
-                console.error("Failed to fetch data sources", error);
-            } finally {
-                setIsLoadingSources(false);
+    const fetchDataSources = useCallback(async () => {
+        setIsLoadingSources(true);
+        setSourceLoadError(null);
+        try {
+            const { data, error } = await client.GET('/v1/data-sources');
+            if (error || !data?.items) {
+                throw new Error('The data sources request failed');
             }
-        };
-        fetchDataSources();
+
+            setDataSources(data.items);
+            setSelectedDataSourceId(currentId => {
+                if (data.items.some(source => source.id === currentId)) {
+                    return currentId;
+                }
+                return data.items[0]?.id ?? '';
+            });
+        } catch (error) {
+            console.error("Failed to fetch data sources", error);
+            setSourceLoadError('We could not load the available data sources. Check your connection and try again.');
+        } finally {
+            setIsLoadingSources(false);
+        }
     }, []);
 
-    // Fetch Schema Objects when selected data source changes
-    useEffect(() => {
+    const fetchSchemaObjects = useCallback(async () => {
         if (!selectedDataSourceId) {
             setSchemaObjects([]);
+            setObjectLoadError(null);
             return;
         }
 
-        const fetchSchemaObjects = async () => {
-            setIsLoadingObjects(true);
-            try {
-                const { data } = await client.GET('/v1/schema-objects', {
-                    params: { query: { data_source_id: selectedDataSourceId } }
-                });
-                if (data && data.items) {
-                    setSchemaObjects(data.items);
-                } else {
-                    setSchemaObjects([]);
-                }
-            } catch (error) {
-                console.error("Failed to fetch schema objects", error);
-                setSchemaObjects([]);
-            } finally {
-                setIsLoadingObjects(false);
+        setIsLoadingObjects(true);
+        setObjectLoadError(null);
+        try {
+            const { data, error } = await client.GET('/v1/schema-objects', {
+                params: { query: { data_source_id: selectedDataSourceId } }
+            });
+            if (error || !data?.items) {
+                throw new Error('The schema objects request failed');
             }
-        };
 
-        fetchSchemaObjects();
+            setSchemaObjects(data.items);
+        } catch (error) {
+            console.error("Failed to fetch schema objects", error);
+            setSchemaObjects([]);
+            setObjectLoadError('We could not load this schema. Check your connection and try again.');
+        } finally {
+            setIsLoadingObjects(false);
+        }
     }, [selectedDataSourceId]);
+
+    // Fetch Data Sources on mount
+    useEffect(() => {
+        void fetchDataSources();
+    }, [fetchDataSources]);
+
+    // Fetch Schema Objects when selected data source changes
+    useEffect(() => {
+        void fetchSchemaObjects();
+    }, [fetchSchemaObjects]);
 
     return (
         <div className="h-full flex flex-col">
@@ -100,10 +114,12 @@ export const SchemaExplorer: React.FC = () => {
                             value={selectedDataSourceId}
                             onChange={(e) => setSelectedDataSourceId(e.target.value)}
                             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-oxblood focus:ring-oxblood sm:text-sm p-2 border"
-                            disabled={isLoadingSources || dataSources.length === 0}
+                            disabled={isLoadingSources || Boolean(sourceLoadError) || dataSources.length === 0}
                         >
                             {isLoadingSources ? (
                                 <option>Loading sources...</option>
+                            ) : sourceLoadError ? (
+                                <option>Sources unavailable</option>
                             ) : dataSources.length === 0 ? (
                                 <option>No data sources found</option>
                             ) : (
@@ -129,10 +145,28 @@ export const SchemaExplorer: React.FC = () => {
 
                 {/* Content Area */}
                 <div className="flex-1 overflow-y-auto">
-                    {isLoadingObjects ? (
+                    {sourceLoadError ? (
+                        <div className="rounded-lg border border-gray-200 bg-white shadow">
+                            <AsyncErrorState
+                                title="Data sources are unavailable"
+                                message={sourceLoadError}
+                                onRetry={() => void fetchDataSources()}
+                                isRetrying={isLoadingSources}
+                            />
+                        </div>
+                    ) : isLoadingObjects ? (
                         <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                             <RefreshCw className="animate-spin mb-2" size={24} />
                             <p>Loading schema objects...</p>
+                        </div>
+                    ) : objectLoadError ? (
+                        <div className="rounded-lg border border-gray-200 bg-white shadow">
+                            <AsyncErrorState
+                                title="Schema is unavailable"
+                                message={objectLoadError}
+                                onRetry={() => void fetchSchemaObjects()}
+                                isRetrying={isLoadingObjects}
+                            />
                         </div>
                     ) : !selectedDataSourceId ? (
                         <div className="flex flex-col items-center justify-center h-64 text-gray-500">
