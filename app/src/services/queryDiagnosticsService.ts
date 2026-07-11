@@ -1,6 +1,7 @@
 import { logEvent } from "../lib/observability";
 import type { ProviderAttempt } from "./llmSqlService";
 import type { SchemaLinkingDiagnostics } from "./queryGenerationContextService";
+import type { QueryClarification } from "./queryClarificationService";
 
 const MAX_TABLE_IDS = 20;
 const MAX_PROVIDER_ATTEMPTS = 8;
@@ -26,6 +27,8 @@ export interface QueryDiagnosticInput {
   repairPromptChars: number;
   tokenUsage: unknown;
   executionDurationMs?: number | null;
+  clarificationKind?: QueryClarification["kind"] | null;
+  clarificationOptionCount?: number;
 }
 
 export interface QueryDiagnosticPayload {
@@ -48,6 +51,7 @@ export interface QueryDiagnosticPayload {
     fallback_category: "none" | "no_provider" | "provider_failure";
     clarification_required: boolean;
     clarification_option_count: number;
+    clarification_kind: QueryClarification["kind"] | null;
   } | null;
   retrieval: { rag_document_count: number; example_count: number };
   generation: {
@@ -116,9 +120,11 @@ export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnost
       fallback_category: linker?.status !== "fallback"
         ? "none"
         : linkerAttempts.length === 0 ? "no_provider" : "provider_failure",
-      clarification_required: expansion?.status === "ambiguous",
-      clarification_option_count: (expansion?.ambiguities || [])
-        .reduce((total, ambiguity) => total + ambiguity.alternatives.length, 0)
+      clarification_required: Boolean(input.clarificationKind) || expansion?.status === "ambiguous",
+      clarification_option_count: input.clarificationOptionCount === undefined
+        ? (expansion?.ambiguities || []).reduce((total, ambiguity) => total + ambiguity.alternatives.length, 0)
+        : Math.max(0, Math.floor(input.clarificationOptionCount)),
+      clarification_kind: input.clarificationKind || (expansion?.status === "ambiguous" ? "join_path" : null)
     } : null,
     retrieval: {
       rag_document_count: Math.max(0, Math.floor(input.ragDocumentCount)),

@@ -10,13 +10,16 @@ import {
   loadExpandedSchemaContext,
   loadResolvedSchemaContext,
   type ExpandedSchemaContext,
-  type SchemaExpansion
+  type SchemaExpansion,
+  type SchemaPath
 } from "./schemaGraphService";
 import type { QueryContext } from "./queryOrchestrationStore";
 import type { RagRetrievalDoc } from "./ragRetrieval";
 import { rankValidatedExamples } from "./exampleRankingService";
 import {
   buildJoinPathClarification,
+  buildCandidateClarification,
+  findCandidateIdByOptionId,
   findJoinPathByOptionId,
   type QueryClarification
 } from "./queryClarificationService";
@@ -32,6 +35,7 @@ export interface PrepareGenerationContextInput {
   candidateLimit?: number;
   finalRagLimit?: number;
   clarificationOptionId?: string | null;
+  resolvedClarificationOptionIds?: string[];
 }
 
 export interface SchemaLinkingDiagnostics {
@@ -106,10 +110,36 @@ export async function prepareQueryGenerationContext(
     };
   }
 
+  let linkerCandidates = candidates;
+  const candidateAmbiguity = buildCandidateClarification(input.question, candidates);
+  if (candidateAmbiguity) {
+    const optionIds = clarificationOptionIds(input);
+    const selectedCandidateId = optionIds
+      .map((optionId) => findCandidateIdByOptionId(candidateAmbiguity, optionId))
+      .find((candidateId): candidateId is string => Boolean(candidateId));
+    if (!selectedCandidateId) {
+      const invalidForKind = Boolean(input.clarificationOptionId)
+        && input.clarificationOptionId!.startsWith(`${candidateAmbiguity.clarification.kind}_`);
+      return {
+        ok: false,
+        code: invalidForKind ? "clarification_option_invalid" : "schema_linking_ambiguous",
+        message: invalidForKind
+          ? "The selected clarification option is no longer valid"
+          : "Multiple table or metric interpretations were found",
+        clarification: candidateAmbiguity.clarification,
+        diagnostics
+      };
+    }
+    const competingIds = new Set(candidateAmbiguity.candidate_ids);
+    linkerCandidates = candidates.filter((candidate) =>
+      !competingIds.has(candidate.id) || candidate.id === selectedCandidateId
+    );
+  }
+
   const linker = await dependencies.linkTablesWithRouting({
     dataSourceId: input.dataSourceId,
     question: input.question,
-    candidates,
+    candidates: linkerCandidates,
     requestedProvider: input.requestedProvider,
     requestedModel: input.requestedModel,
     requestId: input.requestId
@@ -123,8 +153,11 @@ export async function prepareQueryGenerationContext(
   );
   diagnostics.expansion = expanded.expansion;
 
-  if (expanded.expansion.status === "ambiguous" && input.clarificationOptionId) {
-    const selectedPath = findJoinPathByOptionId(expanded.expansion, input.clarificationOptionId);
+  const joinPathOptionIds = clarificationOptionIds(input).filter((optionId) => optionId.startsWith("join_path_"));
+  if (expanded.expansion.status === "ambiguous" && joinPathOptionIds.length > 0) {
+    const selectedPath = joinPathOptionIds
+      .map((optionId) => findJoinPathByOptionId(expanded.expansion, optionId))
+      .find((path): path is SchemaPath => Boolean(path));
     if (!selectedPath) {
       return {
         ok: false,
@@ -157,6 +190,13 @@ export async function prepareQueryGenerationContext(
     ragDocuments: selectFinalRagDocuments(retrievedDocuments, expanded, finalRagLimit),
     diagnostics
   };
+}
+
+function clarificationOptionIds(input: PrepareGenerationContextInput): string[] {
+  return [...new Set([
+    input.clarificationOptionId,
+    ...(input.resolvedClarificationOptionIds || [])
+  ].map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function selectFinalRagDocuments(

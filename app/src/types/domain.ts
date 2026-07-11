@@ -3,7 +3,7 @@
  *
  * These types describe the shapes of rows persisted in the metadata
  * Postgres database (defined by `db/migrations/0001_*.sql` through
- * `db/migrations/0029_*.sql`) plus a handful of in-process config
+ * `db/migrations/0030_*.sql`) plus a handful of in-process config
  * shapes (provider configs, routing) that are not exposed through the
  * OpenAPI spec.
  *

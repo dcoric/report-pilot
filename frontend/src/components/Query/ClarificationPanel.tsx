@@ -72,7 +72,7 @@ export function ClarificationPanel({
                             <span className="mt-0.5 shrink-0 text-xs font-semibold text-oxblood">
                                 {isResolving
                                     ? <Loader2 size={14} className="animate-spin" />
-                                    : isSelected ? 'Retry' : 'Use path'}
+                                    : isSelected ? 'Retry' : 'Select'}
                             </span>
                         </button>
                     );

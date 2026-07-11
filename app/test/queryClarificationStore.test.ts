@@ -6,6 +6,7 @@ import type { PoolClient } from "pg";
 import appDb = require("../src/lib/appDb");
 import {
   cancelPendingClarification,
+  loadResolvedClarificationOptionIds,
   recordPendingClarification,
   resolvePendingClarification
 } from "../src/services/queryClarificationStore";
@@ -43,6 +44,27 @@ test("clarification store persists pending options and audits their resolution",
     assert.ok(statements.some((entry) => entry.sql.includes("status = 'created'")));
   } finally {
     appDb.withTransaction = originalTransaction;
+  }
+});
+
+test("clarification store loads prior resolved choices for multi-step clarification", async () => {
+  const originalQuery = appDb.query;
+  appDb.query = (async () => ({
+    rowCount: 3,
+    rows: [
+      { selected_option_id: "table_111111111111" },
+      { selected_option_id: "join_path_222222222222" },
+      { selected_option_id: "table_111111111111" }
+    ]
+  })) as unknown as typeof appDb.query;
+
+  try {
+    assert.deepEqual(await loadResolvedClarificationOptionIds("session-1"), [
+      "table_111111111111",
+      "join_path_222222222222"
+    ]);
+  } finally {
+    appDb.query = originalQuery;
   }
 });
 

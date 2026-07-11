@@ -120,7 +120,7 @@ const handleRunSession: RouteHandlerWithId<RunSessionRequest, RunSessionResponse
   const clarificationOptionId = typeof body.clarification_option_id === "string"
     ? body.clarification_option_id.trim()
     : null;
-  if (clarificationOptionId && !/^join_path_[a-f0-9]{12}$/.test(clarificationOptionId)) {
+  if (clarificationOptionId && !/^(?:join_path|table|metric)_[a-f0-9]{12}$/.test(clarificationOptionId)) {
     return badRequest(res, "clarification_option_id is invalid");
   }
   const sqlOverride = typeof body.sql_override === "string" && body.sql_override.trim() ? body.sql_override.trim() : null;

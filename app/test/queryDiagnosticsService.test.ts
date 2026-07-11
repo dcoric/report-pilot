@@ -74,6 +74,7 @@ test("query diagnostics are bounded, correlated, and exclude sensitive content",
   assert.deepEqual(payload.retrieval, { rag_document_count: 12, example_count: 3 });
   assert.equal(payload.schema_linking?.clarification_required, true);
   assert.equal(payload.schema_linking?.clarification_option_count, 2);
+  assert.equal(payload.schema_linking?.clarification_kind, "join_path");
   assert.deepEqual(payload.generation.token_usage, { prompt_tokens: 18, completion_tokens: 9, total_tokens: 27 });
   const serialized = JSON.stringify(payload);
   assert.doesNotMatch(serialized, /secret/);

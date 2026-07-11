@@ -5174,7 +5174,7 @@ export interface components {
         };
         QueryClarification: {
             /** @enum {string} */
-            kind: "join_path";
+            kind: "join_path" | "table" | "metric";
             message: string;
             options: components["schemas"]["QueryClarificationOption"][];
         };

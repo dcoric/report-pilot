@@ -3624,7 +3624,7 @@ components:
           description: When true, generate and validate SQL without connecting to or executing against the source database.
         clarification_option_id:
           type: string
-          pattern: '^join_path_[a-f0-9]{12}$'
+          pattern: '^(join_path|table|metric)_[a-f0-9]{12}$'
           description: Opaque option ID returned by a prior 422 clarification response for this session.
         max_rows:
           type: integer
@@ -3682,7 +3682,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [join_path]
+          enum: [join_path, table, metric]
         message:
           type: string
         options:
