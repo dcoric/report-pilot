@@ -14,15 +14,59 @@ process.env.AUTH_FLOW_SECRET = "x".repeat(48);
 import appDb = require("../src/lib/appDb");
 import { createAuthTestStub } from "./helpers/authTestStub";
 import { createMockOidcIdp } from "./helpers/mockOidcIdp";
+import type { MockOidcIdp } from "./helpers/mockOidcIdp";
+import type { ProviderRow } from "../src/services/authProviderService";
+import type { ApiSchema } from "../src/types";
+
+type OidcProviderListResponse = ApiSchema<"OidcProviderLoginListResponse">;
+
+interface SeedProviderInput {
+  id?: string;
+  type?: string;
+  name: string;
+  display_name?: string | null;
+  issuer: string;
+  client_id: string;
+  client_secret?: string | null;
+  scopes?: string[];
+  redirect_uri: string;
+  claims_mapping?: Record<string, unknown>;
+  enabled?: boolean;
+  auto_link_by_email?: boolean;
+  jit_enabled?: boolean;
+  jit_default_role?: string;
+  jit_allowed_domains?: string[];
+}
+
+interface AuthMePayload {
+  user: {
+    email: string;
+    roles: string[];
+  };
+}
+
+interface ErrorPayload {
+  error?: string;
+  message: string;
+}
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+  headers: Headers;
+  location: string | null;
+  setCookie: string[];
+}
 
 let server: import("http").Server;
 let baseUrl: string;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-let idp;
+let idp: MockOidcIdp;
+let issuer: string;
 let originalQuery: typeof appDb.query;
-let providers; // in-memory provider rows
-let providerCounter;
-let aliceUserId;
+let providers: Map<string, ProviderRow>; // in-memory provider rows
+let providerCounter: number;
+let aliceUserId: string;
 
 function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
@@ -37,8 +81,8 @@ function nextProviderId(): string {
   return uuid("eeee", providerCounter);
 }
 
-function seedProvider(row) {
-  const created = {
+function seedProvider(row: SeedProviderInput): ProviderRow {
+  const created: ProviderRow = {
     id: row.id || nextProviderId(),
     type: row.type || "oidc",
     name: row.name,
@@ -65,7 +109,11 @@ function seedProvider(row) {
 
 type FetchRedirect = "manual" | "follow" | "error";
 
-async function call(method: string, path: string, { cookie, body, redirect = "manual" }: { cookie?: string; body?: unknown; redirect?: FetchRedirect } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { cookie, body, redirect = "manual" }: { cookie?: string; body?: unknown; redirect?: FetchRedirect } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -74,20 +122,22 @@ async function call(method: string, path: string, { cookie, body, redirect = "ma
     redirect,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try { payload = await response.json(); } catch { payload = null; }
   }
   return {
     status: response.status,
-    payload,
+    payload: payload as T,
     headers: response.headers,
     location: response.headers.get("location"),
-    setCookie: response.headers.getSetCookie ? response.headers.getSetCookie() : (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")] : [])
+    setCookie: response.headers.getSetCookie
+      ? response.headers.getSetCookie()
+      : [response.headers.get("set-cookie")].filter((value): value is string => value !== null)
   };
 }
 
-function pickCookie(setCookies, name) {
+function pickCookie(setCookies: string[], name: string): string | null {
   for (const sc of setCookies) {
     const match = sc.match(new RegExp(`(^|;\\s*)${name}=([^;]*)`));
     if (match) return `${name}=${match[2]}`;
@@ -102,7 +152,7 @@ before(async () => {
     clientId: "test-client",
     clientSecret: "test-secret"
   });
-  await idp.start();
+  issuer = await idp.start();
 
   originalQuery = appDb.query;
   providers = new Map();
@@ -122,7 +172,7 @@ before(async () => {
 
     // authService.findUserByEmail (lookup after callback)
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const [emailLower] = params as [string];
       if (emailLower === "alice@example.com") {
         return {
           rowCount: 1,
@@ -143,7 +193,7 @@ before(async () => {
 
     // authProviderService queries
     if (n.startsWith("select") && /from auth_providers\s+where id = \$1/.test(n)) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = providers.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -164,21 +214,44 @@ before(async () => {
     }
 
     if (n.startsWith("insert into auth_providers")) {
-      const [type, name, displayName, issuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params;
+      const [type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
+        string,
+        string,
+        string | null,
+        string,
+        string,
+        string | null,
+        string[],
+        string,
+        string,
+        boolean
+      ];
       const existing = [...providers.values()].find((p) => p.name.toLowerCase() === String(name).toLowerCase());
       if (existing) {
         const err = Object.assign(new Error("duplicate name"), { code: "23505" }); throw err;
       }
       const row = seedProvider({
-        type, name, display_name: displayName, issuer, client_id: clientId,
+        type, name, display_name: displayName, issuer: providerIssuer, client_id: clientId,
         client_secret: clientSecret, scopes, redirect_uri: redirectUri,
-        claims_mapping: JSON.parse(claimsMappingJson as string), enabled
+        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown>, enabled
       });
       return { rowCount: 1, rows: [row] };
     }
 
     if (n.startsWith("update auth_providers")) {
-      const [id, type, name, displayName, issuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params;
+      const [id, type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
+        string,
+        string,
+        string,
+        string | null,
+        string,
+        string,
+        string | null,
+        string[],
+        string,
+        string,
+        boolean
+      ];
       const existing = providers.get(id);
       if (!existing) return { rowCount: 0, rows: [] };
       const next = {
@@ -186,12 +259,12 @@ before(async () => {
         type,
         name,
         display_name: displayName,
-        issuer,
+        issuer: providerIssuer,
         client_id: clientId,
         client_secret: clientSecret === null ? existing.client_secret : clientSecret,
         scopes,
         redirect_uri: redirectUri,
-        claims_mapping: JSON.parse(claimsMappingJson as string),
+        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown>,
         enabled,
         updated_at: new Date().toISOString()
       };
@@ -200,7 +273,7 @@ before(async () => {
     }
 
     if (n.startsWith("delete from auth_providers where id = $1 returning id")) {
-      const [id] = params;
+      const [id] = params as [string];
       if (!providers.has(id)) return { rowCount: 0, rows: [] };
       providers.delete(id);
       return { rowCount: 1, rows: [{ id }] };
@@ -257,7 +330,7 @@ test("GET /v1/auth/oidc/providers exposes only enabled providers, no secrets", a
   const provider = seedProvider({
     name: "okta",
     display_name: "Okta SSO",
-    issuer: idp.issuer,
+    issuer,
     client_id: idp.clientId,
     client_secret: idp.clientSecret,
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
@@ -266,17 +339,18 @@ test("GET /v1/auth/oidc/providers exposes only enabled providers, no secrets", a
   seedProvider({
     name: "disabled",
     display_name: "Disabled",
-    issuer: idp.issuer,
+    issuer,
     client_id: "x",
     client_secret: "y",
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
     enabled: false
   });
 
-  const result = await call("GET", "/v1/auth/oidc/providers");
+  const result = await call<OidcProviderListResponse>("GET", "/v1/auth/oidc/providers");
   assert.equal(result.status, 200);
-  assert.equal(result.payload.items.length, 1);
-  const item = result.payload.items[0];
+  assert.equal(result.payload.items?.length, 1);
+  const item = result.payload.items?.[0];
+  assert.ok(item, "expected enabled provider");
   assert.equal(item.id, provider.id);
   assert.equal(item.display_name, "Okta SSO");
   assert.equal("client_secret" in item, false);
@@ -286,7 +360,7 @@ test("OIDC login flow: start → IdP authorize → callback → session cookie",
   const provider = seedProvider({
     name: "okta",
     display_name: "Okta",
-    issuer: idp.issuer,
+    issuer,
     client_id: idp.clientId,
     client_secret: idp.clientSecret,
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
@@ -296,14 +370,18 @@ test("OIDC login flow: start → IdP authorize → callback → session cookie",
   // 1. Start the flow.
   const start = await call("GET", `/v1/auth/oidc/login?provider_id=${provider.id}`);
   assert.equal(start.status, 302);
-  assert.ok(start.location && start.location.startsWith(`${idp.issuer}/authorize`));
+  assert.ok(start.location?.startsWith(`${issuer}/authorize`));
+  const startLocation = start.location;
+  assert.ok(startLocation, "expected IdP redirect");
   const flowCookie = pickCookie(start.setCookie, "rp_oidc_flow");
   assert.ok(flowCookie, "expected rp_oidc_flow cookie to be set");
 
   // 2. Hit the IdP's authorize endpoint directly (no cookie needed — it's another server).
-  const idpRedirect = await fetch(start.location, { redirect: "manual" });
+  const idpRedirect = await fetch(startLocation, { redirect: "manual" });
   assert.equal(idpRedirect.status, 302);
-  const callbackUrl = new URL(idpRedirect.headers.get("location"));
+  const callbackLocation = idpRedirect.headers.get("location");
+  assert.ok(callbackLocation, "expected callback redirect");
+  const callbackUrl = new URL(callbackLocation);
   assert.equal(callbackUrl.pathname, "/v1/auth/oidc/callback");
   assert.ok(callbackUrl.searchParams.get("code"));
   assert.ok(callbackUrl.searchParams.get("state"));
@@ -322,7 +400,7 @@ test("OIDC login flow: start → IdP authorize → callback → session cookie",
   assert.ok(clearFlow, "expected rp_oidc_flow cookie to be cleared");
 
   // 4. /v1/auth/me works with the new session.
-  const me = await call("GET", "/v1/auth/me", { cookie: sessionCookie });
+  const me = await call<AuthMePayload>("GET", "/v1/auth/me", { cookie: sessionCookie });
   assert.equal(me.status, 200);
   assert.equal(me.payload.user.email, "alice@example.com");
   assert.deepEqual(me.payload.user.roles, ["analyst"]);
@@ -332,7 +410,7 @@ test("OIDC callback returns 403 when the IdP email has no local user", async () 
   const provider = seedProvider({
     name: "okta",
     display_name: "Okta",
-    issuer: idp.issuer,
+    issuer,
     client_id: idp.clientId,
     client_secret: idp.clientSecret,
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
@@ -343,9 +421,13 @@ test("OIDC callback returns 403 when the IdP email has no local user", async () 
   try {
     const start = await call("GET", `/v1/auth/oidc/login?provider_id=${provider.id}`);
     const flowCookie = pickCookie(start.setCookie, "rp_oidc_flow");
+    assert.ok(flowCookie, "expected flow cookie");
+    assert.ok(start.location, "expected IdP redirect");
     const idpRedirect = await fetch(start.location, { redirect: "manual" });
-    const callbackUrl = new URL(idpRedirect.headers.get("location"));
-    const callback = await call(
+    const callbackLocation = idpRedirect.headers.get("location");
+    assert.ok(callbackLocation, "expected callback redirect");
+    const callbackUrl = new URL(callbackLocation);
+    const callback = await call<ErrorPayload>(
       "GET",
       `${callbackUrl.pathname}${callbackUrl.search}`,
       { cookie: flowCookie }
@@ -360,7 +442,7 @@ test("OIDC callback returns 403 when the IdP email has no local user", async () 
 
 test("OIDC callback rejects requests without the flow cookie", async () => {
   // Fabricate a plausible-looking callback URL with no cookie.
-  const callback = await call("GET", "/v1/auth/oidc/callback?code=abc&state=xyz");
+  const callback = await call<ErrorPayload>("GET", "/v1/auth/oidc/callback?code=abc&state=xyz");
   assert.equal(callback.status, 400);
   assert.match(callback.payload.message, /flow state/);
 });
@@ -371,7 +453,7 @@ test("/v1/auth/oidc/login returns 404 for disabled or unknown providers", async 
 
   const provider = seedProvider({
     name: "okta",
-    issuer: idp.issuer,
+    issuer,
     client_id: idp.clientId,
     client_secret: idp.clientSecret,
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
