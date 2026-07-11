@@ -60,15 +60,28 @@ export interface LargeSchemaGateDiagnostic {
   stage: "schema_linking" | "prompt_construction";
   metric: string;
   actual: number;
-  comparator: ">=" | ">" | "<" | "=";
+  comparator: ">=" | ">" | "<" | "<=" | "=";
   target: number;
   passed: boolean;
 }
 
 export const LARGE_SCHEMA_THRESHOLDS = {
   table_recall_at_15: 0.95,
-  join_path_accuracy: 1
+  join_path_accuracy: 1,
+  max_p95_linking_latency_ms: 250
 } as const;
+
+export const LARGE_SCHEMA_SCALE_DISTRACTOR_COUNTS = [100, 300, 1000] as const;
+
+export interface LargeSchemaScaleResult {
+  distractor_table_count: number;
+  table_count: number;
+  column_count: number;
+  table_recall_at_15: number;
+  join_path_accuracy: number;
+  max_candidate_count: number;
+  p95_linking_latency_ms: number;
+}
 
 export interface LargeSchemaBenchmarkResult {
   version: string;
@@ -98,9 +111,14 @@ export interface LargeSchemaBenchmarkResult {
     join_path_accuracy_eq_100pct: boolean;
     improves_table_recall_over_legacy: boolean;
     prompt_chars_below_legacy: boolean;
+    scale_recall_ge_95pct: boolean;
+    scale_join_accuracy_eq_100pct: boolean;
+    scale_candidate_count_bounded: boolean;
+    scale_p95_linking_latency_le_250ms: boolean;
     all_passed: boolean;
   };
   gate_diagnostics: LargeSchemaGateDiagnostic[];
+  scaling: LargeSchemaScaleResult[];
   cases: LargeSchemaCaseResult[];
 }
 
@@ -196,11 +214,20 @@ export async function runLargeSchemaBenchmark(
     .map((result) => result.hierarchical.prompt_chars)
     .filter((value): value is number => Number.isFinite(value));
   const hierarchicalPromptChars = average(hierarchicalPromptValues);
+  const scaling = buildScalingProfile(fixture);
+  const minimumScaleRecall = Math.min(...scaling.map((item) => item.table_recall_at_15));
+  const minimumScaleJoinAccuracy = Math.min(...scaling.map((item) => item.join_path_accuracy));
+  const maximumScaleCandidateCount = Math.max(...scaling.map((item) => item.max_candidate_count));
+  const maximumScaleLatency = Math.max(...scaling.map((item) => item.p95_linking_latency_ms));
   const gates = {
     table_recall_at_15_ge_95pct: hierarchicalRecall >= LARGE_SCHEMA_THRESHOLDS.table_recall_at_15,
     join_path_accuracy_eq_100pct: hierarchicalJoinAccuracy === LARGE_SCHEMA_THRESHOLDS.join_path_accuracy,
     improves_table_recall_over_legacy: hierarchicalRecall > legacyRecall,
-    prompt_chars_below_legacy: hierarchicalPromptChars < legacyPromptChars
+    prompt_chars_below_legacy: hierarchicalPromptChars < legacyPromptChars,
+    scale_recall_ge_95pct: minimumScaleRecall >= LARGE_SCHEMA_THRESHOLDS.table_recall_at_15,
+    scale_join_accuracy_eq_100pct: minimumScaleJoinAccuracy === LARGE_SCHEMA_THRESHOLDS.join_path_accuracy,
+    scale_candidate_count_bounded: maximumScaleCandidateCount <= fixture.candidate_limit,
+    scale_p95_linking_latency_le_250ms: maximumScaleLatency <= LARGE_SCHEMA_THRESHOLDS.max_p95_linking_latency_ms
   };
   const gateDiagnostics: LargeSchemaGateDiagnostic[] = [
     {
@@ -238,6 +265,42 @@ export async function runLargeSchemaBenchmark(
       comparator: "<",
       target: Math.round(legacyPromptChars),
       passed: gates.prompt_chars_below_legacy
+    },
+    {
+      id: "scale_recall_ge_95pct",
+      stage: "schema_linking",
+      metric: "minimum_scaled_table_recall_at_15",
+      actual: round4(minimumScaleRecall),
+      comparator: ">=",
+      target: LARGE_SCHEMA_THRESHOLDS.table_recall_at_15,
+      passed: gates.scale_recall_ge_95pct
+    },
+    {
+      id: "scale_join_accuracy_eq_100pct",
+      stage: "schema_linking",
+      metric: "minimum_scaled_join_path_accuracy",
+      actual: round4(minimumScaleJoinAccuracy),
+      comparator: "=",
+      target: LARGE_SCHEMA_THRESHOLDS.join_path_accuracy,
+      passed: gates.scale_join_accuracy_eq_100pct
+    },
+    {
+      id: "scale_candidate_count_bounded",
+      stage: "schema_linking",
+      metric: "maximum_scaled_candidate_count",
+      actual: maximumScaleCandidateCount,
+      comparator: "<=",
+      target: fixture.candidate_limit,
+      passed: gates.scale_candidate_count_bounded
+    },
+    {
+      id: "scale_p95_linking_latency_le_250ms",
+      stage: "schema_linking",
+      metric: "maximum_scaled_p95_linking_latency_ms",
+      actual: round4(maximumScaleLatency),
+      comparator: "<=",
+      target: LARGE_SCHEMA_THRESHOLDS.max_p95_linking_latency_ms,
+      passed: gates.scale_p95_linking_latency_le_250ms
     }
   ];
 
@@ -269,8 +332,52 @@ export async function runLargeSchemaBenchmark(
       all_passed: Object.values(gates).every(Boolean)
     },
     gate_diagnostics: gateDiagnostics,
+    scaling,
     cases: results
   };
+}
+
+function buildScalingProfile(fixture: LargeSchemaFixtureDefinition): LargeSchemaScaleResult[] {
+  return LARGE_SCHEMA_SCALE_DISTRACTOR_COUNTS.map((distractorTableCount) => {
+    const scaledFixture = { ...fixture, distractor_table_count: distractorTableCount };
+    const schema = buildSyntheticSchema(scaledFixture);
+    const cardsByRef = new Map(schema.cards.map((card) => [tableRef(card), card]));
+    const caseMetrics = fixture.cases.map((caseDef) => {
+      const expectedCoreIds = caseDef.expected_core_refs.map((ref) => required(cardsByRef, ref).id);
+      const startedAt = performance.now();
+      const candidates = rankTableCards(caseDef.question, schema.cards, [], fixture.candidate_limit);
+      const expansion = expandSchemaGraph(schema.graph, expectedCoreIds, {
+        maxIntermediateHops: caseDef.complexity === "multi_hop" ? 3 : 2,
+        maxAlternativePaths: 4
+      });
+      const latencyMs = performance.now() - startedAt;
+      const candidateRefs = new Set(candidates.map(tableRef));
+      const expandedRefs = new Set(
+        expansion.object_ids
+          .map((id) => schema.graph.nodes.find((node) => node.id === id)?.ref)
+          .filter((ref): ref is string => Boolean(ref))
+      );
+      const joinPathCorrect = caseDef.expected_status === "ambiguous"
+        ? expansion.status === "ambiguous"
+        : expansion.status === "complete" && caseDef.expected_path_refs.every((ref) => expandedRefs.has(ref));
+      return {
+        recall: recall(caseDef.expected_core_refs, candidateRefs),
+        joinPathCorrect,
+        candidateCount: candidates.length,
+        latencyMs
+      };
+    });
+
+    return {
+      distractor_table_count: distractorTableCount,
+      table_count: schema.graph.nodes.length,
+      column_count: schema.columns.length,
+      table_recall_at_15: round4(average(caseMetrics.map((item) => item.recall))),
+      join_path_accuracy: round4(ratio(caseMetrics.filter((item) => item.joinPathCorrect).length, caseMetrics.length)),
+      max_candidate_count: Math.max(...caseMetrics.map((item) => item.candidateCount)),
+      p95_linking_latency_ms: round4(percentile(caseMetrics.map((item) => item.latencyMs), 0.95))
+    };
+  });
 }
 
 export function formatLargeSchemaGateFailures(result: LargeSchemaBenchmarkResult): string[] {

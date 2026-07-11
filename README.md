@@ -193,6 +193,9 @@ prompt is no longer smaller than the legacy prompt. The JSON output includes
 and target for every gate; failed gates are also printed as concise stderr
 messages. Runtime fallback, repair, and request-correlation diagnostics are
 tracked separately from this provider-free schema-linking benchmark.
+The CI profile repeats the retrieval/linking cases with 100, 300, and 1,000
+distractor tables. Every size must preserve at least 95% table recall, 100%
+join-path accuracy, at most 15 candidates, and p95 linking latency below 250ms.
 
 Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by dynamic offsets so the latest rental and latest payment land around yesterday (relative to system time), then caps shifted values at current system date/time to avoid future-dated rows.
 
