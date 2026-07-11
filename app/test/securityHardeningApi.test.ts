@@ -18,16 +18,54 @@ process.env.AUTH_LOCKOUT_IP_THRESHOLD = "10";
 
 import appDb = require("../src/lib/appDb");
 import authService = require("../src/services/authService");
+import type { AuthUserRow } from "../src/services/authService";
+
+interface TestSession {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  user_agent: string | null;
+  ip_address: string | null;
+  expires_at: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+interface AuditRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+interface LockoutPayload {
+  error: string;
+  reason: string;
+  retry_after_seconds: number;
+}
+
+interface CallResult<T> {
+  status: number;
+  payload: T;
+  setCookie: string | null;
+  headers: Headers;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
-let users;
-let sessions;
-let auditRows;
+let users: Map<string, AuthUserRow>;
+let sessions: Map<string, TestSession>;
+let auditRows: AuditRow[];
 let originalQuery: typeof appDb.query;
-let userCounter;
-let sessionCounter;
-let auditCounter;
+let userCounter: number;
+let sessionCounter: number;
+let auditCounter: number;
 
 function uuid(prefix: string, counter: number) {
   return `00000000-0000-4000-8000-${prefix}${String(counter).padStart(8, "0")}`;
@@ -37,7 +75,11 @@ function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-async function call(method: string, path: string, { cookie, body }: { cookie?: string; body?: unknown } = {}) {
+async function call<T = unknown>(
+  method: string,
+  path: string,
+  { cookie, body }: { cookie?: string; body?: unknown } = {}
+): Promise<CallResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -45,19 +87,19 @@ async function call(method: string, path: string, { cookie, body }: { cookie?: s
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try { payload = await response.json(); } catch { payload = null; }
   }
   return {
     status: response.status,
-    payload,
+    payload: payload as T,
     setCookie: response.headers.get("set-cookie"),
     headers: response.headers
   };
 }
 
-function emailFailureCount(email) {
+function emailFailureCount(email: string): number {
   return auditRows.filter(
     (r) => r.action === "auth.login.failure" && r.actor_email === email.toLowerCase()
   ).length;
@@ -86,17 +128,21 @@ before(async () => {
     updated_at: new Date().toISOString()
   });
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const n = normalize(sql);
 
     if (n.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const emailLower = String(params[0]);
       const row = [...users.values()].find((u) => u.email.toLowerCase() === emailLower);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (n.startsWith("insert into user_sessions")) {
-      const [uid, tokenHash, ua, ip, expiresAt] = params;
+      const uid = String(params[0]);
+      const tokenHash = String(params[1]);
+      const ua = typeof params[2] === "string" ? params[2] : null;
+      const ip = typeof params[3] === "string" ? params[3] : null;
+      const expiresAt = String(params[4]);
       sessionCounter += 1;
       const id = uuid("bbbb", sessionCounter);
       sessions.set(id, { id, user_id: uid, token_hash: tokenHash, user_agent: ua, ip_address: ip, expires_at: expiresAt, created_at: new Date().toISOString(), revoked_at: null });
@@ -113,14 +159,14 @@ before(async () => {
       auditCounter += 1;
       auditRows.push({
         id: uuid("dddd", auditCounter),
-        actor_user_id: actorUserId,
-        actor_email: actorEmail,
-        target_user_id: targetUserId,
-        action,
-        outcome,
-        details: JSON.parse(detailsJson),
-        ip_address: ipAddress,
-        user_agent: userAgent,
+        actor_user_id: typeof actorUserId === "string" ? actorUserId : null,
+        actor_email: typeof actorEmail === "string" ? actorEmail : null,
+        target_user_id: typeof targetUserId === "string" ? targetUserId : null,
+        action: String(action),
+        outcome: typeof outcome === "string" ? outcome : null,
+        details: JSON.parse(String(detailsJson)) as Record<string, unknown>,
+        ip_address: typeof ipAddress === "string" ? ipAddress : null,
+        user_agent: typeof userAgent === "string" ? userAgent : null,
         created_at: new Date(Date.now() + auditCounter).toISOString()
       });
       return { rowCount: 1, rows: [] };
@@ -128,7 +174,8 @@ before(async () => {
 
     // loginLockoutService — email-window query
     if (n.startsWith("with recent as ( select outcome, created_at from auth_audit_log where action in")) {
-      const [emailLower, sinceIso] = params;
+      const emailLower = String(params[0]);
+      const sinceIso = String(params[1]);
       const relevant = auditRows.filter(
         (r) => (r.action === "auth.login.failure" || r.action === "auth.login.success")
           && (r.actor_email || "").toLowerCase() === emailLower
@@ -139,27 +186,34 @@ before(async () => {
         .reduce((max, r) => (r.created_at > max ? r.created_at : max), "");
       const failures = relevant
         .filter((r) => r.outcome === "failure" && (lastSuccess === "" || r.created_at > lastSuccess));
-      const lastFailureAt = failures.reduce((max, r) => (r.created_at > max ? r.created_at : max), null);
+      const lastFailureAt = failures.reduce<string | null>(
+        (max, row) => max === null || row.created_at > max ? row.created_at : max,
+        null
+      );
       return { rowCount: 1, rows: [{ failures: failures.length, last_failure_at: lastFailureAt }] };
     }
 
     // loginLockoutService — IP query
     if (n.startsWith("select count(*)::int as failures, max(created_at) as last_failure_at from auth_audit_log where action = 'auth.login.failure'")) {
-      const [ipAddress, sinceIso] = params;
+      const ipAddress = String(params[0]);
+      const sinceIso = String(params[1]);
       const matching = auditRows.filter(
         (r) => r.action === "auth.login.failure"
           && r.outcome === "failure"
           && r.ip_address === ipAddress
           && r.created_at >= sinceIso
       );
-      const lastFailureAt = matching.reduce((max, r) => (r.created_at > max ? r.created_at : max), null);
+      const lastFailureAt = matching.reduce<string | null>(
+        (max, row) => max === null || row.created_at > max ? row.created_at : max,
+        null
+      );
       return { rowCount: 1, rows: [{ failures: matching.length, last_failure_at: lastFailureAt }] };
     }
 
     // Session lookup (after successful login, used by /v1/auth/me) — not
     // strictly needed by this suite but kept for completeness.
     if (n.startsWith("select s.id as session_id, s.expires_at, s.revoked_at, u.id, u.email")) {
-      const [tokenHash] = params;
+      const tokenHash = String(params[0]);
       const session = [...sessions.values()].find((s) => s.token_hash === tokenHash);
       if (!session) return { rowCount: 0, rows: [] };
       const user = users.get(session.user_id);
@@ -251,7 +305,7 @@ test("repeated failed logins return 429 with Retry-After and emit an audit row",
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(emailFailureCount("alice@example.com"), 3);
 
-  const locked = await call("POST", "/v1/auth/login", { body });
+  const locked = await call<LockoutPayload>("POST", "/v1/auth/login", { body });
   assert.equal(locked.status, 429);
   assert.equal(locked.payload.error, "too_many_requests");
   assert.equal(locked.payload.reason, "too_many_failed_logins");
