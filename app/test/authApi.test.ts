@@ -8,14 +8,53 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import authService = require("../src/services/authService");
+import type { AuthUserRow } from "../src/services/authService";
+
+type RoleName = keyof typeof ROLE_PERMISSIONS;
+
+interface TestSession {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string;
+  expires_at: string;
+  last_seen_at: string;
+  revoked_at: string | null;
+}
+
+interface SeedUserInput {
+  email: string;
+  password: string;
+  displayName?: string | null;
+  isActive?: boolean;
+  roles?: RoleName[];
+}
+
+interface AuthPayload {
+  user: {
+    email: string;
+    display_name: string | null;
+    roles: string[];
+    permissions: string[];
+  };
+  expires_at?: string | null;
+}
+
+interface ApiResult<T> {
+  status: number;
+  payload: T;
+  setCookie: string | null;
+}
 
 let server: import("http").Server;
 let baseUrl: string;
-let users;
-let sessions;
-let userIdCounter;
-let sessionIdCounter;
-let userRoleAssignments;
+let users: Map<string, AuthUserRow>;
+let sessions: Map<string, TestSession>;
+let userIdCounter: number;
+let sessionIdCounter: number;
+let userRoleAssignments: Map<string, RoleName[]>;
 let originalQuery: typeof appDb.query;
 
 function uuid(prefix: string, counter: number) {
@@ -32,7 +71,7 @@ function nextSessionId() {
   return uuid("bbbb", sessionIdCounter);
 }
 
-function normalizeSql(sql) {
+function normalizeSql(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
@@ -40,10 +79,10 @@ const ROLE_PERMISSIONS = {
   admin: ["users.read", "users.write", "data_sources.read", "data_sources.write"],
   analyst: ["data_sources.read", "saved_queries.read", "saved_queries.write", "query.run"],
   viewer: ["data_sources.read", "saved_queries.read"]
-};
+} as const;
 
-function seedUser({ email, password, displayName = null, isActive = true, roles = [] }) {
-  const row = {
+function seedUser({ email, password, displayName = null, isActive = true, roles = [] }: SeedUserInput): AuthUserRow {
+  const row: AuthUserRow = {
     id: nextUserId(),
     email,
     password_hash: authService.hashPassword(password),
@@ -58,7 +97,12 @@ function seedUser({ email, password, displayName = null, isActive = true, roles 
   return row;
 }
 
-async function api(method: string, path: string, body?: unknown, { cookie }: { cookie?: string } = {}) {
+async function api<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  { cookie }: { cookie?: string } = {}
+): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) {
     headers.Cookie = cookie;
@@ -69,7 +113,7 @@ async function api(method: string, path: string, body?: unknown, { cookie }: { c
     body: body ? JSON.stringify(body) : undefined
   });
 
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
@@ -78,12 +122,12 @@ async function api(method: string, path: string, body?: unknown, { cookie }: { c
 
   return {
     status: response.status,
-    payload,
+    payload: payload as T,
     setCookie: response.headers.get("set-cookie")
   };
 }
 
-function parseSessionCookieValue(setCookieHeader) {
+function parseSessionCookieValue(setCookieHeader: string | null): string | null {
   if (!setCookieHeader) {
     return null;
   }
@@ -102,24 +146,24 @@ before(async () => {
   userIdCounter = 0;
   sessionIdCounter = 0;
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const normalized = normalizeSql(sql);
 
     if (normalized.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where lower(email) = $1")) {
-      const [emailLower] = params;
+      const [emailLower] = params as [string];
       const row = [...users.values()].find((entry) => entry.email.toLowerCase() === emailLower);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("select id, email, password_hash, display_name, is_active, last_login_at, created_at, updated_at from users where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = users.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("insert into users")) {
-      const [email, passwordHash, displayName] = params;
-      const row = {
+      const [email, passwordHash, displayName] = params as [string, string, string | null];
+      const row: AuthUserRow = {
         id: nextUserId(),
         email,
         password_hash: passwordHash,
@@ -134,8 +178,14 @@ before(async () => {
     }
 
     if (normalized.startsWith("insert into user_sessions")) {
-      const [userId, tokenHash, userAgent, ipAddress, expiresAt] = params;
-      const row = {
+      const [userId, tokenHash, userAgent, ipAddress, expiresAt] = params as [
+        string,
+        string,
+        string | null,
+        string | null,
+        string
+      ];
+      const row: TestSession = {
         id: nextSessionId(),
         user_id: userId,
         token_hash: tokenHash,
@@ -155,7 +205,7 @@ before(async () => {
         "select s.id as session_id, s.expires_at, s.revoked_at, u.id, u.email, u.password_hash, u.display_name, u.is_active, u.last_login_at, u.created_at, u.updated_at from user_sessions s join users u on u.id = s.user_id where s.token_hash = $1"
       )
     ) {
-      const [tokenHash] = params;
+      const [tokenHash] = params as [string];
       const session = [...sessions.values()].find((entry) => entry.token_hash === tokenHash);
       if (!session) {
         return { rowCount: 0, rows: [] };
@@ -183,7 +233,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update user_sessions set last_seen_at = now() where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const session = sessions.get(id);
       if (session) {
         session.last_seen_at = new Date().toISOString();
@@ -192,7 +242,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update user_sessions set revoked_at = now() where token_hash = $1 and revoked_at is null")) {
-      const [tokenHash] = params;
+      const [tokenHash] = params as [string];
       let count = 0;
       for (const session of sessions.values()) {
         if (session.token_hash === tokenHash && !session.revoked_at) {
@@ -204,7 +254,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("update users set last_login_at = now() where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const user = users.get(id);
       if (user) {
         user.last_login_at = new Date().toISOString();
@@ -215,7 +265,7 @@ before(async () => {
     if (normalized.startsWith(
       "select r.id, r.name, r.description, r.is_system, ur.assigned_at from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = $1 order by r.name"
     )) {
-      const [userId] = params;
+      const [userId] = params as [string];
       const assigned = userRoleAssignments.get(userId) || [];
       const rows = [...assigned].sort().map((name, idx) => ({
         id: `00000000-0000-4000-8000-cccc${String(idx + 1).padStart(8, "0")}`,
@@ -230,9 +280,9 @@ before(async () => {
     if (normalized.startsWith(
       "select distinct p.name from user_roles ur join role_permissions rp on rp.role_id = ur.role_id join permissions p on p.id = rp.permission_id where ur.user_id = $1 order by p.name"
     )) {
-      const [userId] = params;
+      const [userId] = params as [string];
       const assigned = userRoleAssignments.get(userId) || [];
-      const out = new Set();
+      const out = new Set<string>();
       for (const role of assigned) {
         for (const perm of ROLE_PERMISSIONS[role] || []) {
           out.add(perm);
@@ -274,7 +324,7 @@ test("login → me → logout happy path", async () => {
     roles: ["analyst"]
   });
 
-  const login = await api("POST", "/v1/auth/login", {
+  const login = await api<AuthPayload>("POST", "/v1/auth/login", {
     email: "Alice@Example.com",
     password: "hunter22ok"
   });
@@ -292,10 +342,11 @@ test("login → me → logout happy path", async () => {
   assert.match(login.setCookie, /SameSite=Lax/);
 
   const token = parseSessionCookieValue(login.setCookie);
+  assert.ok(token, "expected session token");
   assert.match(token, /^[0-9a-f]{64}$/);
 
   const cookie = `rp_session=${encodeURIComponent(token)}`;
-  const me = await api("GET", "/v1/auth/me", undefined, { cookie });
+  const me = await api<AuthPayload>("GET", "/v1/auth/me", undefined, { cookie });
   assert.equal(me.status, 200);
   assert.equal(me.payload.user.email, "alice@example.com");
   assert.deepEqual(me.payload.user.roles, ["analyst"]);
@@ -304,9 +355,10 @@ test("login → me → logout happy path", async () => {
     ["data_sources.read", "query.run", "saved_queries.read", "saved_queries.write"]
   );
 
-  const logout = await api("POST", "/v1/auth/logout", undefined, { cookie });
+  const logout = await api<{ ok: boolean }>("POST", "/v1/auth/logout", undefined, { cookie });
   assert.equal(logout.status, 200);
   assert.deepEqual(logout.payload, { ok: true });
+  assert.ok(logout.setCookie);
   assert.match(logout.setCookie, /Max-Age=0/);
 
   const meAfterLogout = await api("GET", "/v1/auth/me", undefined, { cookie });
@@ -361,5 +413,6 @@ test("me returns 401 without a cookie and with a bogus cookie", async () => {
 test("logout without a session is a no-op that still clears the cookie", async () => {
   const logout = await api("POST", "/v1/auth/logout");
   assert.equal(logout.status, 200);
+  assert.ok(logout.setCookie);
   assert.match(logout.setCookie, /Max-Age=0/);
 });
