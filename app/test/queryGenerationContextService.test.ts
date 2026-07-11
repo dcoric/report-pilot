@@ -161,6 +161,33 @@ test("prepareQueryGenerationContext rejects stale clarification option IDs", asy
   }
 });
 
+test("prepareQueryGenerationContext scopes linking to the selected duplicate table", async () => {
+  const archiveOrders = { ...card("archive-orders", "orders"), schema_name: "archive" };
+  const salesOrders = { ...card("sales-orders", "orders"), schema_name: "sales" };
+  const dependencies = baseDependencies([archiveOrders, salesOrders], []);
+
+  const ambiguous = await prepareQueryGenerationContext({
+    dataSourceId: "source",
+    question: "Orders last month"
+  }, dependencies);
+
+  assert.equal(ambiguous.ok, false);
+  if (ambiguous.ok === false) {
+    assert.equal(ambiguous.clarification?.kind, "table");
+    const salesOption = ambiguous.clarification!.options.find((option) => option.label === "Use sales.orders");
+    assert.ok(salesOption);
+    const resolved = await prepareQueryGenerationContext({
+      dataSourceId: "source",
+      question: "Orders last month",
+      clarificationOptionId: salesOption.id
+    }, dependencies);
+    assert.equal(resolved.ok, true);
+    if (resolved.ok) {
+      assert.deepEqual(resolved.context.schemaObjects.map((object) => object.id), ["sales-orders"]);
+    }
+  }
+});
+
 function baseDependencies(cards: TableCard[], docs: RagRetrievalDoc[]): GenerationContextDependencies {
   return {
     loadTableCards: async () => cards,

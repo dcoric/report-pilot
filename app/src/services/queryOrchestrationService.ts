@@ -29,8 +29,10 @@ import {
 } from "./queryDiagnosticsService";
 import {
   recordPendingClarification,
-  resolvePendingClarification
+  resolvePendingClarification,
+  loadResolvedClarificationOptionIds
 } from "./queryClarificationStore";
+import type { QueryClarification } from "./queryClarificationService";
 
 const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
 const { retrieveRagContext } = ragRetrieval;
@@ -64,6 +66,7 @@ export interface QueryOrchestrationDependencies {
   emitQueryDiagnostic: typeof emitQueryDiagnostic;
   recordPendingClarification: typeof recordPendingClarification;
   resolvePendingClarification: typeof resolvePendingClarification;
+  loadResolvedClarificationOptionIds: typeof loadResolvedClarificationOptionIds;
 }
 
 const defaultDependencies: QueryOrchestrationDependencies = {
@@ -72,7 +75,8 @@ const defaultDependencies: QueryOrchestrationDependencies = {
   createDatabaseAdapter,
   emitQueryDiagnostic,
   recordPendingClarification,
-  resolvePendingClarification
+  resolvePendingClarification,
+  loadResolvedClarificationOptionIds
 };
 
 function success<T>(body: T, statusCode = 200): OrchestrateResult<T> {
@@ -219,6 +223,7 @@ export async function orchestrateQueryRun({
   let generationPromptChars = 0;
   let schemaLinkingDurationMs = 0;
   let executionDurationMs = 0;
+  let activeClarification: QueryClarification | null = null;
   const repairs: Array<{
     errors: string[];
     provider: string;
@@ -252,7 +257,9 @@ export async function orchestrateQueryRun({
       generationPromptChars,
       repairPromptChars: repairs.reduce((total, repair) => total + repair.prompt_chars, 0),
       tokenUsage: generationTokenUsage,
-      executionDurationMs
+      executionDurationMs,
+      clarificationKind: activeClarification?.kind || null,
+      clarificationOptionCount: activeClarification?.options.length
     });
   };
 
@@ -265,13 +272,17 @@ export async function orchestrateQueryRun({
     let prepared;
     const schemaLinkingStartedAt = Date.now();
     try {
+      const resolvedClarificationOptionIds = clarificationOptionId
+        ? await dependencies.loadResolvedClarificationOptionIds(sessionId)
+        : [];
       prepared = await dependencies.prepareQueryGenerationContext({
         dataSourceId: session.data_source_id,
         question: session.question,
         requestedProvider,
         requestedModel,
         requestId,
-        clarificationOptionId
+        clarificationOptionId,
+        resolvedClarificationOptionIds
       });
     } catch (err) {
       schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
@@ -285,6 +296,7 @@ export async function orchestrateQueryRun({
     schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;
     schemaLinking = prepared.diagnostics;
     if (prepared.ok === false) {
+      activeClarification = prepared.clarification;
       if (prepared.clarification) {
         await dependencies.recordPendingClarification(sessionId, prepared.clarification);
       } else {

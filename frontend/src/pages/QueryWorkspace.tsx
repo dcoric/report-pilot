@@ -37,7 +37,9 @@ type QueryRunErrorPayload = {
 function parseClarification(value: unknown): QueryClarification | undefined {
     if (!value || typeof value !== 'object') return undefined;
     const candidate = value as Record<string, unknown>;
-    if (candidate.kind !== 'join_path' || typeof candidate.message !== 'string' || !Array.isArray(candidate.options)) {
+    if (!['join_path', 'table', 'metric'].includes(String(candidate.kind))
+        || typeof candidate.message !== 'string'
+        || !Array.isArray(candidate.options)) {
         return undefined;
     }
     const options = candidate.options.filter((option): option is QueryClarification['options'][number] => {
@@ -50,7 +52,7 @@ function parseClarification(value: unknown): QueryClarification | undefined {
             && item.table_refs.every((ref) => typeof ref === 'string');
     });
     if (options.length < 2 || options.length !== candidate.options.length) return undefined;
-    return { kind: 'join_path', message: candidate.message, options };
+    return { kind: candidate.kind as QueryClarification['kind'], message: candidate.message, options };
 }
 
 function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {

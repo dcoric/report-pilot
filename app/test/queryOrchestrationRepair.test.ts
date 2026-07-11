@@ -238,6 +238,7 @@ function dependenciesWithGenerator(
     },
     recordPendingClarification: async () => undefined,
     resolvePendingClarification: async () => true,
+    loadResolvedClarificationOptionIds: async () => [],
     createDatabaseAdapter: () => {
       throw new Error("Adapter must not be created for no_execute tests");
     }

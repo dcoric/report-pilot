@@ -2,8 +2,13 @@ import "./helpers/setupEnv";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildJoinPathClarification } from "../src/services/queryClarificationService";
+import {
+  buildCandidateClarification,
+  buildJoinPathClarification,
+  findCandidateIdByOptionId
+} from "../src/services/queryClarificationService";
 import type { SchemaExpansion, SchemaGraphEdge, SchemaPath } from "../src/services/schemaGraphService";
+import type { TableCandidate } from "../src/services/schemaLinkingService";
 
 test("join-path clarification produces stable, concise, and prompt-safe options", () => {
   const directEdge = edge("direct", "orders", "customers", "public.orders", "public.customers");
@@ -37,6 +42,42 @@ test("clarification is absent when expansion is not ambiguous", () => {
     ...ambiguousExpansion([]),
     status: "complete"
   }), null);
+});
+
+test("duplicate unqualified table names produce deterministic table choices", () => {
+  const candidates = [
+    candidate("sales-orders", "sales", "orders"),
+    candidate("archive-orders", "archive", "orders")
+  ];
+
+  const ambiguity = buildCandidateClarification("Orders last month", candidates);
+
+  assert.equal(ambiguity?.clarification.kind, "table");
+  assert.deepEqual(ambiguity?.clarification.options.map((option) => option.label), [
+    "Use archive.orders",
+    "Use sales.orders"
+  ]);
+  assert.equal(
+    findCandidateIdByOptionId(ambiguity!, ambiguity!.clarification.options[1].id),
+    "sales-orders"
+  );
+  assert.equal(buildCandidateClarification("Sales orders last month", candidates), null);
+});
+
+test("an exact business alias across tables produces metric choices unless the table is named", () => {
+  const candidates = [
+    candidate("payments", "finance", "payment", ["Net Revenue"]),
+    candidate("invoices", "sales", "invoice", ["Net Revenue"])
+  ];
+
+  const ambiguity = buildCandidateClarification("Show net revenue", candidates);
+
+  assert.equal(ambiguity?.clarification.kind, "metric");
+  assert.deepEqual(ambiguity?.clarification.options.map((option) => option.label), [
+    "Use Net Revenue from finance.payment",
+    "Use Net Revenue from sales.invoice"
+  ]);
+  assert.equal(buildCandidateClarification("Show payment net revenue", candidates), null);
 });
 
 function ambiguousExpansion(alternatives: SchemaPath[]): SchemaExpansion {
@@ -78,5 +119,30 @@ function edge(
     join_type: "INNER",
     on_clause: "orders.account_id = customers.id",
     relationship_type: "many_to_one"
+  };
+}
+
+function candidate(
+  id: string,
+  schemaName: string,
+  objectName: string,
+  aliases: string[] = []
+): TableCandidate {
+  return {
+    id,
+    schema_name: schemaName,
+    object_name: objectName,
+    object_type: "table",
+    description: null,
+    primary_keys: [],
+    join_columns: [],
+    relationships: [],
+    approved_join_refs: [],
+    semantic_aliases: aliases,
+    synonyms: [],
+    score: 10,
+    lexical_score: 10,
+    rag_score: 0,
+    matched_terms: []
   };
 }

@@ -110,3 +110,18 @@ export async function cancelPendingClarification(sessionId: string): Promise<boo
     return true;
   });
 }
+
+export async function loadResolvedClarificationOptionIds(sessionId: string): Promise<string[]> {
+  const result = await appDb.query<{ selected_option_id: string }>(
+    `
+      SELECT selected_option_id
+      FROM query_clarifications
+      WHERE session_id = $1
+        AND status = 'resolved'
+        AND selected_option_id IS NOT NULL
+      ORDER BY resolved_at ASC
+    `,
+    [sessionId]
+  );
+  return [...new Set(result.rows.map((row) => row.selected_option_id).filter(Boolean))];
+}
