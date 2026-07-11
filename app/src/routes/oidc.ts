@@ -7,13 +7,13 @@ import {
   type RouteHandler,
   type RouteHandlerWithUrl
 } from "../lib/http";
-import { buildFlowCookie, buildClearFlowCookie, readFlowCookie, OidcFlowPayload } from "../lib/oidcFlowCookie";
+import { buildFlowCookie, buildClearFlowCookie, readFlowCookie } from "../lib/oidcFlowCookie";
 import { buildSessionCookie, buildClearSessionCookie } from "../lib/sessionCookie";
 import { createSession } from "../services/authService";
 import { writeEvent } from "../services/auditService";
 import { listEnabledProvidersForLogin, findProviderById } from "../services/authProviderService";
 import { resolveExternalLogin } from "../services/externalLoginService";
-import { startLogin, completeLogin, FlowState } from "../services/oidcService";
+import { startLogin, completeLogin } from "../services/oidcService";
 import { recordUsedState } from "../services/oidcStateService";
 
 function clientAddress(req: AuthedRequest): string | null {
@@ -37,7 +37,7 @@ const handleListEnabledProviders: RouteHandler = async (_req, res) => {
   return json(res, 200, { items });
 };
 
-const handleStartLogin: RouteHandlerWithUrl = async (req, res, requestUrl) => {
+const handleStartLogin: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
   const providerId = requestUrl.searchParams.get("provider_id");
   if (!providerId) {
     return badRequest(res, "provider_id query parameter is required");
@@ -54,7 +54,7 @@ const handleStartLogin: RouteHandlerWithUrl = async (req, res, requestUrl) => {
     return json(res, errorStatusCode(err), { error: "oidc_error", message: errorMessage(err) });
   }
 
-  res.setHeader("Set-Cookie", buildFlowCookie(result.flowState as OidcFlowPayload));
+  res.setHeader("Set-Cookie", buildFlowCookie(result.flowState));
   res.writeHead(302, { Location: result.authorizeUrl });
   res.end();
   return;
@@ -119,7 +119,7 @@ const handleCallback: RouteHandlerWithUrl = async (req, res, requestUrl) => {
 
   let principal;
   try {
-    principal = await completeLogin(provider, currentUrl, flowState as FlowState);
+    principal = await completeLogin(provider, currentUrl, flowState);
   } catch (err) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
     const message = errorMessage(err);
@@ -191,7 +191,7 @@ const handleCallback: RouteHandlerWithUrl = async (req, res, requestUrl) => {
 };
 
 // Exposed for use by AUTH-009 (admin "test connection" button) and tests.
-const handleStartLoginJson: RouteHandlerWithUrl = async (req, res, requestUrl) => {
+const handleStartLoginJson: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
   const providerId = requestUrl.searchParams.get("provider_id");
   if (!providerId) {
     return badRequest(res, "provider_id query parameter is required");
@@ -202,7 +202,7 @@ const handleStartLoginJson: RouteHandlerWithUrl = async (req, res, requestUrl) =
   }
   try {
     const result = await startLogin(provider);
-    res.setHeader("Set-Cookie", buildFlowCookie(result.flowState as OidcFlowPayload));
+    res.setHeader("Set-Cookie", buildFlowCookie(result.flowState));
     return json(res, 200, { authorize_url: result.authorizeUrl });
   } catch (err) {
     return json(res, errorStatusCode(err), { error: "oidc_error", message: errorMessage(err) });

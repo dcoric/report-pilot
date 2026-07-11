@@ -1,4 +1,3 @@
-import type { ServerResponse } from "http";
 import { json, readJsonBody, badRequest, type RouteHandler } from "../lib/http";
 import {
   buildSessionCookie,

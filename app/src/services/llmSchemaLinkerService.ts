@@ -5,8 +5,7 @@ import {
   buildProviderOrder,
   loadProviderConfigs,
   loadRoutingRule,
-  type ProviderConfigRow,
-  type RoutingRule
+  type ProviderConfigRow
 } from "./llmProviderRouting";
 import { logLlmDebug, normalizeStatusCode, normalizeTokenUsage, type NormalizedTokenUsage } from "./llmDebug";
 import type { TableCandidate } from "./schemaLinkingService";

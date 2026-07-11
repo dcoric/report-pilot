@@ -310,25 +310,21 @@ async function exportParquet(rows: Array<Record<string, unknown>>, columnOrder: 
     };
   }
 
-  const schema = new (parquet as { ParquetSchema: new (def: unknown) => unknown }).ParquetSchema(schemaDefinition);
+  const schema = new parquet.ParquetSchema(schemaDefinition);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "report-pilot-export-"));
   const filePath = path.join(tempDir, `export-${Date.now()}.parquet`);
 
   let writer: { appendRow: (row: Record<string, unknown>) => Promise<void>; close: () => Promise<void> } | null = null;
   try {
-    writer = await (parquet as {
-      ParquetWriter: {
-        openFile: (schema: unknown, path: string) => Promise<{ appendRow: (row: Record<string, unknown>) => Promise<void>; close: () => Promise<void> }>;
-      };
-    }).ParquetWriter.openFile(schema, filePath);
+    writer = await parquet.ParquetWriter.openFile(schema, filePath);
     for (const row of rows) {
       const normalizedRow: Record<string, unknown> = {};
       for (const column of columnOrder) {
         normalizedRow[column] = normalizeParquetValue(row[column], schemaDefinition[column].type);
       }
-      await writer!.appendRow(normalizedRow);
+      await writer.appendRow(normalizedRow);
     }
-    await writer!.close();
+    await writer.close();
     writer = null;
 
     return await fs.readFile(filePath);

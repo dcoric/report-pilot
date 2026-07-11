@@ -8,10 +8,14 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "strict": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["app/src/**/*", "app/test/**/*"],
+  "include": ["app/src/**/*"],
   "exclude": ["node_modules", "dist", "frontend"]
 }

@@ -18,6 +18,7 @@ Report Pilot is a local-first NL-to-SQL reporting runtime. This file is canonica
 
 - Backend source and tests are TypeScript-only. Do not add `.js` files under `app/src/**` or `app/test/**`.
 - TypeScript 7 is the application compiler. The OpenAPI generator has an isolated TypeScript 5.9 toolchain because it still depends on the legacy compiler API.
+- Production backend code and scripts compile in strict mode. Tests remain on the transitional `tsconfig.test.json` profile while issue #148 tracks strict test-harness migration.
 - Prefer precise types or `unknown` over `any`; do not bypass type errors with `@ts-ignore`.
 
 ## Code Map

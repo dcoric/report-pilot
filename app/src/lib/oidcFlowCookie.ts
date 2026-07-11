@@ -11,12 +11,11 @@ export const COOKIE_NAME = "rp_oidc_flow" as const;
 export const FLOW_MAX_AGE_SECONDS = 10 * 60; // 10 minutes is plenty for the user to log in
 
 export interface OidcFlowPayload {
-  provider_id?: string;
-  code_verifier?: string;
-  state?: string;
-  nonce?: string;
+  provider_id: string;
+  code_verifier: string;
+  state: string;
+  nonce: string;
   redirect_uri?: string;
-  [key: string]: unknown;
 }
 
 interface SignedOidcFlowPayload extends OidcFlowPayload {
@@ -88,6 +87,14 @@ function verify(value: unknown): SignedOidcFlowPayload | null {
     return null;
   }
   if (typeof payload.exp !== "number" || payload.exp <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+  if (
+    typeof payload.provider_id !== "string" || !payload.provider_id ||
+    typeof payload.code_verifier !== "string" || !payload.code_verifier ||
+    typeof payload.state !== "string" || !payload.state ||
+    typeof payload.nonce !== "string" || !payload.nonce
+  ) {
     return null;
   }
   return payload;

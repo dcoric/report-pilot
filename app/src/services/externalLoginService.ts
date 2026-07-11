@@ -24,8 +24,8 @@ export interface ExternalProvider {
   require_email_verified?: boolean;
   auto_link_by_email?: boolean;
   jit_enabled?: boolean;
-  jit_allowed_domains?: unknown[];
-  jit_default_role?: string;
+  jit_allowed_domains?: unknown[] | null;
+  jit_default_role?: string | null;
 }
 
 export interface ExternalPrincipal {
@@ -288,7 +288,7 @@ export async function resolveExternalLogin(
       message: `cannot provision ${principal.email}: the IdP did not assert that the email is verified.`
     };
   }
-  if (!domainAllowed(principal.email, provider.jit_allowed_domains)) {
+  if (!domainAllowed(principal.email, provider.jit_allowed_domains ?? undefined)) {
     await recordAuditLinkRejected({
       provider, principal, reason: "domain_not_allowed", context
     });

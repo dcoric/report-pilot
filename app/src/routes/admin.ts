@@ -160,7 +160,7 @@ const handleDeleteAuthProvider: RouteHandlerWithId = async (req, res, providerId
   return writeServiceResult(res, result);
 };
 
-const handleListAuditEvents: RouteHandlerWithUrl = async (req, res, requestUrl) => {
+const handleListAuditEvents: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
   const params = requestUrl.searchParams;
   const actorUserIdRaw = params.get("actor_user_id");
   if (actorUserIdRaw && !isUuid(actorUserIdRaw)) {

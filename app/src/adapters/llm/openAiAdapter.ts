@@ -4,10 +4,22 @@ import type {
   LlmEmbedInput,
   LlmEmbedResult,
   LlmGenerateInput,
-  LlmGenerateResult
+  LlmGenerateResult,
+  LlmTokenUsage
 } from "./types";
 
 const { postJson, extractJsonObject } = require("./httpClient");
+
+interface OpenAiCompletionResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  model?: string;
+  usage?: LlmTokenUsage;
+}
+
+interface OpenAiEmbeddingResponse {
+  data?: Array<{ index: number; embedding: number[] }>;
+  model?: string;
+}
 
 /** Adapter for OpenAI's REST API (chat completions + embeddings). */
 export class OpenAiAdapter implements LlmAdapter {
@@ -59,7 +71,7 @@ export class OpenAiAdapter implements LlmAdapter {
       headers: {
         Authorization: `Bearer ${this.apiKey}`
       }
-    });
+    }) as OpenAiCompletionResponse;
 
     const text = response?.choices?.[0]?.message?.content;
     if (!text) {
@@ -97,12 +109,12 @@ export class OpenAiAdapter implements LlmAdapter {
       headers: {
         Authorization: `Bearer ${this.apiKey}`
       }
-    });
+    }) as OpenAiEmbeddingResponse;
 
     const vectors: number[][] = Array.isArray(response?.data)
       ? response.data
-        .sort((a: any, b: any) => a.index - b.index)
-        .map((item: any) => item.embedding)
+        .sort((a, b) => a.index - b.index)
+        .map((item) => item.embedding)
       : [];
 
     if (vectors.length !== texts.length) {
