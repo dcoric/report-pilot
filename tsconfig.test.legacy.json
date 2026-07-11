@@ -2,13 +2,14 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "app"
+    "rootDir": "app",
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
   },
-  "include": ["app/test/**/*.ts", "app/src/types/**/*.d.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "frontend",
+  "include": [
     "app/test/accountLinkingApi.test.ts",
     "app/test/adminUsersApi.test.ts",
     "app/test/auditEventsApi.test.ts",
@@ -24,6 +25,8 @@
     "app/test/savedQuerySchedulesApi.test.ts",
     "app/test/scimApi.test.ts",
     "app/test/securityHardeningApi.test.ts",
-    "app/test/userConfigApi.test.ts"
-  ]
+    "app/test/userConfigApi.test.ts",
+    "app/src/types/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "dist", "frontend"]
 }

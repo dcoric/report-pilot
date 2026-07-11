@@ -6,40 +6,46 @@ process.env.DATABASE_URL = process.env.DATABASE_URL || "postgresql://test:test@l
 
 import { findPolicy, POLICIES } from "../src/lib/routePolicy";
 
+function requirePolicy(method: string, path: string) {
+  const policy = findPolicy(method, path);
+  assert.ok(policy, `expected a policy for ${method} ${path}`);
+  return policy;
+}
+
 test("findPolicy maps known endpoints to the expected policy", () => {
   // Public
   assert.deepEqual(findPolicy("GET", "/health"), { method: "GET", pattern: /^\/health$/, public: true });
-  assert.equal(findPolicy("POST", "/v1/auth/login").public, true);
-  assert.equal(findPolicy("POST", "/v1/auth/logout").public, true);
-  assert.equal(findPolicy("GET", "/v1/auth/me").public, true);
+  assert.equal(requirePolicy("POST", "/v1/auth/login").public, true);
+  assert.equal(requirePolicy("POST", "/v1/auth/logout").public, true);
+  assert.equal(requirePolicy("GET", "/v1/auth/me").public, true);
 
   // Admin role
-  assert.equal(findPolicy("GET", "/v1/admin/users").role, "admin");
-  assert.equal(findPolicy("POST", "/v1/admin/users").role, "admin");
-  assert.equal(findPolicy("POST", "/v1/admin/users/00000000-0000-4000-8000-000000000001/roles").role, "admin");
+  assert.equal(requirePolicy("GET", "/v1/admin/users").role, "admin");
+  assert.equal(requirePolicy("POST", "/v1/admin/users").role, "admin");
+  assert.equal(requirePolicy("POST", "/v1/admin/users/00000000-0000-4000-8000-000000000001/roles").role, "admin");
 
   // Read permissions
-  assert.equal(findPolicy("GET", "/v1/data-sources").permission, "data_sources.read");
-  assert.equal(findPolicy("GET", "/v1/saved-queries").permission, "saved_queries.read");
-  assert.equal(findPolicy("GET", "/v1/saved-queries/00000000-0000-4000-8000-000000000001").permission, "saved_queries.read");
-  assert.equal(findPolicy("GET", "/v1/rag/notes").permission, "data_sources.read");
-  assert.equal(findPolicy("GET", "/v1/llm/providers").permission, "providers.read");
-  assert.equal(findPolicy("GET", "/v1/observability/metrics").permission, "observability.read");
+  assert.equal(requirePolicy("GET", "/v1/data-sources").permission, "data_sources.read");
+  assert.equal(requirePolicy("GET", "/v1/saved-queries").permission, "saved_queries.read");
+  assert.equal(requirePolicy("GET", "/v1/saved-queries/00000000-0000-4000-8000-000000000001").permission, "saved_queries.read");
+  assert.equal(requirePolicy("GET", "/v1/rag/notes").permission, "data_sources.read");
+  assert.equal(requirePolicy("GET", "/v1/llm/providers").permission, "providers.read");
+  assert.equal(requirePolicy("GET", "/v1/observability/metrics").permission, "observability.read");
 
   // Write permissions
-  assert.equal(findPolicy("POST", "/v1/data-sources").permission, "data_sources.write");
-  assert.equal(findPolicy("DELETE", "/v1/data-sources/00000000-0000-4000-8000-000000000001").permission, "data_sources.write");
-  assert.equal(findPolicy("POST", "/v1/saved-queries").permission, "saved_queries.write");
-  assert.equal(findPolicy("PUT", "/v1/saved-queries/00000000-0000-4000-8000-000000000001").permission, "saved_queries.write");
-  assert.equal(findPolicy("POST", "/v1/semantic-entities").permission, "semantic.write");
-  assert.equal(findPolicy("POST", "/v1/rag/notes").permission, "rag.write");
-  assert.equal(findPolicy("POST", "/v1/llm/providers").permission, "providers.write");
-  assert.equal(findPolicy("POST", "/v1/observability/release-gates/report").permission, "observability.write");
+  assert.equal(requirePolicy("POST", "/v1/data-sources").permission, "data_sources.write");
+  assert.equal(requirePolicy("DELETE", "/v1/data-sources/00000000-0000-4000-8000-000000000001").permission, "data_sources.write");
+  assert.equal(requirePolicy("POST", "/v1/saved-queries").permission, "saved_queries.write");
+  assert.equal(requirePolicy("PUT", "/v1/saved-queries/00000000-0000-4000-8000-000000000001").permission, "saved_queries.write");
+  assert.equal(requirePolicy("POST", "/v1/semantic-entities").permission, "semantic.write");
+  assert.equal(requirePolicy("POST", "/v1/rag/notes").permission, "rag.write");
+  assert.equal(requirePolicy("POST", "/v1/llm/providers").permission, "providers.write");
+  assert.equal(requirePolicy("POST", "/v1/observability/release-gates/report").permission, "observability.write");
 
   // Query / run
-  assert.equal(findPolicy("POST", "/v1/query/sessions").permission, "query.run");
-  assert.equal(findPolicy("POST", "/v1/saved-queries/00000000-0000-4000-8000-000000000001/run").permission, "query.run");
-  assert.equal(findPolicy("GET", "/v1/exports/00000000-0000-4000-8000-000000000001/status").permission, "query.run");
+  assert.equal(requirePolicy("POST", "/v1/query/sessions").permission, "query.run");
+  assert.equal(requirePolicy("POST", "/v1/saved-queries/00000000-0000-4000-8000-000000000001/run").permission, "query.run");
+  assert.equal(requirePolicy("GET", "/v1/exports/00000000-0000-4000-8000-000000000001/status").permission, "query.run");
 });
 
 test("findPolicy returns null for unknown /v1 paths", () => {
