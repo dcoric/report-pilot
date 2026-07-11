@@ -75,6 +75,29 @@ export async function resolveSession({ sessionId, question, dataSourceId, connec
 }
 
 export async function loadQueryContext(dataSourceId: string): Promise<QueryContext> {
+  return loadQueryContextForObjects(dataSourceId, null);
+}
+
+export async function loadScopedQueryContext(dataSourceId: string, schemaObjectIds: string[]): Promise<QueryContext> {
+  const ids = [...new Set(schemaObjectIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (ids.length === 0) {
+    return {
+      schemaObjects: [],
+      columns: [],
+      semanticEntities: [],
+      metricDefinitions: [],
+      joinPolicies: [],
+      ragNotes: []
+    };
+  }
+  return loadQueryContextForObjects(dataSourceId, ids);
+}
+
+async function loadQueryContextForObjects(dataSourceId: string, schemaObjectIds: string[] | null): Promise<QueryContext> {
+  const scoped = Array.isArray(schemaObjectIds);
+  const params = scoped ? [dataSourceId, schemaObjectIds] : [dataSourceId];
+  const objectScopeSql = scoped ? "AND id = ANY($2::uuid[])" : "";
+  const columnScopeSql = scoped ? "AND so.id = ANY($2::uuid[])" : "";
   const [
     schemaObjectsResult,
     columnsResult,
@@ -90,9 +113,10 @@ export async function loadQueryContext(dataSourceId: string): Promise<QueryConte
         WHERE data_source_id = $1
           AND is_ignored = FALSE
           AND object_type IN ('table', 'view', 'materialized_view')
+          ${objectScopeSql}
         ORDER BY schema_name, object_name
       `,
-      [dataSourceId]
+      params
     ),
     appDb.query<{ schema_name: string; object_name: string; column_name: string; data_type: string }>(
       `
@@ -105,9 +129,10 @@ export async function loadQueryContext(dataSourceId: string): Promise<QueryConte
         JOIN schema_objects so ON so.id = c.schema_object_id
         WHERE so.data_source_id = $1
           AND so.is_ignored = FALSE
+          ${columnScopeSql}
         ORDER BY so.schema_name, so.object_name, c.ordinal_position
       `,
-      [dataSourceId]
+      params
     ),
     appDb.query<{ id: string; entity_type: string; target_ref: string; business_name: string }>(
       `
@@ -153,14 +178,40 @@ export async function loadQueryContext(dataSourceId: string): Promise<QueryConte
     )
   ]);
 
+  const selectedObjects = schemaObjectsResult.rows;
+  const selectedSemantics = scoped
+    ? semanticEntitiesResult.rows.filter((entity) => selectedObjects.some((object) => refTargetsObject(entity.target_ref, object)))
+    : semanticEntitiesResult.rows;
+  const selectedSemanticIds = new Set(selectedSemantics.map((entity) => entity.id));
+  const selectedJoins = scoped
+    ? joinPoliciesResult.rows.filter((join) =>
+      selectedObjects.some((object) => refTargetsObject(join.left_ref, object))
+      && selectedObjects.some((object) => refTargetsObject(join.right_ref, object)))
+    : joinPoliciesResult.rows;
+
   return {
-    schemaObjects: schemaObjectsResult.rows,
+    schemaObjects: selectedObjects,
     columns: columnsResult.rows,
-    semanticEntities: semanticEntitiesResult.rows,
-    metricDefinitions: metricDefinitionsResult.rows,
-    joinPolicies: joinPoliciesResult.rows,
+    semanticEntities: selectedSemantics,
+    metricDefinitions: scoped
+      ? metricDefinitionsResult.rows.filter((metric) => selectedSemanticIds.has(metric.semantic_entity_id))
+      : metricDefinitionsResult.rows,
+    joinPolicies: selectedJoins,
     ragNotes: ragNotesResult.rows
   };
+}
+
+function refTargetsObject(
+  ref: string,
+  object: { schema_name: string; object_name: string }
+): boolean {
+  const normalized = String(ref || "").toLowerCase().replace(/["'`\[\]\s]/g, "");
+  const qualified = `${object.schema_name}.${object.object_name}`.toLowerCase();
+  const unqualified = object.object_name.toLowerCase();
+  return normalized === qualified
+    || normalized.startsWith(`${qualified}.`)
+    || normalized === unqualified
+    || normalized.startsWith(`${unqualified}.`);
 }
 
 export async function validateRequestedProvider(requestedProvider: string | null | undefined): Promise<boolean> {
