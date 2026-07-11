@@ -16,6 +16,9 @@ export interface RagRetrievalDoc {
 
 export interface RetrieveRagContextOptions {
   limit?: number;
+  docTypes?: Array<"schema" | "semantic" | "example" | "policy">;
+  candidateLimit?: number;
+  fallbackLimit?: number;
 }
 
 export async function retrieveRagContext(
@@ -24,6 +27,9 @@ export async function retrieveRagContext(
   opts: RetrieveRagContextOptions = {}
 ): Promise<RagRetrievalDoc[]> {
   const limit = Number(opts.limit || 12);
+  const candidateLimit = positiveInteger(opts.candidateLimit, Math.max(64, limit * 8), 200);
+  const fallbackLimit = positiveInteger(opts.fallbackLimit, Math.max(16, limit * 2), 64);
+  const docTypes = normalizeDocTypes(opts.docTypes);
   const q = String(question || "").trim();
 
   if (!q) {
@@ -40,6 +46,45 @@ export async function retrieveRagContext(
     vector_json: number[] | null;
   }>(
     `
+      WITH current_index AS (
+        SELECT schema_version
+        FROM rag_index_state
+        WHERE data_source_id = $1
+      ),
+      query_terms AS (
+        SELECT websearch_to_tsquery('simple', $3) AS query
+      ),
+      lexical_candidates AS (
+        SELECT
+          rd.id,
+          ts_rank_cd(rd.search_vector, qt.query) AS lexical_rank
+        FROM rag_documents rd
+        JOIN current_index ci ON ci.schema_version = rd.schema_version
+        CROSS JOIN query_terms qt
+        WHERE rd.data_source_id = $1
+          AND ($4::text[] IS NULL OR rd.doc_type = ANY($4::text[]))
+          AND rd.search_vector @@ qt.query
+        ORDER BY lexical_rank DESC, rd.created_at DESC
+        LIMIT $5
+      ),
+      fallback_candidates AS (
+        SELECT rd.id, 0::real AS lexical_rank
+        FROM rag_documents rd
+        JOIN current_index ci ON ci.schema_version = rd.schema_version
+        WHERE rd.data_source_id = $1
+          AND ($4::text[] IS NULL OR rd.doc_type = ANY($4::text[]))
+        ORDER BY rd.created_at DESC
+        LIMIT $6
+      ),
+      candidates AS (
+        SELECT id, MAX(lexical_rank) AS lexical_rank
+        FROM (
+          SELECT * FROM lexical_candidates
+          UNION ALL
+          SELECT * FROM fallback_candidates
+        ) candidate_pool
+        GROUP BY id
+      )
       SELECT
         rd.id,
         rd.doc_type,
@@ -47,15 +92,15 @@ export async function retrieveRagContext(
         rd.content,
         rd.metadata_json,
         re.vector_json
-      FROM rag_documents rd
+      FROM candidates candidate
+      JOIN rag_documents rd ON rd.id = candidate.id
       LEFT JOIN rag_embeddings re
         ON re.rag_document_id = rd.id
        AND re.embedding_model = $2
-      WHERE rd.data_source_id = $1
-      ORDER BY rd.created_at DESC
-      LIMIT 400
+      ORDER BY candidate.lexical_rank DESC, rd.created_at DESC
+      LIMIT $7
     `,
-    [dataSourceId, embeddingModel]
+    [dataSourceId, embeddingModel, q, docTypes, candidateLimit, fallbackLimit, candidateLimit + fallbackLimit]
   );
 
   const tokens = tokenize(q);
@@ -90,6 +135,9 @@ async function selectEmbeddingModel(dataSourceId: string): Promise<string> {
       FROM rag_embeddings re
       JOIN rag_documents rd ON rd.id = re.rag_document_id
       WHERE rd.data_source_id = $1
+        AND rd.schema_version = (
+          SELECT schema_version FROM rag_index_state WHERE data_source_id = $1
+        )
       GROUP BY re.embedding_model
       ORDER BY doc_count DESC
       LIMIT 1
@@ -98,6 +146,17 @@ async function selectEmbeddingModel(dataSourceId: string): Promise<string> {
   );
 
   return result.rows[0]?.embedding_model || LOCAL_EMBEDDING_MODEL;
+}
+
+function normalizeDocTypes(value: RetrieveRagContextOptions["docTypes"]): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return [...new Set(value)];
+}
+
+function positiveInteger(value: unknown, fallback: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) return Math.min(fallback, max);
+  return Math.min(number, max);
 }
 
 function tokenize(text: unknown): string[] {
