@@ -9,6 +9,45 @@ process.env.AUTH_COOKIE_SECURE = "false";
 import appDb = require("../src/lib/appDb");
 import dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { SavedQueryRow } from "../src/services/savedQueryService";
+import type { SavedQueryVersionRow } from "../src/services/savedQueryVersionService";
+
+interface ShareRow {
+  saved_query_id: string;
+  user_id: string;
+  permission: "view" | "run";
+  granted_by_user_id: string | null;
+  created_at: string;
+}
+
+interface TestUserFixture {
+  id: string;
+  cookie: string;
+  role: string;
+}
+
+interface AdapterCall {
+  type: string;
+  sql?: string;
+  params?: Record<string, unknown>;
+  parameterSchema?: unknown;
+  opts?: unknown;
+}
+
+interface TestPayload extends Partial<SavedQueryRow> {
+  items: TestPayload[];
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  row_count: number;
+  error: string;
+  shares: ShareRow[];
+  diff: { removed: ShareRow[] };
+  new_version: SavedQueryVersionRow;
+  saved_query: TestPayload;
+  restored_from_version_number: number;
+  version_number: number;
+  change_summary: string | null;
+}
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const OTHER_SOURCE_ID = "00000000-0000-4000-8000-000000000222";
@@ -16,19 +55,19 @@ const MISSING_SOURCE_ID = "00000000-0000-4000-8000-000000009999";
 
 let server: import("http").Server;
 let baseUrl: string;
-let savedQueries;
-let savedQueryShares;
-let savedQueryVersions;
-let savedQueryCounter;
-let savedQueryVersionCounter;
+let savedQueries: Map<string, SavedQueryRow>;
+let savedQueryShares: Map<string, ShareRow>;
+let savedQueryVersions: Map<string, SavedQueryVersionRow>;
+let savedQueryCounter: number;
+let savedQueryVersionCounter: number;
 let originalQuery: typeof appDb.query;
-let originalCreateDatabaseAdapter;
-let originalIsSupportedDbType;
-let adapterCalls;
+let originalCreateDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter;
+let originalIsSupportedDbType: typeof dbAdapterFactory.isSupportedDbType;
+let adapterCalls: AdapterCall[];
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-const testUsers = {};
+const testUsers: Record<string, TestUserFixture> = {};
 
-function shareKey(savedQueryId, userId) {
+function shareKey(savedQueryId: string, userId: string): string {
   return `${savedQueryId}::${userId}`;
 }
 
@@ -37,7 +76,7 @@ function nextVersionId() {
   return `00000000-0000-4000-8000-cccc${String(savedQueryVersionCounter).padStart(8, "0")}`;
 }
 
-function normalizeSql(sql) {
+function normalizeSql(sql: string): string {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
@@ -52,7 +91,7 @@ function duplicateError() {
   return err;
 }
 
-function sortSavedQueries(rows) {
+function sortSavedQueries(rows: SavedQueryRow[]): SavedQueryRow[] {
   return [...rows].sort((a, b) => {
     const updatedDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     if (updatedDiff !== 0) {
@@ -62,7 +101,7 @@ function sortSavedQueries(rows) {
   });
 }
 
-function ensureTestUser(label, role = "analyst") {
+function ensureTestUser(label: string, role = "analyst"): TestUserFixture {
   if (testUsers[label]) {
     return testUsers[label];
   }
@@ -76,11 +115,11 @@ function ensureTestUser(label, role = "analyst") {
   return testUsers[label];
 }
 
-function userId(label) {
+function userId(label: string): string {
   return ensureTestUser(label).id;
 }
 
-async function api(method: string, path: string, body?: unknown, label: string | null = "test-user", { role = "analyst" }: { role?: string } = {}) {
+async function api<T = TestPayload>(method: string, path: string, body?: unknown, label: string | null = "test-user", { role = "analyst" }: { role?: string } = {}) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (label !== null) {
     const fixture = ensureTestUser(label, role);
@@ -92,7 +131,7 @@ async function api(method: string, path: string, body?: unknown, label: string |
     body: body ? JSON.stringify(body) : undefined
   });
 
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
@@ -101,7 +140,7 @@ async function api(method: string, path: string, body?: unknown, label: string |
 
   return {
     status: response.status,
-    payload
+    payload: payload as T
   };
 }
 
@@ -137,14 +176,14 @@ before(async () => {
   })) as unknown as typeof dbAdapterFactory.createDatabaseAdapter;
   (dbAdapterFactory as { isSupportedDbType: typeof dbAdapterFactory.isSupportedDbType }).isSupportedDbType = (dbType: string) => dbType === "postgres" || dbType === "mssql";
 
-  appDb.query = (async (sql, params = []) => {
+  appDb.query = (async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const normalized = normalizeSql(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       if (id === DATA_SOURCE_ID || id === OTHER_SOURCE_ID) {
         return { rowCount: 1, rows: [{ id }] };
       }
@@ -152,7 +191,7 @@ before(async () => {
     }
 
     if (normalized === "select data_source_id from saved_queries where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row
         ? { rowCount: 1, rows: [{ data_source_id: row.data_source_id }] }
@@ -160,7 +199,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("insert into saved_queries")) {
-      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params;
+      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params as [string, string, string | null, string, string, string, string, string[], SavedQueryRow["visibility"]];
       const duplicate = [...savedQueries.values()].find((entry) => (
         entry.owner_id === ownerId
         && entry.data_source_id === dataSourceId
@@ -171,15 +210,15 @@ before(async () => {
       }
 
       const now = new Date().toISOString();
-      const row = {
+      const row: SavedQueryRow = {
         id: nextSavedQueryId(),
         owner_id: ownerId,
         name,
         description,
         data_source_id: dataSourceId,
         sql: querySql,
-        default_run_params: JSON.parse(defaultRunParamsJson),
-        parameter_schema: JSON.parse(parameterSchemaJson),
+        default_run_params: JSON.parse(defaultRunParamsJson) as Record<string, unknown>,
+        parameter_schema: JSON.parse(parameterSchemaJson) as SavedQueryRow["parameter_schema"],
         tags: Array.isArray(tags) ? tags : [],
         visibility: visibility || "private",
         folder_id: null,
@@ -193,7 +232,7 @@ before(async () => {
     // Caller-aware list (the new QUERY-006 variant) — restricts to
     // owner + visibility='shared' + explicit grant.
     if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries sq where ($1::uuid is null or sq.data_source_id = $1::uuid)")) {
-      const [dataSourceId, tagFilter, callerUserId] = params;
+      const [dataSourceId, tagFilter, callerUserId] = params as [string | null, string | null, string];
       const rows = sortSavedQueries(
         [...savedQueries.values()].filter((entry) => {
           if (dataSourceId && entry.data_source_id !== dataSourceId) return false;
@@ -208,7 +247,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries where ($1::uuid is null or data_source_id = $1::uuid)")) {
-      const [dataSourceId, tagFilter] = params;
+      const [dataSourceId, tagFilter] = params as [string | null, string | null];
       const rows = sortSavedQueries(
         [...savedQueries.values()].filter((entry) => {
           if (dataSourceId && entry.data_source_id !== dataSourceId) {
@@ -224,13 +263,13 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("select sq.id, sq.owner_id, sq.name, sq.description, sq.data_source_id, sq.sql, sq.default_run_params, sq.parameter_schema, sq.tags, sq.visibility, sq.created_at, sq.updated_at, ds.connection_ref, ds.db_type from saved_queries sq join data_sources ds on ds.id = sq.data_source_id where sq.id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       if (!row) {
         return { rowCount: 0, rows: [] };
@@ -253,7 +292,7 @@ before(async () => {
       // Two callers: the full update flow (9 params) and the visibility-only
       // toggle from shareSavedQuery (2 params: id + visibility).
       if (params.length === 2) {
-        const [id, visibility] = params;
+        const [id, visibility] = params as [string, SavedQueryRow["visibility"]];
         const existing = savedQueries.get(id);
         if (!existing) return { rowCount: 0, rows: [] };
         const updated = { ...existing, visibility, updated_at: new Date().toISOString() };
@@ -261,7 +300,7 @@ before(async () => {
         return { rowCount: 1, rows: [updated] };
       }
 
-      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params;
+      const [id, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params as [string, string, string | null, string, string, string, string, string[], SavedQueryRow["visibility"]];
       const existing = savedQueries.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -283,8 +322,8 @@ before(async () => {
         description,
         data_source_id: dataSourceId,
         sql: querySql,
-        default_run_params: JSON.parse(defaultRunParamsJson),
-        parameter_schema: JSON.parse(parameterSchemaJson),
+        default_run_params: JSON.parse(defaultRunParamsJson) as Record<string, unknown>,
+        parameter_schema: JSON.parse(parameterSchemaJson) as SavedQueryRow["parameter_schema"],
         tags: Array.isArray(tags) ? tags : (existing.tags || []),
         visibility: visibility || existing.visibility || "private",
         updated_at: new Date().toISOString()
@@ -294,7 +333,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("delete from saved_queries where id = $1 returning id")) {
-      const [id] = params;
+      const [id] = params as [string];
       const existing = savedQueries.get(id);
       if (!existing) {
         return { rowCount: 0, rows: [] };
@@ -309,13 +348,13 @@ before(async () => {
     }
 
     if (normalized.startsWith("select permission from saved_query_shares where saved_query_id = $1 and user_id = $2")) {
-      const [savedQueryId, userId2] = params;
+      const [savedQueryId, userId2] = params as [string, string];
       const row = savedQueryShares.get(shareKey(savedQueryId, userId2));
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("select saved_query_id, user_id, permission, granted_by_user_id, created_at from saved_query_shares where saved_query_id = $1")) {
-      const [savedQueryId] = params;
+      const [savedQueryId] = params as [string];
       const rows = [...savedQueryShares.values()]
         .filter((row) => row.saved_query_id === savedQueryId)
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -323,16 +362,16 @@ before(async () => {
     }
 
     if (normalized.startsWith("delete from saved_query_shares where saved_query_id = $1 and user_id = any($2::uuid[])")) {
-      const [savedQueryId, userIds] = params;
-      for (const uid of userIds || []) savedQueryShares.delete(shareKey(savedQueryId, uid));
-      return { rowCount: (userIds || []).length, rows: [] };
+      const [savedQueryId, userIds] = params as [string, string[]];
+      for (const uid of userIds) savedQueryShares.delete(shareKey(savedQueryId, uid));
+      return { rowCount: userIds.length, rows: [] };
     }
 
     if (normalized.startsWith("insert into saved_query_shares")) {
-      const [savedQueryId, userId2, permission, grantedBy] = params;
+      const [savedQueryId, userId2, permission, grantedBy] = params as [string, string, ShareRow["permission"], string | null];
       const now = new Date().toISOString();
       const existing = savedQueryShares.get(shareKey(savedQueryId, userId2));
-      const row = {
+      const row: ShareRow = {
         saved_query_id: savedQueryId,
         user_id: userId2,
         permission,
@@ -348,7 +387,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select coalesce(max(version_number), 0) as max_version from saved_query_versions where saved_query_id = $1")) {
-      const [savedQueryId] = params;
+      const [savedQueryId] = params as [string];
       const maxVersion = [...savedQueryVersions.values()]
         .filter((row) => row.saved_query_id === savedQueryId)
         .reduce((max, row) => Math.max(max, row.version_number), 0);
@@ -369,7 +408,7 @@ before(async () => {
         visibility,
         changeSummary,
         createdByUserId
-      ] = params;
+      ] = params as [string, number, string, string | null, string, string, string, string, string[], SavedQueryRow["visibility"], string | null, string | null];
       // Mirror the UNIQUE (saved_query_id, version_number) constraint.
       const duplicate = [...savedQueryVersions.values()].some(
         (row) => row.saved_query_id === savedQueryId && row.version_number === versionNumber
@@ -378,7 +417,7 @@ before(async () => {
         throw duplicateError();
       }
       const now = new Date().toISOString();
-      const row = {
+      const row: SavedQueryVersionRow = {
         id: nextVersionId(),
         saved_query_id: savedQueryId,
         version_number: versionNumber,
@@ -386,8 +425,8 @@ before(async () => {
         description,
         data_source_id: dataSourceId,
         sql: sqlText,
-        default_run_params: JSON.parse(defaultRunParamsJson),
-        parameter_schema: JSON.parse(parameterSchemaJson),
+        default_run_params: JSON.parse(defaultRunParamsJson) as Record<string, unknown>,
+        parameter_schema: JSON.parse(parameterSchemaJson) as SavedQueryVersionRow["parameter_schema"],
         tags: Array.isArray(tags) ? tags : [],
         visibility: visibility || "private",
         change_summary: changeSummary,
@@ -399,7 +438,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, saved_query_id, version_number, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, change_summary, created_by_user_id, created_at from saved_query_versions where saved_query_id = $1")) {
-      const [savedQueryId] = params;
+      const [savedQueryId] = params as [string];
       const rows = [...savedQueryVersions.values()]
         .filter((row) => row.saved_query_id === savedQueryId)
         .sort((a, b) => b.version_number - a.version_number);
@@ -407,7 +446,7 @@ before(async () => {
     }
 
     if (normalized.startsWith("select id, saved_query_id, version_number, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, change_summary, created_by_user_id, created_at from saved_query_versions where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueryVersions.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -629,6 +668,7 @@ test("saved query validate-params and run use resolved parameter values", async 
   });
 
   assert.equal(run.status, 200);
+  assert.ok(run.payload.sql);
   assert.match(run.payload.sql, /country = :country/i);
   assert.match(run.payload.sql, /\bLIMIT 25;$/i);
   assert.deepEqual(run.payload.columns, ["country", "total"]);
@@ -1053,7 +1093,7 @@ test("QUERY-005 owner can restore a previous version; restore itself is recorded
   const listAfter = await api("GET", `/v1/saved-queries/${id}/versions`, undefined, "restore-owner");
   assert.equal(listAfter.payload.items.length, 3);
   assert.equal(listAfter.payload.items[0].version_number, 3);
-  assert.match(listAfter.payload.items[0].change_summary, /restored from version 1/);
+  assert.match(listAfter.payload.items[0].change_summary ?? "", /restored from version 1/);
 });
 
 test("QUERY-005 non-owner cannot restore a version; granted reader can list", async () => {
@@ -1086,6 +1126,7 @@ test("QUERY-005 non-owner cannot restore a version; granted reader can list", as
 
   // Teammate cannot restore, only the owner can.
   const target = teammateList.payload.items.find((row) => row.version_number === 1);
+  assert.ok(target);
   const teammateRestore = await api("POST", `/v1/saved-queries/${id}/versions/${target.id}/restore`, {}, "restore-teammate");
   assert.equal(teammateRestore.status, 403);
 });
