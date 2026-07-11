@@ -10,7 +10,6 @@
     "noUnusedParameters": false
   },
   "include": [
-    "app/test/adminUsersApi.test.ts",
     "app/test/savedQueriesApi.test.ts",
     "app/test/savedQueryFoldersApi.test.ts",
     "app/test/savedQuerySchedulesApi.test.ts",

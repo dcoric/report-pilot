@@ -8,19 +8,81 @@ process.env.AUTH_COOKIE_SECURE = "false";
 
 import appDb = require("../src/lib/appDb");
 import authService = require("../src/services/authService");
+import type { PoolClient } from "pg";
+import type { AuthUserRow } from "../src/services/authService";
+import type { RoleRow } from "../src/services/roleService";
+
+interface TestSession {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string;
+  expires_at: string;
+  last_seen_at: string;
+  revoked_at: string | null;
+}
+
+interface UserRoleLink {
+  user_id: string;
+  role_id: string;
+  assigned_at: string;
+  assigned_by_user_id: string | null;
+}
+
+interface AuditRow {
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_user_id: string | null;
+  action: string;
+  outcome: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+interface SeedUserInput {
+  email: string;
+  password: string;
+  displayName?: string | null;
+  isActive?: boolean;
+  roleNames?: string[];
+}
+
+interface AdminUserPayload {
+  id: string;
+  email: string;
+  display_name: string | null;
+  roles: string[];
+}
+
+interface RoleUpdatePayload {
+  user: AdminUserPayload;
+  assigned: string[];
+  revoked: string[];
+  skipped_assign: string[];
+  skipped_revoke: string[];
+}
+
+interface ApiResult<T> {
+  status: number;
+  payload: T;
+}
 
 const SYSTEM_ROLES = ["admin", "analyst", "viewer"];
 
 let server: import("http").Server;
 let baseUrl: string;
-let users;
-let sessions;
-let roles;
-let userRoles;
-let auditLog;
-let userCounter;
-let sessionCounter;
-let roleCounter;
+let users: Map<string, AuthUserRow>;
+let sessions: Map<string, TestSession>;
+let roles: Map<string, RoleRow>;
+let userRoles: Map<string, UserRoleLink>;
+let auditLog: AuditRow[];
+let userCounter: number;
+let sessionCounter: number;
+let roleCounter: number;
 let originalQuery: typeof appDb.query;
 let originalWithTransaction: typeof appDb.withTransaction;
 
@@ -43,11 +105,11 @@ function nextRoleId() {
   return uuid("cccc", roleCounter);
 }
 
-function normalizeSql(sql) {
+function normalizeSql(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function seedSystemRoles() {
+function seedSystemRoles(): void {
   for (const name of SYSTEM_ROLES) {
     roles.set(name, {
       id: nextRoleId(),
@@ -59,8 +121,8 @@ function seedSystemRoles() {
   }
 }
 
-function seedUser({ email, password, displayName = null, isActive = true, roleNames = [] }) {
-  const row = {
+function seedUser({ email, password, displayName = null, isActive = true, roleNames = [] }: SeedUserInput): AuthUserRow {
+  const row: AuthUserRow = {
     id: nextUserId(),
     email,
     password_hash: authService.hashPassword(password),
@@ -84,11 +146,11 @@ function seedUser({ email, password, displayName = null, isActive = true, roleNa
   return row;
 }
 
-function seedSession(userId, { expiresInMs = 60 * 60 * 1000 } = {}) {
+function seedSession(userId: string, { expiresInMs = 60 * 60 * 1000 }: { expiresInMs?: number } = {}) {
   const token = authService.generateSessionToken();
   const tokenHash = authService.hashSessionToken(token);
   const expiresAt = new Date(Date.now() + expiresInMs).toISOString();
-  const row = {
+  const row: TestSession = {
     id: nextSessionId(),
     user_id: userId,
     token_hash: tokenHash,
@@ -103,8 +165,8 @@ function seedSession(userId, { expiresInMs = 60 * 60 * 1000 } = {}) {
   return { token, sessionId: row.id, expiresAt };
 }
 
-function rolesForUser(userId) {
-  const names = [];
+function rolesForUser(userId: string): string[] {
+  const names: string[] = [];
   for (const link of userRoles.values()) {
     if (link.user_id !== userId) continue;
     for (const role of roles.values()) {
@@ -123,14 +185,14 @@ function duplicateEmailError() {
   return err;
 }
 
-async function runQuery(sql, params = []) {
+async function runQuery(sql: string, params: unknown[] = []) {
   const normalized = normalizeSql(sql);
 
   // --- authService.findActiveSession
   if (normalized.startsWith(
     "select s.id as session_id, s.expires_at, s.revoked_at, u.id, u.email, u.password_hash, u.display_name, u.is_active, u.last_login_at, u.created_at, u.updated_at from user_sessions s join users u on u.id = s.user_id where s.token_hash = $1"
   )) {
-    const [tokenHash] = params;
+    const [tokenHash] = params as [string];
     const session = [...sessions.values()].find((entry) => entry.token_hash === tokenHash);
     if (!session) return { rowCount: 0, rows: [] };
     const user = users.get(session.user_id);
@@ -162,8 +224,8 @@ async function runQuery(sql, params = []) {
   if (normalized.startsWith(
     "select r.id, r.name, r.description, r.is_system, ur.assigned_at from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = $1 order by r.name"
   )) {
-    const [userId] = params;
-    const rows = [];
+    const [userId] = params as [string];
+    const rows: Array<RoleRow & { assigned_at: string }> = [];
     for (const link of userRoles.values()) {
       if (link.user_id !== userId) continue;
       for (const role of roles.values()) {
@@ -205,7 +267,7 @@ async function runQuery(sql, params = []) {
   if (normalized.startsWith(
     "select id, email, display_name, is_active, last_login_at, created_at, updated_at from users where id = $1"
   )) {
-    const [id] = params;
+    const [id] = params as [string];
     const u = users.get(id);
     return u
       ? { rowCount: 1, rows: [{
@@ -222,12 +284,12 @@ async function runQuery(sql, params = []) {
 
   // --- adminUserService.createUser insert
   if (normalized.startsWith("insert into users")) {
-    const [email, passwordHash, displayName] = params;
+    const [email, passwordHash, displayName] = params as [string, string, string | null];
     const dup = [...users.values()].some((u) => u.email.toLowerCase() === email.toLowerCase());
     if (dup) {
       throw duplicateEmailError();
     }
-    const row = {
+    const row: AuthUserRow = {
       id: nextUserId(),
       email,
       password_hash: passwordHash,
@@ -254,8 +316,8 @@ async function runQuery(sql, params = []) {
 
   // --- roleService.assignRolesByName / revokeRolesByName lookup
   if (normalized.startsWith("select id, name from roles where lower(name) = any($1::text[])")) {
-    const [names] = params;
-    const rows = [];
+    const [names] = params as [string[]];
+    const rows: Array<{ id: string; name: string }> = [];
     for (const role of roles.values()) {
       if (names.includes(role.name)) {
         rows.push({ id: role.id, name: role.name });
@@ -268,7 +330,7 @@ async function runQuery(sql, params = []) {
   if (normalized.startsWith(
     "insert into user_roles (user_id, role_id, assigned_by_user_id) values ($1, $2, $3) on conflict (user_id, role_id) do nothing returning role_id"
   )) {
-    const [userId, roleId, actorUserId] = params;
+    const [userId, roleId, actorUserId] = params as [string, string, string | null];
     const key = `${userId}:${roleId}`;
     if (userRoles.has(key)) {
       return { rowCount: 0, rows: [] };
@@ -284,7 +346,7 @@ async function runQuery(sql, params = []) {
 
   // --- roleService.revokeRolesByName delete
   if (normalized.startsWith("delete from user_roles where user_id = $1 and role_id = $2 returning role_id")) {
-    const [userId, roleId] = params;
+    const [userId, roleId] = params as [string, string];
     const key = `${userId}:${roleId}`;
     if (!userRoles.has(key)) {
       return { rowCount: 0, rows: [] };
@@ -297,14 +359,23 @@ async function runQuery(sql, params = []) {
   if (normalized.startsWith("insert into auth_audit_log")) {
     // AUTH-008 expanded the columns to: actor_user_id, actor_email,
     // target_user_id, action, outcome, details, ip_address, user_agent.
-    const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params;
+    const [actorUserId, actorEmail, targetUserId, action, outcome, detailsJson, ipAddress, userAgent] = params as [
+      string | null,
+      string | null,
+      string | null,
+      string,
+      string | null,
+      string,
+      string | null,
+      string | null
+    ];
     auditLog.push({
       actor_user_id: actorUserId,
       actor_email: actorEmail,
       target_user_id: targetUserId,
       action,
       outcome,
-      details: JSON.parse(detailsJson),
+      details: JSON.parse(detailsJson) as Record<string, unknown>,
       ip_address: ipAddress,
       user_agent: userAgent,
       created_at: new Date().toISOString()
@@ -315,7 +386,12 @@ async function runQuery(sql, params = []) {
   throw new Error(`Unexpected SQL in admin test stub: ${normalized}`);
 }
 
-async function api(method: string, path: string, body?: unknown, { cookie }: { cookie?: string } = {}) {
+async function api<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  { cookie }: { cookie?: string } = {}
+): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(`${baseUrl}${path}`, {
@@ -323,16 +399,16 @@ async function api(method: string, path: string, body?: unknown, { cookie }: { c
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
     payload = null;
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
-function cookieFor(token) {
+function cookieFor(token: string): string {
   return `rp_session=${encodeURIComponent(token)}`;
 }
 
@@ -349,9 +425,12 @@ before(async () => {
   roleCounter = 0;
 
   appDb.query = ((sql: string, params: unknown[] = []) => runQuery(sql, params)) as unknown as typeof appDb.query;
-  appDb.withTransaction = (async (handler) => {
-    return handler({ query: (sql: string, params: unknown[] = []) => runQuery(sql, params) } as unknown as Parameters<typeof appDb.withTransaction>[0] extends (c: infer C) => unknown ? C : never);
-  }) as unknown as typeof appDb.withTransaction;
+  const transactionClient = {
+    query: (sql: string, params: unknown[] = []) => runQuery(sql, params)
+  } as unknown as PoolClient;
+  appDb.withTransaction = (async <T>(handler: (client: PoolClient) => Promise<T>): Promise<T> => (
+    handler(transactionClient)
+  )) as typeof appDb.withTransaction;
 
   delete require.cache[require.resolve("../src/server")];
   const { startServer } = require("../src/server");
@@ -391,13 +470,15 @@ test("GET /v1/admin/users requires auth and admin role", async () => {
   assert.equal(viewerAttempt.status, 403);
 
   const adminSession = seedSession(admin.id);
-  const allowed = await api("GET", "/v1/admin/users", undefined, { cookie: cookieFor(adminSession.token) });
+  const allowed = await api<{ items: AdminUserPayload[] }>("GET", "/v1/admin/users", undefined, { cookie: cookieFor(adminSession.token) });
   assert.equal(allowed.status, 200);
   assert.equal(allowed.payload.items.length, 2);
   const sorted = [...allowed.payload.items].sort((a, b) => a.email.localeCompare(b.email));
   assert.deepEqual(sorted.map((u) => u.email), ["admin@example.com", "viewer@example.com"]);
   const adminItem = sorted.find((u) => u.email === "admin@example.com");
   const viewerItem = sorted.find((u) => u.email === "viewer@example.com");
+  assert.ok(adminItem);
+  assert.ok(viewerItem);
   assert.deepEqual(adminItem.roles, ["admin"]);
   assert.deepEqual(viewerItem.roles, ["viewer"]);
 });
@@ -407,7 +488,7 @@ test("POST /v1/admin/users defaults to viewer role and writes audit log", async 
   const session = seedSession(admin.id);
   const cookie = cookieFor(session.token);
 
-  const created = await api("POST", "/v1/admin/users", {
+  const created = await api<AdminUserPayload>("POST", "/v1/admin/users", {
     email: "  New@Example.com ",
     password: "hunter22ok",
     display_name: "  Newbie  "
@@ -431,7 +512,7 @@ test("POST /v1/admin/users accepts explicit roles", async () => {
   const admin = seedUser({ email: "root@example.com", password: "hunter22ok", roleNames: ["admin"] });
   const cookie = cookieFor(seedSession(admin.id).token);
 
-  const created = await api("POST", "/v1/admin/users", {
+  const created = await api<AdminUserPayload>("POST", "/v1/admin/users", {
     email: "analyst@example.com",
     password: "hunter22ok",
     roles: ["ANALYST", "analyst", " analyst "]
@@ -489,7 +570,7 @@ test("POST /v1/admin/users/{id}/roles assigns and revokes with audit and idempot
   const target = seedUser({ email: "subject@example.com", password: "hunter22ok", roleNames: ["viewer"] });
   const cookie = cookieFor(seedSession(admin.id).token);
 
-  const promote = await api("POST", `/v1/admin/users/${target.id}/roles`, {
+  const promote = await api<RoleUpdatePayload>("POST", `/v1/admin/users/${target.id}/roles`, {
     assign: ["analyst"],
     revoke: ["viewer"]
   }, { cookie });
@@ -500,7 +581,7 @@ test("POST /v1/admin/users/{id}/roles assigns and revokes with audit and idempot
   assert.deepEqual(promote.payload.skipped_revoke, []);
   assert.deepEqual(promote.payload.user.roles, ["analyst"]);
 
-  const repeat = await api("POST", `/v1/admin/users/${target.id}/roles`, {
+  const repeat = await api<RoleUpdatePayload>("POST", `/v1/admin/users/${target.id}/roles`, {
     assign: ["analyst"],
     revoke: ["viewer"]
   }, { cookie });
