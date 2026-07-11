@@ -13,8 +13,6 @@
     "app/test/accountLinkingApi.test.ts",
     "app/test/adminUsersApi.test.ts",
     "app/test/authApi.test.ts",
-    "app/test/authProvidersAdminApi.test.ts",
-    "app/test/federationHardeningApi.test.ts",
     "app/test/oidcLoginApi.test.ts",
     "app/test/savedQueriesApi.test.ts",
     "app/test/savedQueryFoldersApi.test.ts",
