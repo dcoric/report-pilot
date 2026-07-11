@@ -9,50 +9,74 @@ process.env.AUTH_COOKIE_SECURE = "false";
 import appDb = require("../src/lib/appDb");
 import dbAdapterFactory = require("../src/adapters/dbAdapterFactory");
 import { createAuthTestStub } from "./helpers/authTestStub";
+import type { FolderRow } from "../src/services/savedQueryFolderService";
+import type { SavedQueryRow } from "../src/services/savedQueryService";
+import type { SavedQueryVersionRow } from "../src/services/savedQueryVersionService";
+
+interface TestUserFixture {
+  id: string;
+  cookie: string;
+  role: string;
+}
+
+interface FolderNode extends FolderRow {
+  children: FolderNode[];
+}
+
+interface TestPayload extends Partial<SavedQueryRow>, Partial<FolderRow> {
+  items: FolderRow[];
+  tree: FolderNode[];
+  message: string;
+  reassigned_to: string | null;
+  reassigned_folder_ids: string[];
+  reassigned_saved_query_ids: string[];
+  previous_folder_id: string | null;
+  saved_query: SavedQueryRow;
+}
 
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 
 let server: import("http").Server;
 let baseUrl: string;
-let savedQueries;
-let savedQueryVersions;
-let folders;
-let savedQueryCounter;
-let folderCounter;
-let savedQueryVersionCounter;
+let savedQueries: Map<string, SavedQueryRow>;
+let savedQueryVersions: Map<string, SavedQueryVersionRow>;
+let folders: Map<string, FolderRow>;
+let savedQueryCounter: number;
+let folderCounter: number;
+let savedQueryVersionCounter: number;
 let originalQuery: typeof appDb.query;
 let originalWithTransaction: typeof appDb.withTransaction;
-let originalCreateDatabaseAdapter;
-let originalIsSupportedDbType;
+let originalCreateDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter;
+let originalIsSupportedDbType: typeof dbAdapterFactory.isSupportedDbType;
 let authStub: import("./helpers/authTestStub").AuthTestStub;
-const testUsers = {};
+const testUsers: Record<string, TestUserFixture> = {};
 
-function nextSavedQueryId() {
+function nextSavedQueryId(): string {
   savedQueryCounter += 1;
   return `00000000-0000-4000-8000-${String(savedQueryCounter).padStart(12, "0")}`;
 }
 
-function nextFolderId() {
+function nextFolderId(): string {
   folderCounter += 1;
   return `00000000-0000-4000-8000-ffff${String(folderCounter).padStart(8, "0")}`;
 }
 
-function nextVersionId() {
+function nextVersionId(): string {
   savedQueryVersionCounter += 1;
   return `00000000-0000-4000-8000-cccc${String(savedQueryVersionCounter).padStart(8, "0")}`;
 }
 
-function normalizeSql(sql) {
+function normalizeSql(sql: string): string {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function duplicateError() {
+function duplicateError(): Error & { code?: string } {
   const err = new Error("duplicate key value violates unique constraint");
   (err as { code?: string }).code = "23505";
   return err;
 }
 
-function ensureTestUser(label, role = "analyst") {
+function ensureTestUser(label: string, role = "analyst"): TestUserFixture {
   if (testUsers[label]) return testUsers[label];
   const user = authStub.seedUser({
     email: `${label}@example.com`,
@@ -64,11 +88,11 @@ function ensureTestUser(label, role = "analyst") {
   return testUsers[label];
 }
 
-function userId(label) {
+function userId(label: string): string {
   return ensureTestUser(label).id;
 }
 
-async function api(method: string, path: string, body?: unknown, label: string | null = "test-user", { role = "analyst" }: { role?: string } = {}) {
+async function api<T = TestPayload>(method: string, path: string, body?: unknown, label: string | null = "test-user", { role = "analyst" }: { role?: string } = {}) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (label !== null) {
     const fixture = ensureTestUser(label, role);
@@ -79,33 +103,33 @@ async function api(method: string, path: string, body?: unknown, label: string |
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  let payload = null;
+  let payload: unknown = null;
   try {
     payload = await response.json();
   } catch {
     payload = null;
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload: payload as T };
 }
 
 // In-memory implementation of the SQL surface area used by the folder
 // service. We share the same `savedQueries` map so the move endpoint can
 // flip the `folder_id` column.
-function buildSqlHandler() {
-  return async (sql, params = []) => {
+function buildSqlHandler(): (sql: string, params?: unknown[]) => Promise<{ rowCount: number; rows: unknown[] }> {
+  return async (sql: string, params: unknown[] = []) => {
     const auth = authStub.handleSql(sql, params);
     if (auth) return auth;
 
     const normalized = normalizeSql(sql);
 
     if (normalized === "select id from data_sources where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       if (id === DATA_SOURCE_ID) return { rowCount: 1, rows: [{ id }] };
       return { rowCount: 0, rows: [] };
     }
 
     if (normalized === "select data_source_id from saved_queries where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row
         ? { rowCount: 1, rows: [{ data_source_id: row.data_source_id }] }
@@ -113,7 +137,7 @@ function buildSqlHandler() {
     }
 
     if (normalized === "select id, owner_id, folder_id from saved_queries where id = $1") {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row
         ? { rowCount: 1, rows: [{ id: row.id, owner_id: row.owner_id, folder_id: row.folder_id || null }] }
@@ -121,7 +145,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("insert into saved_queries")) {
-      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params;
+      const [ownerId, name, description, dataSourceId, querySql, defaultRunParamsJson, parameterSchemaJson, tags, visibility] = params as [string, string, string | null, string, string, string, string, string[], SavedQueryRow["visibility"]];
       const duplicate = [...savedQueries.values()].find((entry) => (
         entry.owner_id === ownerId
         && entry.data_source_id === dataSourceId
@@ -129,15 +153,15 @@ function buildSqlHandler() {
       ));
       if (duplicate) throw duplicateError();
       const now = new Date().toISOString();
-      const row = {
+      const row: SavedQueryRow = {
         id: nextSavedQueryId(),
         owner_id: ownerId,
         name,
         description,
         data_source_id: dataSourceId,
         sql: querySql,
-        default_run_params: JSON.parse(defaultRunParamsJson),
-        parameter_schema: JSON.parse(parameterSchemaJson),
+        default_run_params: JSON.parse(defaultRunParamsJson) as Record<string, unknown>,
+        parameter_schema: JSON.parse(parameterSchemaJson) as SavedQueryRow["parameter_schema"],
         tags: Array.isArray(tags) ? tags : [],
         visibility: visibility || "private",
         folder_id: null,
@@ -149,7 +173,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries sq where ($1::uuid is null or sq.data_source_id = $1::uuid)")) {
-      const [dataSourceId, tagFilter, callerUserId] = params;
+      const [dataSourceId, tagFilter, callerUserId] = params as [string | null, string | null, string];
       const rows = [...savedQueries.values()].filter((entry) => {
         if (dataSourceId && entry.data_source_id !== dataSourceId) return false;
         if (tagFilter && !(entry.tags || []).includes(tagFilter)) return false;
@@ -161,7 +185,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("select id, owner_id, name, description, data_source_id, sql, default_run_params, parameter_schema, tags, visibility, folder_id, created_at, updated_at from saved_queries where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = savedQueries.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -170,7 +194,7 @@ function buildSqlHandler() {
     // folder_id. The bulk WHERE folder_id = $1 form used by the delete path
     // has its own matcher below.
     if (normalized.startsWith("update saved_queries set folder_id = $2, updated_at = now() where id = $1")) {
-      const [id, folderId] = params;
+      const [id, folderId] = params as [string, string | null];
       const existing = savedQueries.get(id);
       if (!existing) return { rowCount: 0, rows: [] };
       const updated = { ...existing, folder_id: folderId, updated_at: new Date().toISOString() };
@@ -179,8 +203,8 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("update saved_queries set folder_id = $2, updated_at = now() where folder_id = $1")) {
-      const [oldFolderId, newFolderId] = params;
-      const ids = [];
+      const [oldFolderId, newFolderId] = params as [string, string | null];
+      const ids: Array<{ id: string }> = [];
       for (const row of savedQueries.values()) {
         if (row.folder_id === oldFolderId) {
           row.folder_id = newFolderId || null;
@@ -192,7 +216,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("delete from saved_queries where id = $1 returning id")) {
-      const [id] = params;
+      const [id] = params as [string];
       if (!savedQueries.has(id)) return { rowCount: 0, rows: [] };
       savedQueries.delete(id);
       return { rowCount: 1, rows: [{ id }] };
@@ -200,16 +224,16 @@ function buildSqlHandler() {
 
     // Version-service writes (savedQueryService records a v1 on create).
     if (normalized.startsWith("select coalesce(max(version_number), 0) as max_version from saved_query_versions where saved_query_id = $1")) {
-      const [savedQueryId] = params;
+      const [savedQueryId] = params as [string];
       const maxVersion = [...savedQueryVersions.values()]
         .filter((row) => row.saved_query_id === savedQueryId)
         .reduce((max, row) => Math.max(max, row.version_number), 0);
       return { rowCount: 1, rows: [{ max_version: maxVersion }] };
     }
     if (normalized.startsWith("insert into saved_query_versions")) {
-      const [savedQueryId, versionNumber, name, description, dataSourceId, sqlText, defaultRunParamsJson, parameterSchemaJson, tags, visibility, changeSummary, createdByUserId] = params;
+      const [savedQueryId, versionNumber, name, description, dataSourceId, sqlText, defaultRunParamsJson, parameterSchemaJson, tags, visibility, changeSummary, createdByUserId] = params as [string, number, string, string | null, string, string, string, string, string[], SavedQueryVersionRow["visibility"], string | null, string | null];
       const now = new Date().toISOString();
-      const row = {
+      const row: SavedQueryVersionRow = {
         id: nextVersionId(),
         saved_query_id: savedQueryId,
         version_number: versionNumber,
@@ -217,8 +241,8 @@ function buildSqlHandler() {
         description,
         data_source_id: dataSourceId,
         sql: sqlText,
-        default_run_params: JSON.parse(defaultRunParamsJson),
-        parameter_schema: JSON.parse(parameterSchemaJson),
+        default_run_params: JSON.parse(defaultRunParamsJson) as Record<string, unknown>,
+        parameter_schema: JSON.parse(parameterSchemaJson) as SavedQueryVersionRow["parameter_schema"],
         tags: Array.isArray(tags) ? tags : [],
         visibility: visibility || "private",
         change_summary: changeSummary,
@@ -232,13 +256,13 @@ function buildSqlHandler() {
     // ---- Folder SQL ---------------------------------------------------------
 
     if (normalized.startsWith("select id, owner_id, parent_id, name, created_at, updated_at from saved_query_folders where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       const row = folders.get(id);
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
 
     if (normalized.startsWith("insert into saved_query_folders")) {
-      const [ownerId, parentId, name] = params;
+      const [ownerId, parentId, name] = params as [string, string | null, string];
       // Mirror the partial UNIQUE indexes for sibling-name collisions.
       const duplicate = [...folders.values()].find((entry) => (
         entry.owner_id === ownerId
@@ -247,7 +271,7 @@ function buildSqlHandler() {
       ));
       if (duplicate) throw duplicateError();
       const now = new Date().toISOString();
-      const row = {
+      const row: FolderRow = {
         id: nextFolderId(),
         owner_id: ownerId,
         parent_id: parentId || null,
@@ -260,7 +284,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("select id, owner_id, parent_id, name, created_at, updated_at from saved_query_folders where owner_id = $1")) {
-      const [ownerId] = params;
+      const [ownerId] = params as [string];
       const rows = [...folders.values()]
         .filter((entry) => entry.owner_id === ownerId)
         .sort((a, b) => {
@@ -274,8 +298,8 @@ function buildSqlHandler() {
 
     // Ancestor / descendant walks issued by the folder service.
     if (normalized.startsWith("with recursive chain as")) {
-      const [folderId] = params;
-      const chain = [];
+      const [folderId] = params as [string];
+      const chain: Array<{ id: string }> = [];
       let cursor = folders.get(folderId);
       let safety = 0;
       while (cursor && safety < 100) {
@@ -288,11 +312,12 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("with recursive subtree as")) {
-      const [ancestorId, candidateId] = params;
-      const subtree = new Set();
-      const queue = [ancestorId];
+      const [ancestorId, candidateId] = params as [string, string];
+      const subtree = new Set<string>();
+      const queue: string[] = [ancestorId];
       while (queue.length) {
         const id = queue.shift();
+        if (!id) continue;
         if (subtree.has(id)) continue;
         subtree.add(id);
         for (const folder of folders.values()) {
@@ -306,7 +331,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("update saved_query_folders set name = $2")) {
-      const [id, name, parentId] = params;
+      const [id, name, parentId] = params as [string, string, string | null];
       const existing = folders.get(id);
       if (!existing) return { rowCount: 0, rows: [] };
       const duplicate = [...folders.values()].find((entry) => (
@@ -316,7 +341,7 @@ function buildSqlHandler() {
         && entry.name.toLowerCase() === String(name).toLowerCase()
       ));
       if (duplicate) throw duplicateError();
-      const updated = {
+      const updated: FolderRow = {
         ...existing,
         name,
         parent_id: parentId || null,
@@ -327,8 +352,8 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("update saved_query_folders set parent_id = $2")) {
-      const [oldParentId, newParentId] = params;
-      const ids = [];
+      const [oldParentId, newParentId] = params as [string, string | null];
+      const ids: Array<{ id: string }> = [];
       for (const folder of folders.values()) {
         if (folder.parent_id === oldParentId) {
           folder.parent_id = newParentId || null;
@@ -340,7 +365,7 @@ function buildSqlHandler() {
     }
 
     if (normalized.startsWith("delete from saved_query_folders where id = $1")) {
-      const [id] = params;
+      const [id] = params as [string];
       if (!folders.has(id)) return { rowCount: 0, rows: [] };
       folders.delete(id);
       return { rowCount: 1, rows: [] };
@@ -380,7 +405,9 @@ before(async () => {
   appDb.query = sqlHandler as unknown as typeof appDb.query;
   // The folder delete path uses appDb.withTransaction; route the client.query
   // calls back through the same stub so the in-memory state stays consistent.
-  appDb.withTransaction = (async (handler) => handler({ query: sqlHandler } as unknown as Parameters<typeof appDb.withTransaction>[0] extends (c: infer C) => unknown ? C : never)) as unknown as typeof appDb.withTransaction;
+  appDb.withTransaction = (async <T>(handler: (client: import("pg").PoolClient) => Promise<T>): Promise<T> => (
+    handler({ query: sqlHandler } as unknown as import("pg").PoolClient)
+  )) as typeof appDb.withTransaction;
 
   delete require.cache[require.resolve("../src/server")];
   const { startServer } = require("../src/server");
@@ -541,6 +568,7 @@ test("QUERY-008 delete reparents child folders and saved queries to the deleted 
 
   const listAfter = await api("GET", "/v1/saved-query-folders", undefined, "del-owner");
   const leafNow = listAfter.payload.items.find((row) => row.id === leaf.payload.id);
+  assert.ok(leafNow);
   assert.equal(leafNow.parent_id, root.payload.id);
 
   const queryAfter = await api("GET", `/v1/saved-queries/${query.payload.id}`, undefined, "del-owner");
@@ -560,6 +588,7 @@ test("QUERY-008 deleting a root folder reparents children to root (NULL)", async
 
   const listAfter = await api("GET", "/v1/saved-query-folders", undefined, "root-del-owner");
   const childNow = listAfter.payload.items.find((row) => row.id === child.payload.id);
+  assert.ok(childNow);
   assert.equal(childNow.parent_id, null);
 });
 

@@ -9,7 +9,6 @@
     "node_modules",
     "dist",
     "frontend",
-    "app/test/savedQueryFoldersApi.test.ts",
     "app/test/savedQuerySchedulesApi.test.ts"
   ]
 }
