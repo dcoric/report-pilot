@@ -221,17 +221,15 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
 
   const name = normalizeName(b.name);
   if (!name) {
-    return { ok: false, message: "name is required, alphanumeric with _ or -, up to 64 characters" };
+    return { ok: false, message: "name is required" };
   }
 
-  const displayName = typeof b.display_name === "string" && b.display_name.trim()
-    ? b.display_name.trim()
-    : null;
-  if (displayName && displayName.length > PROVIDER_DISPLAY_NAME_MAX) {
+  const displayName = typeof b.display_name === "string" ? b.display_name.trim() : "";
+  if (displayName.length > PROVIDER_DISPLAY_NAME_MAX) {
     return { ok: false, message: `display_name cannot exceed ${PROVIDER_DISPLAY_NAME_MAX} characters` };
   }
 
-  // OIDC-specific validation
+  // Validation by provider type
   if (type === "oidc") {
     const issuer = typeof b.issuer === "string" ? b.issuer.trim() : "";
     if (!issuer || !/^https?:\/\//i.test(issuer)) {
@@ -276,21 +274,49 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
         enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
       }
     };
-  } else {
-    // For non-OIDC providers, we don't validate the OIDC-specific fields
-    // They will be validated at the service layer or through provider_config
+  } else if (type === "saml") {
+    // SAML specific validations
+    const issuer = typeof b.issuer === "string" ? b.issuer.trim() : "";
+    if (!issuer || !/^https?:\/\//i.test(issuer)) {
+      return { ok: false, message: "issuer must be an http(s) URL" };
+    }
+    
+    const redirectUri = typeof b.redirect_uri === "string" ? b.redirect_uri.trim() : "";
+    if (!redirectUri || !/^https?:\/\//i.test(redirectUri)) {
+      return { ok: false, message: "redirect_uri must be an http(s) URL" };
+    }
+    
+    // SAML doesn't require client_id or client_secret but we validate what's provided
+    
     return {
       ok: true,
       value: {
         type,
         name,
         display_name: displayName,
-        issuer: null,
-        client_id: null,
+        issuer,
+        client_id: typeof b.client_id === "string" && b.client_id.trim() ? b.client_id.trim() : "report-pilot-sp",
         client_secret: null,
-        redirect_uri: null,
-        scopes: null,
-        claims_mapping: null,
+        redirect_uri: redirectUri,
+        scopes: [],
+        claims_mapping: {},
+        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
+      }
+    };
+  } else {
+    // For LDAP, AD, and PD, validate only basic fields - they may not require specific fields
+    return {
+      ok: true,
+      value: {
+        type,
+        name,
+        display_name: displayName,
+        issuer: "",
+        client_id: "",
+        client_secret: null,
+        redirect_uri: "",
+        scopes: [],
+        claims_mapping: {},
         enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
       }
     };

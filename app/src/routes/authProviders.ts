@@ -1,12 +1,22 @@
-import { json, badRequest, readJsonBody, errorMessage, type RouteHandler, type RouteHandlerWithUrl } from "../lib/http";
-import { buildFlowCookie, buildClearFlowCookie } from "../lib/oidcFlowCookie";
+import { json, badRequest, errorMessage, type RouteHandler, type RouteHandlerWithUrl } from "../lib/http";
+import { buildFlowCookie, buildClearFlowCookie, readFlowCookie } from "../lib/oidcFlowCookie";
+import { buildSessionCookie } from "../lib/sessionCookie";
 import { createSession } from "../services/authService";
 import { writeEvent } from "../services/auditService";
 import { listEnabledProvidersForLogin, findProviderById } from "../services/authProviderService";
 import { resolveExternalLogin } from "../services/externalLoginService";
 import { createAuthProviderService } from "../services/authProviders";
-import { clientAddress } from "../lib/http";
 import type { AuthProviderType } from "../types/domain";
+import type { AuthedRequest } from "../lib/authGate";
+
+function clientAddress(req: AuthedRequest): string | null {
+  const fwd = req.headers["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd.length > 0) {
+    const first = fwd.split(",")[0];
+    if (first) return first.trim();
+  }
+  return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : null;
+}
 
 // This is a unified external auth router that handles all auth provider types
 // It routes requests to the appropriate provider service based on the provider type
@@ -54,7 +64,7 @@ function redirectAfterLogin(res: any, target = "/dashboard", sessionCookie: stri
 }
 
 const handleCallback: RouteHandlerWithUrl = async (req, res, requestUrl) => {
-  const flowState = buildFlowCookie(req);
+  const flowState = readFlowCookie(req);
   if (!flowState) {
     return json(res, 400, { error: "bad_request", message: "missing or expired OIDC flow state" });
   }
