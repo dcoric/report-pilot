@@ -6,7 +6,7 @@ export type AuthProvider = components['schemas']['AuthProvider'];
 
 export interface AuthProviderFormValues {
     id?: string;
-    type: 'oidc';
+    type: 'oidc' | 'saml' | 'ldap' | 'ad' | 'pd';
     name: string;
     display_name?: string | null;
     issuer: string;
@@ -68,7 +68,7 @@ function defaultValues(initial: AuthProvider | null, defaultRedirectUri: string)
     }
     return {
         id: initial.id,
-        type: 'oidc',
+        type: initial.type as 'oidc' | 'saml' | 'ldap' | 'ad' | 'pd',
         name: initial.name ?? '',
         display_name: initial.display_name ?? '',
         issuer: initial.issuer ?? '',

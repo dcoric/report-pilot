@@ -136,7 +136,7 @@ const PROVIDER_COLUMNS = `
   scopes, redirect_uri, claims_mapping, enabled,
   auto_link_by_email, jit_enabled, jit_default_role, jit_allowed_domains,
   require_email_verified,
-  scim_group_mappings,
+  scim_group_mappings, provider_config,
   created_at, updated_at
 `;
 
@@ -212,8 +212,11 @@ export async function findProviderRawByName(name: unknown): Promise<ProviderRow 
 export function validatePayload(body: unknown): ValidatePayloadResult {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const type = typeof b.type === "string" ? b.type : "oidc";
-  if (type !== "oidc") {
-    return { ok: false, message: "type must be 'oidc'" };
+  
+  // Support all provider types
+  const supportedTypes = ['oidc', 'saml', 'ldap', 'ad', 'pd'];
+  if (!supportedTypes.includes(type)) {
+    return { ok: false, message: `type must be one of: ${supportedTypes.join(', ')}` };
   }
 
   const name = normalizeName(b.name);
@@ -228,51 +231,70 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
     return { ok: false, message: `display_name cannot exceed ${PROVIDER_DISPLAY_NAME_MAX} characters` };
   }
 
-  const issuer = typeof b.issuer === "string" ? b.issuer.trim() : "";
-  if (!issuer || !/^https?:\/\//i.test(issuer)) {
-    return { ok: false, message: "issuer must be an http(s) URL" };
-  }
-  const clientId = typeof b.client_id === "string" ? b.client_id.trim() : "";
-  if (!clientId) {
-    return { ok: false, message: "client_id is required" };
-  }
-  const clientSecret = typeof b.client_secret === "string" ? b.client_secret : null;
-  // Public clients (PKCE-only) may omit the secret; allow nullable.
-
-  const redirectUri = typeof b.redirect_uri === "string" ? b.redirect_uri.trim() : "";
-  if (!redirectUri || !/^https?:\/\//i.test(redirectUri)) {
-    return { ok: false, message: "redirect_uri must be an http(s) URL" };
-  }
-
-  const scopes = normalizeScopes(b.scopes);
-  if (scopes === null) {
-    return { ok: false, message: "scopes must be an array of strings" };
-  }
-
-  const claimsMapping = normalizeClaimsMapping(b.claims_mapping);
-  if (claimsMapping === null) {
-    return { ok: false, message: "claims_mapping must be an object" };
-  }
-
-  const enabled = Object.prototype.hasOwnProperty.call(b, "enabled")
-    ? Boolean(b.enabled)
-    : true;
-
-  return {
-    ok: true,
-    value: {
-      type,
-      name,
-      display_name: displayName,
-      issuer,
-      client_id: clientId,
-      client_secret: typeof clientSecret === "string" && clientSecret.length > 0 ? clientSecret : null,
-      redirect_uri: redirectUri,
-      scopes,
-      claims_mapping: claimsMapping,
-      enabled
+  // OIDC-specific validation
+  if (type === "oidc") {
+    const issuer = typeof b.issuer === "string" ? b.issuer.trim() : "";
+    if (!issuer || !/^https?:\/\//i.test(issuer)) {
+      return { ok: false, message: "issuer must be an http(s) URL" };
     }
-  };
+    
+    const clientId = typeof b.client_id === "string" ? b.client_id.trim() : "";
+    if (!clientId) {
+      return { ok: false, message: "client_id is required" };
+    }
+    
+    const redirectUri = typeof b.redirect_uri === "string" ? b.redirect_uri.trim() : "";
+    if (!redirectUri || !/^https?:\/\//i.test(redirectUri)) {
+      return { ok: false, message: "redirect_uri must be an http(s) URL" };
+    }
+
+    const scopes = normalizeScopes(b.scopes);
+    if (scopes === null) {
+      return { ok: false, message: "scopes must be an array of strings" };
+    }
+
+    const claimsMapping = normalizeClaimsMapping(b.claims_mapping);
+    if (claimsMapping === null) {
+      return { ok: false, message: "claims_mapping must be an object" };
+    }
+
+    const clientSecret = typeof b.client_secret === "string" ? b.client_secret : null;
+    // Public clients (PKCE-only) may omit the secret; allow nullable.
+
+    return {
+      ok: true,
+      value: {
+        type,
+        name,
+        display_name: displayName,
+        issuer,
+        client_id: clientId,
+        client_secret: typeof clientSecret === "string" && clientSecret.length > 0 ? clientSecret : null,
+        redirect_uri: redirectUri,
+        scopes,
+        claims_mapping: claimsMapping,
+        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
+      }
+    };
+  } else {
+    // For non-OIDC providers, we don't validate the OIDC-specific fields
+    // They will be validated at the service layer or through provider_config
+    return {
+      ok: true,
+      value: {
+        type,
+        name,
+        display_name: displayName,
+        issuer: null,
+        client_id: null,
+        client_secret: null,
+        redirect_uri: null,
+        scopes: null,
+        claims_mapping: null,
+        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
+      }
+    };
+  }
 }
 
 export async function upsertProvider(body: unknown, { actorUserId = null }: { actorUserId?: string | null } = {}): Promise<ServiceResponse> {
@@ -298,13 +320,14 @@ export async function upsertProvider(body: unknown, { actorUserId = null }: { ac
                 redirect_uri = $9,
                 claims_mapping = $10::jsonb,
                 enabled = $11,
+                provider_config = $12::jsonb,
                 updated_at = NOW()
           WHERE id = $1
           RETURNING ${PROVIDER_COLUMNS}`,
         [
           id, v.type, v.name, v.display_name, v.issuer, v.client_id,
           v.client_secret, v.scopes, v.redirect_uri,
-          JSON.stringify(v.claims_mapping), v.enabled
+          JSON.stringify(v.claims_mapping), v.enabled, JSON.stringify({})
         ]
       );
       if (result.rowCount === 0) {
@@ -328,12 +351,12 @@ export async function upsertProvider(body: unknown, { actorUserId = null }: { ac
     const result = await appDb.query<ProviderRow>(
       `INSERT INTO auth_providers
          (type, name, display_name, issuer, client_id, client_secret,
-          scopes, redirect_uri, claims_mapping, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+          scopes, redirect_uri, claims_mapping, enabled, provider_config)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
        RETURNING ${PROVIDER_COLUMNS}`,
       [
         v.type, v.name, v.display_name, v.issuer, v.client_id, v.client_secret,
-        v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled
+        v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled, JSON.stringify({})
       ]
     );
     await auditService

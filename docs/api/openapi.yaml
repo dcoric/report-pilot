@@ -2374,7 +2374,7 @@ components:
           type: string
         type:
           type: string
-          enum: [oidc]
+          enum: [oidc, saml, ldap, ad, pd]
         name:
           type: string
         display_name:
@@ -2425,6 +2425,9 @@ components:
           description: AUTH-013. SCIM group `displayName` (key, case-insensitive at lookup) to local role name (value).
           additionalProperties:
             type: string
+        provider_config:
+          type: object
+          description: Provider-specific configuration data. The structure depends on the provider type.
         created_at:
           type: string
           format: date-time
@@ -2670,14 +2673,14 @@ components:
             $ref: "#/components/schemas/AuthProvider"
     AuthProviderUpsertRequest:
       type: object
-      required: [type, name, issuer, client_id, redirect_uri]
+      required: [type, name]
       properties:
         id:
           type: string
           description: Provide to update an existing provider; omit to create a new one.
         type:
           type: string
-          enum: [oidc]
+          enum: [oidc, saml, ldap, ad, pd]
         name:
           type: string
         display_name:

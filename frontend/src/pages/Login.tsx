@@ -9,7 +9,13 @@ interface LocationState {
     from?: string;
 }
 
-type OidcProvider = components['schemas']['OidcProviderLoginEntry'];
+// Provider type supporting all authentication provider types
+type Provider = {
+  id: string;
+  name: string;
+  display_name: string | null;
+  type: 'oidc' | 'saml' | 'ldap' | 'ad' | 'pd';
+};
 
 export function Login() {
     const { status, login } = useAuth();
@@ -20,14 +26,21 @@ export function Login() {
     const [password, setPassword] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [providers, setProviders] = useState<OidcProvider[]>([]);
+    const [providers, setProviders] = useState<Provider[]>([]);
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const { data } = await client.GET('/v1/auth/oidc/providers');
+            const { data } = await client.GET('/v1/auth/providers');
             if (!cancelled && data?.items) {
-                setProviders(data.items);
+                // Convert the response to the new provider type
+                const convertedProviders = data.items.map(item => ({
+                    id: item.id,
+                    name: item.name,
+                    display_name: item.display_name,
+                    type: item.type as 'oidc' | 'saml' | 'ldap' | 'ad' | 'pd'
+                }));
+                setProviders(convertedProviders);
             }
         })();
         return () => {
@@ -128,15 +141,33 @@ export function Login() {
                             <span className="h-px flex-1 bg-gray-200" />
                         </div>
                         <div className="space-y-2">
-                            {providers.map((provider) => (
-                                <a
-                                    key={provider.id}
-                                    href={`/v1/auth/oidc/login?provider_id=${encodeURIComponent(provider.id ?? '')}`}
-                                    className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:border-oxblood hover:text-oxblood"
-                                >
-                                    Sign in with {provider.display_name || provider.name}
-                                </a>
-                            ))}
+                            {providers.map((provider) => {
+                                if (provider.type === 'oidc' || provider.type === 'saml') {
+                                    return (
+                                        <a
+                                            key={provider.id}
+                                            href={`/v1/auth/login?provider_id=${encodeURIComponent(provider.id ?? '')}`}
+                                            className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:border-oxblood hover:text-oxblood"
+                                        >
+                                            Sign in with {provider.display_name || provider.name}
+                                        </a>
+                                    );
+                                } else {
+                                    // For non-OIDC/SAML providers, show a placeholder that would be handled by a form
+                                    return (
+                                        <button
+                                            key={provider.id}
+                                            type="button"
+                                            className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:border-oxblood hover:text-oxblood"
+                                            onClick={() => {
+                                                alert(`Login with ${provider.type} provider requires form-based authentication`);
+                                            }}
+                                        >
+                                            Sign in with {provider.display_name || provider.name}
+                                        </button>
+                                    );
+                                }
+                            })}
                         </div>
                     </>
                 )}
