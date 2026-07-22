@@ -11,7 +11,7 @@ import { buildFlowCookie, buildClearFlowCookie, readFlowCookie } from "../lib/oi
 import { buildSessionCookie, buildClearSessionCookie } from "../lib/sessionCookie";
 import { createSession } from "../services/authService";
 import { writeEvent } from "../services/auditService";
-import { listEnabledProvidersForLogin, findProviderById } from "../services/authProviderService";
+import { listEnabledProvidersForLogin, findProviderById, isOidcProvider } from "../services/authProviderService";
 import { resolveExternalLogin } from "../services/externalLoginService";
 import { startLogin, completeLogin } from "../services/oidcService";
 import { recordUsedState } from "../services/oidcStateService";
@@ -43,7 +43,7 @@ const handleStartLogin: RouteHandlerWithUrl = async (_req, res, requestUrl) => {
     return badRequest(res, "provider_id query parameter is required");
   }
   const provider = await findProviderById(providerId, { withSecret: true });
-  if (!provider || !provider.enabled) {
+  if (!provider || !provider.enabled || !isOidcProvider(provider)) {
     return json(res, 404, { error: "not_found", message: "auth provider not found or disabled" });
   }
 
@@ -76,7 +76,7 @@ const handleCallback: RouteHandlerWithUrl = async (req, res, requestUrl) => {
   }
 
   const provider = await findProviderById(flowState.provider_id, { withSecret: true });
-  if (!provider || !provider.enabled) {
+  if (!provider || !provider.enabled || !isOidcProvider(provider)) {
     res.setHeader("Set-Cookie", buildClearFlowCookie());
     return json(res, 404, { error: "not_found", message: "auth provider no longer available" });
   }
@@ -197,7 +197,7 @@ const handleStartLoginJson: RouteHandlerWithUrl = async (_req, res, requestUrl) 
     return badRequest(res, "provider_id query parameter is required");
   }
   const provider = await findProviderById(providerId, { withSecret: true });
-  if (!provider || !provider.enabled) {
+  if (!provider || !provider.enabled || !isOidcProvider(provider)) {
     return json(res, 404, { error: "not_found", message: "auth provider not found or disabled" });
   }
   try {

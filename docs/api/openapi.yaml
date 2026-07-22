@@ -2374,7 +2374,7 @@ components:
           type: string
         type:
           type: string
-          enum: [oidc]
+          enum: [oidc, saml, ldap, ad, pd]
         name:
           type: string
         display_name:
@@ -2382,20 +2382,25 @@ components:
           nullable: true
         issuer:
           type: string
+          nullable: true
         client_id:
           type: string
+          nullable: true
         client_secret:
           type: string
           nullable: true
           description: Redacted as `***` when present; never returned in plaintext.
         scopes:
           type: array
+          nullable: true
           items:
             type: string
         redirect_uri:
           type: string
+          nullable: true
         claims_mapping:
           type: object
+          nullable: true
           properties:
             email:
               type: string
@@ -2425,6 +2430,10 @@ components:
           description: AUTH-013. SCIM group `displayName` (key, case-insensitive at lookup) to local role name (value).
           additionalProperties:
             type: string
+        provider_config:
+          type: object
+          description: Provider-specific configuration data. The structure depends on the provider type. Secret-like keys are recursively returned as `***` from admin APIs.
+          additionalProperties: true
         created_at:
           type: string
           format: date-time
@@ -2670,14 +2679,15 @@ components:
             $ref: "#/components/schemas/AuthProvider"
     AuthProviderUpsertRequest:
       type: object
-      required: [type, name, issuer, client_id, redirect_uri]
+      description: OIDC retains its current required-field validation. saml/ldap/ad/pd records may be stored only disabled; attempts to enable an unimplemented type return 400.
+      required: [type, name]
       properties:
         id:
           type: string
           description: Provide to update an existing provider; omit to create a new one.
         type:
           type: string
-          enum: [oidc]
+          enum: [oidc, saml, ldap, ad, pd]
         name:
           type: string
         display_name:
@@ -2706,6 +2716,10 @@ components:
               type: string
         enabled:
           type: boolean
+        provider_config:
+          type: object
+          description: Arbitrary provider-specific configuration. Secret-like keys are recursively returned as `***` from admin APIs.
+          additionalProperties: true
     AuthProviderTestResult:
       type: object
       properties:
@@ -2821,6 +2835,7 @@ components:
           type: string
         type:
           type: string
+          enum: [oidc]
     OidcProviderLoginListResponse:
       type: object
       properties:
