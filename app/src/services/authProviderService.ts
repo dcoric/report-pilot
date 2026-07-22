@@ -1,5 +1,12 @@
 import appDb = require("../lib/appDb");
 import auditService = require("./auditService");
+import { AUTH_PROVIDER_TYPES, type AuthProviderType, type ProviderConfig } from "../types/domain";
+import {
+  normalizeProviderConfig,
+  normalizeStoredProviderConfig,
+  redactProviderConfig,
+  isPlainProviderConfig
+} from "./authProviderConfig";
 
 const PROVIDER_NAME_MAX = 64;
 const PROVIDER_DISPLAY_NAME_MAX = 120;
@@ -7,16 +14,17 @@ export const DEFAULT_SCOPES: ReadonlyArray<string> = ["openid", "email", "profil
 
 export interface ProviderRow {
   id: string;
-  type: string;
+  type: AuthProviderType;
   name: string;
   display_name: string | null;
-  issuer: string;
-  client_id: string;
+  issuer: string | null;
+  client_id: string | null;
   client_secret: string | null;
-  scopes: string[];
-  redirect_uri: string;
+  scopes: string[] | null;
+  redirect_uri: string | null;
   claims_mapping: Record<string, unknown> | null;
   enabled: boolean;
+  provider_config?: ProviderConfig | null;
   auto_link_by_email?: boolean;
   jit_enabled?: boolean;
   jit_default_role?: string | null;
@@ -29,16 +37,17 @@ export interface ProviderRow {
 
 export interface PublicProvider {
   id: string;
-  type: string;
+  type: AuthProviderType;
   name: string;
   display_name: string | null;
-  issuer: string;
-  client_id: string;
+  issuer: string | null;
+  client_id: string | null;
   client_secret: string | null;
-  scopes: string[];
-  redirect_uri: string;
+  scopes: string[] | null;
+  redirect_uri: string | null;
   claims_mapping: Record<string, unknown> | null;
   enabled: boolean;
+  provider_config: ProviderConfig;
   auto_link_by_email: boolean;
   jit_enabled: boolean;
   jit_default_role: string;
@@ -61,16 +70,18 @@ interface ClaimsMapping {
 
 type ValidatePayloadResult =
   | { ok: true; value: {
-      type: string;
+      type: AuthProviderType;
       name: string;
       display_name: string | null;
-      issuer: string;
-      client_id: string;
+      issuer: string | null;
+      client_id: string | null;
       client_secret: string | null;
-      redirect_uri: string;
-      scopes: string[];
-      claims_mapping: ClaimsMapping;
+      redirect_uri: string | null;
+      scopes: string[] | null;
+      claims_mapping: ClaimsMapping | null;
       enabled: boolean;
+      provider_config: ProviderConfig;
+      provider_config_supplied: boolean;
     } }
   | { ok: false; message: string };
 
@@ -116,8 +127,8 @@ function normalizeScopes(value: unknown): string[] | null {
 
 function normalizeClaimsMapping(value: unknown): ClaimsMapping | null {
   if (value === undefined || value === null) return {};
-  if (typeof value !== "object" || Array.isArray(value)) return null;
-  const v = value as Record<string, unknown>;
+  if (!isPlainProviderConfig(value)) return null;
+  const v = value;
   const out: ClaimsMapping = {};
   if (typeof v.email === "string" && v.email.trim()) {
     out.email = v.email.trim();
@@ -160,6 +171,7 @@ export function publicProvider(row: ProviderRow | null | undefined, { includeSec
     jit_allowed_domains: row.jit_allowed_domains || [],
     require_email_verified: row.require_email_verified !== false,
     scim_group_mappings: row.scim_group_mappings || {},
+    provider_config: redactProviderConfig(normalizeStoredProviderConfig(row.provider_config)),
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -174,11 +186,11 @@ export async function listProviders(): Promise<Array<PublicProvider | null>> {
   return result.rows.map((row) => publicProvider(row));
 }
 
-export async function listEnabledProvidersForLogin(): Promise<Array<{ id: string; name: string; display_name: string; type: string }>> {
-  const result = await appDb.query<{ id: string; name: string; display_name: string | null; type: string }>(
+export async function listEnabledProvidersForLogin(): Promise<Array<{ id: string; name: string; display_name: string; type: AuthProviderType }>> {
+  const result = await appDb.query<{ id: string; name: string; display_name: string | null; type: AuthProviderType }>(
     `SELECT id, name, display_name, type
        FROM auth_providers
-       WHERE enabled = TRUE
+       WHERE enabled = TRUE AND type = 'oidc'
        ORDER BY lower(name)`
   );
   return result.rows.map((row) => ({
@@ -187,6 +199,20 @@ export async function listEnabledProvidersForLogin(): Promise<Array<{ id: string
     display_name: row.display_name || row.name,
     type: row.type
   }));
+}
+
+export type OidcProviderRow = ProviderRow & {
+  type: "oidc";
+  issuer: string;
+  client_id: string;
+  redirect_uri: string;
+};
+
+export function isOidcProvider(row: ProviderRow | PublicProvider | null | undefined): row is OidcProviderRow {
+  return row?.type === "oidc"
+    && typeof row.issuer === "string"
+    && typeof row.client_id === "string"
+    && typeof row.redirect_uri === "string";
 }
 
 export async function findProviderById(id: unknown, { withSecret = false }: { withSecret?: boolean } = {}): Promise<ProviderRow | PublicProvider | null> {
@@ -210,13 +236,11 @@ export async function findProviderRawByName(name: unknown): Promise<ProviderRow 
 }
 
 export function validatePayload(body: unknown): ValidatePayloadResult {
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  const type = typeof b.type === "string" ? b.type : "oidc";
-  
-  // Support all provider types
-  const supportedTypes = ['oidc', 'saml', 'ldap', 'ad', 'pd'];
-  if (!supportedTypes.includes(type)) {
-    return { ok: false, message: `type must be one of: ${supportedTypes.join(', ')}` };
+  const b = isPlainProviderConfig(body) ? body : {};
+  const typeValue = b.type === undefined ? "oidc" : b.type;
+  const type = AUTH_PROVIDER_TYPES.find((entry) => entry === typeValue);
+  if (!type) {
+    return { ok: false, message: `type must be one of: ${AUTH_PROVIDER_TYPES.join(", ")}` };
   }
 
   const name = normalizeName(b.name);
@@ -224,10 +248,18 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
     return { ok: false, message: "name is required" };
   }
 
-  const displayName = typeof b.display_name === "string" ? b.display_name.trim() : "";
-  if (displayName.length > PROVIDER_DISPLAY_NAME_MAX) {
+  const displayName = typeof b.display_name === "string" && b.display_name.trim()
+    ? b.display_name.trim()
+    : null;
+  if (displayName && displayName.length > PROVIDER_DISPLAY_NAME_MAX) {
     return { ok: false, message: `display_name cannot exceed ${PROVIDER_DISPLAY_NAME_MAX} characters` };
   }
+
+  const providerConfig = normalizeProviderConfig(b.provider_config);
+  if (providerConfig === null) {
+    return { ok: false, message: "provider_config must be a plain object" };
+  }
+  const providerConfigSupplied = Object.prototype.hasOwnProperty.call(b, "provider_config");
 
   // Validation by provider type
   if (type === "oidc") {
@@ -235,12 +267,12 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
     if (!issuer || !/^https?:\/\//i.test(issuer)) {
       return { ok: false, message: "issuer must be an http(s) URL" };
     }
-    
+
     const clientId = typeof b.client_id === "string" ? b.client_id.trim() : "";
     if (!clientId) {
       return { ok: false, message: "client_id is required" };
     }
-    
+
     const redirectUri = typeof b.redirect_uri === "string" ? b.redirect_uri.trim() : "";
     if (!redirectUri || !/^https?:\/\//i.test(redirectUri)) {
       return { ok: false, message: "redirect_uri must be an http(s) URL" };
@@ -271,56 +303,34 @@ export function validatePayload(body: unknown): ValidatePayloadResult {
         redirect_uri: redirectUri,
         scopes,
         claims_mapping: claimsMapping,
-        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
-      }
-    };
-  } else if (type === "saml") {
-    // SAML specific validations
-    const issuer = typeof b.issuer === "string" ? b.issuer.trim() : "";
-    if (!issuer || !/^https?:\/\//i.test(issuer)) {
-      return { ok: false, message: "issuer must be an http(s) URL" };
-    }
-    
-    const redirectUri = typeof b.redirect_uri === "string" ? b.redirect_uri.trim() : "";
-    if (!redirectUri || !/^https?:\/\//i.test(redirectUri)) {
-      return { ok: false, message: "redirect_uri must be an http(s) URL" };
-    }
-    
-    // SAML doesn't require client_id or client_secret but we validate what's provided
-    
-    return {
-      ok: true,
-      value: {
-        type,
-        name,
-        display_name: displayName,
-        issuer,
-        client_id: typeof b.client_id === "string" && b.client_id.trim() ? b.client_id.trim() : "report-pilot-sp",
-        client_secret: null,
-        redirect_uri: redirectUri,
-        scopes: [],
-        claims_mapping: {},
-        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
-      }
-    };
-  } else {
-    // For LDAP, AD, and PD, validate only basic fields - they may not require specific fields
-    return {
-      ok: true,
-      value: {
-        type,
-        name,
-        display_name: displayName,
-        issuer: "",
-        client_id: "",
-        client_secret: null,
-        redirect_uri: "",
-        scopes: [],
-        claims_mapping: {},
-        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true
+        enabled: Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : true,
+        provider_config: providerConfig,
+        provider_config_supplied: providerConfigSupplied
       }
     };
   }
+
+  const enabled = Object.prototype.hasOwnProperty.call(b, "enabled") ? Boolean(b.enabled) : false;
+  if (enabled) {
+    return { ok: false, message: `provider type '${type}' is not implemented and must remain disabled` };
+  }
+  return {
+    ok: true,
+    value: {
+      type,
+      name,
+      display_name: displayName,
+      issuer: null,
+      client_id: null,
+      client_secret: null,
+      redirect_uri: null,
+      scopes: null,
+      claims_mapping: null,
+      enabled,
+      provider_config: providerConfig,
+      provider_config_supplied: providerConfigSupplied
+    }
+  };
 }
 
 export async function upsertProvider(body: unknown, { actorUserId = null }: { actorUserId?: string | null } = {}): Promise<ServiceResponse> {
@@ -329,7 +339,7 @@ export async function upsertProvider(body: unknown, { actorUserId = null }: { ac
     return { statusCode: 400, body: { error: "bad_request", message: parsed.message } };
   }
   const v = parsed.value;
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const b = isPlainProviderConfig(body) ? body : {};
   const id = typeof b.id === "string" && b.id.trim() ? b.id.trim() : null;
 
   try {
@@ -341,19 +351,19 @@ export async function upsertProvider(body: unknown, { actorUserId = null }: { ac
                 display_name = $4,
                 issuer = $5,
                 client_id = $6,
-                client_secret = COALESCE($7, client_secret),
+                client_secret = CASE WHEN $2 = 'oidc' THEN COALESCE($7, client_secret) ELSE NULL END,
                 scopes = $8,
                 redirect_uri = $9,
                 claims_mapping = $10::jsonb,
                 enabled = $11,
-                provider_config = $12::jsonb,
+                provider_config = CASE WHEN $12 THEN $13::jsonb ELSE provider_config END,
                 updated_at = NOW()
           WHERE id = $1
           RETURNING ${PROVIDER_COLUMNS}`,
         [
           id, v.type, v.name, v.display_name, v.issuer, v.client_id,
           v.client_secret, v.scopes, v.redirect_uri,
-          JSON.stringify(v.claims_mapping), v.enabled, JSON.stringify({})
+          JSON.stringify(v.claims_mapping), v.enabled, v.provider_config_supplied, JSON.stringify(v.provider_config)
         ]
       );
       if (result.rowCount === 0) {
@@ -382,7 +392,7 @@ export async function upsertProvider(body: unknown, { actorUserId = null }: { ac
        RETURNING ${PROVIDER_COLUMNS}`,
       [
         v.type, v.name, v.display_name, v.issuer, v.client_id, v.client_secret,
-        v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled, JSON.stringify({})
+        v.scopes, v.redirect_uri, JSON.stringify(v.claims_mapping), v.enabled, JSON.stringify(v.provider_config)
       ]
     );
     await auditService

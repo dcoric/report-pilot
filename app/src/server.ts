@@ -279,16 +279,15 @@ async function routeRequest(req: AuthedRequest, res: ServerResponse): Promise<vo
     return handleMe(req, res);
   }
 
-  // Unified auth provider routes for all types
-  if (req.method === "GET" && pathname === "/v1/auth/providers") {
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/providers") {
     return handleListEnabledProviders(req, res);
   }
 
-  if (req.method === "GET" && pathname === "/v1/auth/login") {
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/login") {
     return handleStartLogin(req, res, requestUrl);
   }
 
-  if (req.method === "GET" && pathname === "/v1/auth/callback") {
+  if (req.method === "GET" && pathname === "/v1/auth/oidc/callback") {
     return handleCallback(req, res, requestUrl);
   }
 
