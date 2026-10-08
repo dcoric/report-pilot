@@ -30,6 +30,29 @@ test("parseCronExpression treats 7 as Sunday", () => {
   assert.ok(parsed.dows.has(0));
 });
 
+test("cron fields reject malformed numeric tokens", () => {
+  for (const token of ["1-2-3", "-1", "1.0", "1e1", "0x10", "+1", "*/1e1", "*/1.0", "*/0x10", "1-", "-", "1//2", "1/", "/2", "1,,2", ",1", "1,", "*/0", "1-2/3/4"]) {
+    const expression = `${token} 0 * * *`;
+    assert.equal(isCronExpressionValid(expression), false, expression);
+    assert.throws(() => parseCronExpression(expression), Error, expression);
+  }
+});
+
+test("cron fields preserve decimal literals, ranges, lists and steps", () => {
+  for (const [token, expected] of [
+    ["01", [1]],
+    ["1,3,5", [1, 3, 5]],
+    ["1-5", [1, 2, 3, 4, 5]],
+    ["0-10/3", [0, 3, 6, 9]],
+    ["*/20", [0, 20, 40]],
+    ["5/2", [5]]
+  ] as const) {
+    const expression = `  ${token}\t0  * * *  `;
+    assert.equal(isCronExpressionValid(expression), true, expression);
+    assert.deepEqual([...parseCronExpression(expression).minutes], [...expected]);
+  }
+});
+
 test("isCronExpressionValid returns false on garbage", () => {
   assert.equal(isCronExpressionValid("not a cron"), false);
   assert.equal(isCronExpressionValid("60 0 * * *"), false); // minute out of range
