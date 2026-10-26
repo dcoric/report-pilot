@@ -45,10 +45,10 @@ export class OpenAiAdapter implements LlmAdapter {
     await this.healthCheck();
 
     const model = input.model || this.defaultModel;
+    const isSol = /^gpt-6\.1-sol(?:-|$)/i.test(model);
     const maxTokens = input.maxTokens ?? 800;
     const payload: Record<string, unknown> = {
       model,
-      temperature: input.temperature ?? 0,
       messages: [
         {
           role: "system",
@@ -60,6 +60,11 @@ export class OpenAiAdapter implements LlmAdapter {
         }
       ]
     };
+    if (isSol) {
+      payload.reasoning_effort = "low";
+    } else {
+      payload.temperature = input.temperature ?? 0;
+    }
     if (usesCompletionTokenParam(model)) {
       payload.max_completion_tokens = maxTokens;
     } else {
@@ -129,7 +134,7 @@ export class OpenAiAdapter implements LlmAdapter {
 }
 
 function usesCompletionTokenParam(model: string): boolean {
-  return /^gpt-5(?:[.-]|$)/i.test(String(model || ""));
+  return /^gpt-5(?:[.-]|$)/i.test(model) || /^gpt-6\.1-sol(?:-|$)/i.test(model);
 }
 
 module.exports = {

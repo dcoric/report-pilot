@@ -1,238 +1,144 @@
-# Report Pilot Local Runtime
+# Report Pilot
 
-This repository now includes a local Docker setup with:
+**Ask your database a question. Inspect the SQL. Save it as a reusable report.**
 
-- `app`: minimal Report Pilot service runtime (Node.js), auto-runs SQL migrations on startup.
-- `db`: dedicated PostgreSQL instance for app metadata and app data.
+Report Pilot is a self-hosted reporting workspace for PostgreSQL and Microsoft SQL Server. It turns natural-language questions into read-only SQL using your schema, business definitions, and reviewed examples, then brings the query, results, and supporting context into one place.
 
-## Prerequisites
+It is built for analysts who need repeatable reports and developers who want to give teams a SQL assistant grounded in their own database.
 
-- Docker
-- Docker Compose (v2)
+[Get started](docs/getting-started.md) · [Configure RAG](docs/rag.md) · [Try the examples](docs/examples/dvd-rental.md) · [API reference](docs/api/openapi.yaml)
 
-For local development, use Node.js 20 or newer and run `npm run setup`. The backend uses the native TypeScript 7 compiler; `npm run types:openapi` uses an isolated TypeScript 5.9 toolchain until `openapi-typescript` supports the TypeScript 7 compiler API. In the migration benchmark, the combined backend and scripts typecheck improved from 2.43 seconds on TypeScript 5.9 to a median 0.39 seconds on TypeScript 7 (6.2x); results vary by machine and workload.
+![Report Pilot showing a natural-language revenue question, generated SQL, and results from the DVD Rental sample database](docs/images/query-workspace.png)
 
-## Browser smoke test
+*A live query against the bundled DVD Rental sample database, generated with OpenAI `gpt-6.1-sol`. The four monthly totals were checked against an independently written SQL query. [Run conditions and reference SQL](docs/examples/dvd-rental.md).*
 
-Install Chromium once, then run the deterministic sign-in and natural-language query smoke flow:
+## From a question to a report
 
-```bash
-npm --prefix frontend exec -- playwright install chromium
-npm run test:e2e
+1. **Connect a database.** Discover tables, views, columns, and relationships using a read-only database account.
+2. **Explain your business.** Define what “revenue” means, which dates matter, and which joins are appropriate.
+3. **Ask a question.** Report Pilot retrieves relevant context, selects tables and join paths, and generates SQL. Supported ambiguities prompt you to choose an interpretation.
+4. **Review the answer.** Normal generation runs the query after validation. Inspect the SQL and results, or select **Dry run** to inspect and edit the SQL before executing it.
+5. **Reuse the work.** Save and tag queries, review versions, share access, and export results. The API also supports parameterized runs and scheduled email reports.
+
+For example:
+
+> Show monthly collected revenue, payment count, and average payment amount for all available payment history, ordered by month.
+
+Or compare category performance:
+
+> Which five film categories generated the most collected payment revenue across all payment history?
+
+## What you can do
+
+| Capability | What it gives you |
+| --- | --- |
+| Natural-language SQL workspace | Editable SQL, tabular results, dry runs, prompt history, and reusable prompt presets. |
+| Database-aware context | Schema discovery, semantic names, metric definitions, join policies, RAG notes, and validated question-to-SQL examples. |
+| Reusable reports | Saved queries, tags, version history, access sharing, and parameterized execution through the API. |
+| Exports and delivery | JSON, CSV, TSV, Excel, and Parquet exports; SMTP email and opt-in saved-query scheduling through the API. |
+| Access and diagnostics | Roles and datasource permissions, OIDC sign-in, SCIM provisioning, audit events, query diagnostics, and optional OpenTelemetry. |
+| Model choice | OpenAI, Gemini, DeepSeek, OpenRouter, and custom OpenAI-compatible endpoints, including local model servers. |
+
+## How it works
+
+Report Pilot uses two distinct database roles: **its own application database** and **the reporting databases you connect**. They have separate connections and can run on different servers. For example, Report Pilot can store its configuration and RAG index in PostgreSQL while querying your company's SQL Server database.
+
+```mermaid
+flowchart LR
+    subgraph App[Report Pilot application]
+        UI[React workspace] <--> API[Node.js API]
+    end
+
+    subgraph Storage[Application storage]
+        AppDB[("Report Pilot PostgreSQL<br/>Config, notes, RAG index,<br/>query history and saved reports")]
+    end
+
+    subgraph Sources[Your reporting databases]
+        PG[(Your PostgreSQL database)]
+        MS[(Your SQL Server database)]
+    end
+
+    API <-->|Application connection: DATABASE_URL| AppDB
+    API <-->|Separate datasource connection| PG
+    API <-->|Separate datasource connection| MS
+    API <-->|Selected context and generated SQL| Model[Your configured LLM]
 ```
 
-The smoke suite starts the Vite frontend automatically and provides in-browser API fixtures, so it does not require PostgreSQL, a reporting database, or LLM credentials. It also checks keyboard-only sign-in and query submission plus automated WCAG A/AA scans before and after execution. Pull request CI runs the same test after the frontend lint and build gates.
+The application database is configured with `DATABASE_URL`. Each reporting datasource has its own connection configured in **Datasets**. Report Pilot reads schema metadata from that source, builds its RAG index in the application database, and validates generated SQL before executing it against the selected source. The source does not need Report Pilot's tables, notes, or configuration installed in it.
 
-## Run
+RAG retrieves relevant schema descriptions, business definitions, notes, and reviewed examples from application storage for each question. Business records are queried from the source database; they do not need to be copied into the application database. No separate vector database is required.
+
+SQL generation and embeddings are configured separately. Use OpenAI or Gemini embeddings, or the local hash fallback. Schema, questions, business context, and relevant SQL are sent to the configured generation provider. Choose the provider and deployment to fit your data requirements.
+
+[The RAG guide](docs/rag.md) covers setup, automatic reindexing, table selection, clarification, feedback, and the difference between generation and embedding models.
+
+## How a question becomes a result
+
+Two model calls handle different decisions. First, the schema linker chooses core tables from a ranked shortlist. Application code expands their join paths. Then the SQL generator decides the calculations, filters, grouping, output columns, and order using that schema and business context.
+
+```mermaid
+flowchart TD
+    Question["Your question + selected datasource"] --> Retrieve["Retrieve RAG context and rank table candidates"]
+    Storage[("Application PostgreSQL<br/>Schema, definitions, notes and examples")] --> Retrieve
+    Retrieve --> Tables["Model 1: choose core tables"]
+    Tables --> Joins["Expand known join paths<br/>Clarify supported ambiguities or stop"]
+    Joins --> Prompt["Selected tables and columns<br/>Metrics, joins and relevant RAG context"]
+    Prompt --> Generate["Model 2: construct SQL<br/>Columns, calculations, filters, grouping and order"]
+    Generate --> Checks["SQL and policy checks<br/>Eligible failures: one repair attempt"]
+    Checks --> Mode{"Dry run?"}
+    Mode -->|Yes| Preview["Show SQL without source execution"]
+    Mode -->|No| Budget["Source validation and PostgreSQL cost check"]
+    Budget --> Source[("Your reporting database<br/>Separate datasource connection")]
+    Source --> Result["Columns and rows rendered as a table<br/>SQL, citations and diagnostics alongside"]
+```
+
+The UI displays the shape returned by SQL. It does not currently choose a chart or generate a narrative answer. Citations and confidence help with inspection but do not verify business correctness.
+
+**[Explore the full query pipeline and guardrails](docs/query-pipeline.md)** for the exact retrieval limits, table and join decisions, repair flow, and differences between generated queries, saved reports, and exports. The guide also documents current gaps, including reliance on database grants for read-only enforcement, heuristic column exclusions, and resource-limit coverage.
+
+## Give the assistant the context your schema is missing
+
+A column named `amount` cannot explain your reporting rules. Add notes such as:
+
+> Revenue means collected payments: `SUM(public.payment.amount)`, grouped by `payment_date`. Film `rental_rate` is a catalog price, not collected revenue.
+
+![Report Pilot RAG notes containing the revenue definition, film-category join path, and reporting conventions used in the sample queries](docs/images/rag-notes.png)
+
+These notes are retrieved with schema context. Corrected-SQL feedback can also become a validated example for later questions. Saving a query alone does not add a training example or fine-tune a model.
+
+## Run it locally
+
+You need Node.js 22 (see `.nvmrc`), npm, and Docker Compose. Start with:
 
 ```bash
+git clone https://github.com/dcoric/report-pilot.git
 cd report-pilot
+npm run setup
 cp .env.example .env
-docker compose up --build
+docker compose up -d db
 ```
 
-Default ports:
+Then follow the **[local setup guide](docs/getting-started.md)** to start the API and frontend, create an administrator, configure a model, and connect the bundled sample database. There is no default application login.
 
-- App: `http://localhost:8080`
-- Postgres: `localhost:5433` (container internal port is still `5432`)
+## Project status
 
-## Health Endpoints
+Report Pilot is under active development. The query workspace, schema discovery, RAG notes, saved-query workflow, and exports are available today. Some navigation items and workspace actions are marked **Coming soon**; scheduling and some administration capabilities are exposed through the API rather than a complete UI.
 
-- `GET /health`
-- `GET /ready`
+Read-only checks, query budgets, and citations help make generated SQL inspectable. They do not prove business correctness, and the confidence indicator is a heuristic. Use database-level read-only permissions and verify important reports against known results. Scheduled delivery is opt-in and currently assumes a single API process.
 
-## API Docs
+The repository includes browser smoke tests, backend tests, schema-linking regression gates, and a 60-question DVD Rental evaluation dataset. The screenshots document two checked examples, not an overall accuracy score. See [development and evaluation](docs/development.md) for commands and current evaluation limits.
 
-- Swagger UI: `http://localhost:8080/docs`
-- OpenAPI spec: `http://localhost:8080/openapi.yaml`
+## Documentation
 
-Examples:
+| Guide | Start here when you want to… |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Run the application and ask your first question. |
+| [RAG setup and architecture](docs/rag.md) | Add business context and understand retrieval. |
+| [Query pipeline and guardrails](docs/query-pipeline.md) | Follow table selection, SQL construction, results, and enforcement limits. |
+| [DVD Rental examples](docs/examples/dvd-rental.md) | Reproduce the screenshots and check the answers. |
+| [Test databases](test-data/README.md) | Load PostgreSQL or SQL Server fixtures and import DDL. |
+| [API schema](docs/api/openapi.yaml) | Integrate queries, reports, exports, and administration. |
+| [Development and evaluation](docs/development.md) | Build, test, inspect diagnostics, and understand benchmark coverage. |
+| [OpenTelemetry](docs/observability/opentelemetry.md) | Configure optional traces and metrics. |
 
-```bash
-curl http://localhost:8080/health
-curl http://localhost:8080/ready
-```
-
-## Stop
-
-```bash
-docker compose down
-```
-
-To also remove the DB volume:
-
-```bash
-docker compose down -v
-```
-
-## Notes
-
-- On startup, the app applies SQL files from `db/migrations` to the local Postgres container.
-- Migration state is tracked in the `schema_migrations` table.
-- LLM provider keys can be supplied via `.env` (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`).
-- `ALLOW_RULE_BASED_FALLBACK=true` keeps `/run` functional even when no provider key is configured.
-- Enable LLM debug traces when needed:
-  - `LLM_DEBUG_LOG=true` logs prompt input + provider response SQL to stdout as `llm_debug` events.
-  - `LLM_DEBUG_MAX_CHARS=16000` caps logged prompt/SQL size per field.
-- Pre-execution plan budget checks are enabled by default:
-  - `EXPLAIN_BUDGET_ENABLED=true`
-  - `EXPLAIN_MAX_TOTAL_COST=500000`
-  - `EXPLAIN_MAX_PLAN_ROWS=1000000`
-
-## Testing Data Sources
-
-For local test DB setup (dvdrental Docker fixture, AdventureWorks on SQL Server Express, and connection strings), see:
-
-- `test-data/README.md`
-
-## Current API (Implemented)
-
-Health:
-
-- `GET /health`
-- `GET /ready`
-
-Data sources and schema:
-
-- `GET /v1/data-sources`
-- `POST /v1/data-sources`
-- `POST /v1/data-sources/{id}/introspect`
-- `GET /v1/schema-objects?data_source_id=...`
-
-Semantic/admin:
-
-- `POST /v1/semantic-entities`
-- `POST /v1/metric-definitions`
-- `POST /v1/join-policies`
-
-Query sessions:
-
-- `POST /v1/query/sessions`
-- `POST /v1/query/sessions/{id}/run`
-- `POST /v1/query/sessions/{id}/feedback`
-
-`/v1/query/sessions/{id}/run` now returns:
-
-- `provider` (selected provider + model)
-- `confidence` (heuristic score)
-- `citations` (schema/semantic/metric/join context references)
-
-`/v1/query/sessions/{id}/feedback` now stores validated `corrected_sql` examples into `nl_sql_examples` (source=`feedback`) when valid.
-
-LLM provider config:
-
-- `POST /v1/llm/providers`
-- `POST /v1/llm/routing-rules`
-- `GET /v1/health/providers`
-
-Observability:
-
-- `GET /v1/observability/metrics?window_hours=24`
-- `GET /v1/observability/release-gates`
-- `GET /v1/observability/benchmark-command`
-- `POST /v1/observability/release-gates/report`
-- Each query run emits one `query_generation_diagnostics` JSON event correlated
-  by `request_id` and `session_id`. It contains bounded table IDs/counts,
-  expansion and fallback status, provider outcomes, stage latency, repair count,
-  prompt-size estimates, and token totals. It never includes the question,
-  prompt or SQL contents, query parameters, connection details, or raw provider
-  errors.
-- Optional OpenTelemetry OTLP/HTTP traces and metrics are disabled by default.
-  Set `OTEL_ENABLED=true` to initialize the Node SDK; invalid configuration or
-  exporter failures degrade safely without blocking application startup. See
-  [docs/observability/opentelemetry.md](docs/observability/opentelemetry.md) for
-  configuration, redaction defaults, and a local Collector setup.
-
-RAG:
-
-- `POST /v1/rag/reindex?data_source_id=...`
-- RAG reindex also runs automatically after introspection, semantic changes, and saved feedback examples.
-- `/v1/query/sessions/{id}/run` uses retrieved RAG chunks in prompt context and returns `citations.rag_documents`.
-- Retrieval is hybrid: PostgreSQL GIN-indexed lexical candidate selection,
-  embeddings, and deterministic reranking. Candidate work is bounded and
-  filtered by datasource, current RAG schema version, and optional document
-  type; recent current-version documents provide a deterministic local
-  fallback when lexical search has too few matches.
-- Table-card and schema-graph artifacts use a bounded in-memory cache keyed by
-  datasource and current RAG schema version. Reindex entrypoints invalidate all
-  artifact kinds immediately, and a completed reindex naturally moves reads to
-  the new version key.
-- Few-shot examples are validated against the current datasource schema during
-  reindexing. Prompt selection excludes stale, unsafe, schema-incompatible, and
-  low-quality feedback examples, removes near duplicates, and enforces count
-  and character budgets. Query diagnostics report the selected example count,
-  and MVP benchmark reports stratify accuracy and repair rate by example usage.
-- Embeddings:
-  - `RAG_EMBED_PROVIDER=auto|openai|gemini|local`
-  - `RAG_EMBED_MODEL_OPENAI=text-embedding-3-small`
-  - `RAG_EMBED_MODEL_GEMINI=text-embedding-004`
-  - falls back to local hash embeddings when provider embeddings are unavailable.
-
-Quick provider setup example:
-
-```bash
-curl -X POST http://localhost:8080/v1/llm/providers \
-  -H 'Content-Type: application/json' \
-  -d '{"provider":"openai","api_key_ref":"env:OPENAI_API_KEY","default_model":"gpt-4.1-mini","enabled":true}'
-```
-
-## MVP Benchmark (Phase 5)
-
-Benchmark assets:
-
-- Dataset: `docs/evals/dvdrental-mvp-benchmark.json` (60 reporting prompts)
-- Large-schema fixture: `docs/evals/large-schema-linking-benchmark.json` (300 distractor tables plus multi-hop, wide-table, paraphrase, and ambiguity cases)
-- Runner: `app/src/benchmark/runMvpBenchmark.ts`
-
-Recommended flow with the dvdrental fixture:
-
-```bash
-# 1) Start dvdrental test DB (see test-data/README.md for connection strings)
-docker compose -f test-data/docker-compose.yml up -d
-
-# 2) Start app stack (metadata DB + API)
-docker compose up --build -d
-
-# 3) Run benchmark
-BENCHMARK_DATA_SOURCE_NAME=dvdrental \
-BENCHMARK_CONNECTION_REF=postgresql://postgres:postgres@host.docker.internal:5440/dvdrental \
-BENCHMARK_ORACLE_CONN=postgresql://postgres:postgres@localhost:5440/dvdrental \
-npm run benchmark:mvp
-```
-
-The provider-free schema-linking comparison can be run without databases or API keys:
-
-```bash
-npm run benchmark:large-schema
-```
-
-This command is also a required backend CI gate. It exits with code `2` when
-table recall@15 falls below 95%, join-path accuracy falls below 100%, table
-recall no longer improves over the legacy global prompt, or the hierarchical
-prompt is no longer smaller than the legacy prompt. The JSON output includes
-`gate_diagnostics` with the pipeline stage, metric, actual value, comparator,
-and target for every gate; failed gates are also printed as concise stderr
-messages. Runtime fallback, repair, and request-correlation diagnostics are
-tracked separately from this provider-free schema-linking benchmark.
-The CI profile repeats the retrieval/linking cases with 100, 300, and 1,000
-distractor tables. Every size must preserve at least 95% table recall, 100%
-join-path accuracy, at most 15 candidates, and p95 linking latency below 250ms.
-
-Note: on first initialization of `test-data`, the restore script shifts all `date`/`timestamp` fields by dynamic offsets so the latest rental and latest payment land around yesterday (relative to system time), then caps shifted values at current system date/time to avoid future-dated rows.
-
-Report outputs:
-
-- JSON and Markdown reports in `docs/evals/reports`
-- Benchmark summary is also persisted to the app DB via `POST /v1/observability/release-gates/report`
-- Runner exits with code `2` when one or more MVP release gates fail.
-- Reports include table recall@15, join-path accuracy, repair rate, prompt size,
-  schema-size/complexity stratification, and a legacy-global versus hierarchical comparison.
-- The provider-backed MVP release gates also require rule-based fallback on at
-  most 10% of successful runs and successful repair on at least 80% of runs
-  where repair is attempted.
-  A run with no repair attempts reports repair success as `null` and does not
-  fail the repair gate.
-
-Progress tracker:
-
-- `IMPLEMENTATION_PLAN.md`
+Licensed under the [MIT License](LICENSE).
