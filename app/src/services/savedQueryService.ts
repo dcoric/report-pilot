@@ -317,11 +317,11 @@ export async function listSavedQueries(dataSourceId: unknown, tag: unknown, { ca
         WHERE ($1::uuid IS NULL OR sq.data_source_id = $1::uuid)
           AND ($2::text IS NULL OR $2::text = ANY(sq.tags))
           AND (
-            sq.owner_id = $3
+            sq.owner_id = $3::text
             OR sq.visibility = 'shared'
             OR EXISTS (
               SELECT 1 FROM saved_query_shares s
-              WHERE s.saved_query_id = sq.id AND s.user_id = $3
+              WHERE s.saved_query_id = sq.id AND s.user_id = $3::uuid
             )
           )
         ORDER BY sq.updated_at DESC, sq.created_at DESC
