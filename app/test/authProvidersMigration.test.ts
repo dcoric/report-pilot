@@ -21,3 +21,18 @@ test("0017_auth_providers creates the auth_providers table", () => {
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_providers_name_lower/i);
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_auth_providers_enabled/i);
 });
+
+test("0031_auth_provider_types expands provider storage without enabling unimplemented types", () => {
+  const migrationPath = path.resolve(__dirname, "../../db/migrations/0031_auth_provider_types.sql");
+  const sql = fs.readFileSync(migrationPath, "utf8");
+
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS provider_config JSONB NOT NULL DEFAULT '\{\}'::jsonb/i);
+  assert.match(sql, /CHECK \(jsonb_typeof\(provider_config\) = 'object'\)/i);
+  assert.match(sql, /CHECK \(type = 'oidc' OR enabled = FALSE\)/i);
+  assert.match(sql, /ALTER COLUMN issuer DROP NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN client_id DROP NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN scopes DROP NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN redirect_uri DROP NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN claims_mapping DROP NOT NULL/i);
+  assert.match(sql, /CHECK \(type IN \('oidc', 'saml', 'ldap', 'ad', 'pd'\)\)/i);
+});

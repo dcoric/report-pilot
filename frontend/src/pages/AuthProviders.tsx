@@ -32,7 +32,7 @@ export function AuthProviders() {
         setIsLoading(true);
         try {
             const { data } = await client.GET('/v1/admin/auth-providers');
-            setItems(data?.items ?? []);
+            setItems((data?.items ?? []).filter((provider) => (provider.type ?? 'oidc') === 'oidc'));
         } finally {
             setIsLoading(false);
         }
@@ -167,7 +167,7 @@ export function AuthProviders() {
                                         <div className="font-medium text-gray-900">{provider.display_name || provider.name}</div>
                                         <div className="text-xs text-gray-500">{provider.name} · {(provider.type || 'oidc').toUpperCase()}</div>
                                     </div>
-                                    <div className="col-span-3 truncate text-xs text-gray-600" title={provider.issuer}>
+                                    <div className="col-span-3 truncate text-xs text-gray-600" title={provider.issuer ?? undefined}>
                                         {provider.issuer}
                                     </div>
                                     <div className="col-span-2">

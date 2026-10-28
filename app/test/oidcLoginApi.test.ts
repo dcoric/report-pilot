@@ -17,12 +17,13 @@ import { createMockOidcIdp } from "./helpers/mockOidcIdp";
 import type { MockOidcIdp } from "./helpers/mockOidcIdp";
 import type { ProviderRow } from "../src/services/authProviderService";
 import type { ApiSchema } from "../src/types";
+import type { AuthProviderType } from "../src/types/domain";
 
 type OidcProviderListResponse = ApiSchema<"OidcProviderLoginListResponse">;
 
 interface SeedProviderInput {
   id?: string;
-  type?: string;
+  type?: AuthProviderType;
   name: string;
   display_name?: string | null;
   issuer: string;
@@ -199,7 +200,7 @@ before(async () => {
     }
 
     if (n.startsWith("select id, name, display_name, type from auth_providers where enabled = true")) {
-      const rows = [...providers.values()].filter((p) => p.enabled).map((p) => ({
+      const rows = [...providers.values()].filter((p) => p.enabled && p.type === "oidc").map((p) => ({
         id: p.id,
         name: p.name,
         display_name: p.display_name,
@@ -215,14 +216,14 @@ before(async () => {
 
     if (n.startsWith("insert into auth_providers")) {
       const [type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
-        string,
-        string,
-        string | null,
-        string,
+        AuthProviderType,
         string,
         string | null,
-        string[],
-        string,
+        string | null,
+        string | null,
+        string | null,
+        string[] | null,
+        string | null,
         string,
         boolean
       ];
@@ -231,8 +232,8 @@ before(async () => {
         const err = Object.assign(new Error("duplicate name"), { code: "23505" }); throw err;
       }
       const row = seedProvider({
-        type, name, display_name: displayName, issuer: providerIssuer, client_id: clientId,
-        client_secret: clientSecret, scopes, redirect_uri: redirectUri,
+        type, name, display_name: displayName, issuer: providerIssuer ?? "", client_id: clientId ?? "",
+        client_secret: clientSecret, scopes: scopes ?? ["openid", "email", "profile"], redirect_uri: redirectUri ?? "",
         claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown>, enabled
       });
       return { rowCount: 1, rows: [row] };
@@ -241,14 +242,14 @@ before(async () => {
     if (n.startsWith("update auth_providers")) {
       const [id, type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
         string,
-        string,
-        string,
-        string | null,
-        string,
+        AuthProviderType,
         string,
         string | null,
-        string[],
-        string,
+        string | null,
+        string | null,
+        string | null,
+        string[] | null,
+        string | null,
         string,
         boolean
       ];
@@ -345,6 +346,14 @@ test("GET /v1/auth/oidc/providers exposes only enabled providers, no secrets", a
     redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
     enabled: false
   });
+  const enabledNonOidc = seedProvider({
+    name: "directory",
+    type: "ldap",
+    issuer,
+    client_id: "directory-client",
+    redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
+    enabled: true
+  });
 
   const result = await call<OidcProviderListResponse>("GET", "/v1/auth/oidc/providers");
   assert.equal(result.status, 200);
@@ -354,6 +363,22 @@ test("GET /v1/auth/oidc/providers exposes only enabled providers, no secrets", a
   assert.equal(item.id, provider.id);
   assert.equal(item.display_name, "Okta SSO");
   assert.equal("client_secret" in item, false);
+  assert.equal(result.payload.items?.some((entry) => entry.id === enabledNonOidc.id), false);
+});
+
+test("OIDC login rejects an enabled non-OIDC provider", async () => {
+  const provider = seedProvider({
+    name: "directory",
+    type: "ldap",
+    issuer,
+    client_id: idp.clientId,
+    client_secret: idp.clientSecret,
+    redirect_uri: `${baseUrl}/v1/auth/oidc/callback`,
+    enabled: true
+  });
+
+  const result = await call<ErrorPayload>("GET", `/v1/auth/oidc/login?provider_id=${provider.id}`);
+  assert.equal(result.status, 404);
 });
 
 test("OIDC login flow: start → IdP authorize → callback → session cookie", async () => {

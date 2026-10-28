@@ -17,22 +17,25 @@ import { createMockOidcIdp } from "./helpers/mockOidcIdp";
 import type { MockOidcIdp } from "./helpers/mockOidcIdp";
 import type { ProviderRow } from "../src/services/authProviderService";
 import type { ApiSchema, AuthProvider } from "../src/types";
+import type { AuthProviderType } from "../src/types/domain";
 
 type AuthProviderListResponse = ApiSchema<"AuthProviderListResponse">;
 type AuthProviderTestResult = ApiSchema<"AuthProviderTestResult">;
+type AuthProviderResponse = AuthProvider & { provider_config?: Record<string, unknown> };
 
 interface SeedProviderInput {
   id?: string;
-  type?: string;
+  type?: AuthProviderType;
   name: string;
   display_name?: string | null;
-  issuer: string;
-  client_id: string;
+  issuer?: string | null;
+  client_id?: string | null;
   client_secret?: string | null;
-  scopes?: string[];
-  redirect_uri: string;
-  claims_mapping?: Record<string, unknown>;
+  scopes?: string[] | null;
+  redirect_uri?: string | null;
+  claims_mapping?: Record<string, unknown> | null;
   enabled?: boolean;
+  provider_config?: Record<string, unknown>;
 }
 
 interface ErrorPayload {
@@ -54,6 +57,7 @@ let providers: Map<string, ProviderRow>;
 let providerCounter: number;
 let adminCookie: string;
 let analystCookie: string;
+let lastInsertedProviderConfig: unknown;
 
 function normalize(sql: string) {
   return String(sql).replace(/\s+/g, " ").trim().toLowerCase();
@@ -73,14 +77,15 @@ function seedProvider(row: SeedProviderInput): ProviderRow {
     id: row.id || nextProviderId(),
     type: row.type || "oidc",
     name: row.name,
-    display_name: row.display_name || null,
-    issuer: row.issuer,
-    client_id: row.client_id,
+    display_name: row.display_name ?? null,
+    issuer: row.issuer ?? null,
+    client_id: row.client_id ?? null,
     client_secret: row.client_secret || null,
-    scopes: row.scopes || ["openid", "email", "profile"],
-    redirect_uri: row.redirect_uri,
-    claims_mapping: row.claims_mapping || {},
+    scopes: row.scopes === undefined ? ["openid", "email", "profile"] : row.scopes,
+    redirect_uri: row.redirect_uri ?? null,
+    claims_mapping: row.claims_mapping === undefined ? {} : row.claims_mapping,
     enabled: row.enabled !== false,
+    provider_config: row.provider_config,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -143,18 +148,20 @@ before(async () => {
     }
 
     if (n.startsWith("insert into auth_providers")) {
-      const [type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
-        string,
-        string,
-        string | null,
-        string,
+      const [type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled, providerConfigJson] = params as [
+        AuthProviderType,
         string,
         string | null,
-        string[],
+        string | null,
+        string | null,
+        string | null,
+        string[] | null,
+        string | null,
         string,
-        string,
-        boolean
+        boolean,
+        string
       ];
+      lastInsertedProviderConfig = JSON.parse(providerConfigJson);
       const existing = [...providers.values()].find((p) => p.name.toLowerCase() === String(name).toLowerCase());
       if (existing) {
         const err = Object.assign(new Error("duplicate name"), { code: "23505" }); throw err;
@@ -162,24 +169,28 @@ before(async () => {
       const row = seedProvider({
         type, name, display_name: displayName, issuer: providerIssuer, client_id: clientId,
         client_secret: clientSecret, scopes, redirect_uri: redirectUri,
-        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown>, enabled
+        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown> | null,
+        provider_config: JSON.parse(providerConfigJson) as Record<string, unknown>,
+        enabled
       });
       return { rowCount: 1, rows: [row] };
     }
 
     if (n.startsWith("update auth_providers")) {
-      const [id, type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled] = params as [
+      const [id, type, name, displayName, providerIssuer, clientId, clientSecret, scopes, redirectUri, claimsMappingJson, enabled, providerConfigSupplied, providerConfigJson] = params as [
         string,
-        string,
-        string,
-        string | null,
-        string,
+        AuthProviderType,
         string,
         string | null,
-        string[],
+        string | null,
+        string | null,
+        string | null,
+        string[] | null,
+        string | null,
         string,
-        string,
-        boolean
+        boolean,
+        boolean,
+        string
       ];
       const existing = providers.get(id);
       if (!existing) return { rowCount: 0, rows: [] };
@@ -188,8 +199,9 @@ before(async () => {
         type, name, display_name: displayName, issuer: providerIssuer, client_id: clientId,
         client_secret: clientSecret === null ? existing.client_secret : clientSecret,
         scopes, redirect_uri: redirectUri,
-        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown>,
+        claims_mapping: JSON.parse(claimsMappingJson) as Record<string, unknown> | null,
         enabled,
+        provider_config: providerConfigSupplied ? JSON.parse(providerConfigJson) as Record<string, unknown> : existing.provider_config,
         updated_at: new Date().toISOString()
       };
       providers.set(id, next);
@@ -215,6 +227,7 @@ before(async () => {
 beforeEach(() => {
   providers.clear();
   providerCounter = 0;
+  lastInsertedProviderConfig = undefined;
 });
 
 after(async () => {
@@ -265,6 +278,22 @@ test("admin can create, list, update, and delete auth providers; client_secret i
 
   const del = await call("DELETE", `/v1/admin/auth-providers/${create.payload.id}`, { cookie: adminCookie });
   assert.equal(del.status, 200);
+});
+
+test("OIDC provider defaults preserve a null omitted display name", async () => {
+  const result = await call<AuthProvider>("POST", "/v1/admin/auth-providers", {
+    cookie: adminCookie,
+    body: {
+      type: "oidc",
+      name: "okta-default-display",
+      issuer,
+      client_id: idp.clientId,
+      redirect_uri: `${baseUrl}/v1/auth/oidc/callback`
+    }
+  });
+
+  assert.equal(result.status, 201);
+  assert.equal(result.payload.display_name, null);
 });
 
 test("auth provider validation surfaces field-level errors", async () => {
@@ -331,6 +360,88 @@ test("auth provider validation surfaces field-level errors", async () => {
   assert.equal(dup.status, 409);
 });
 
+test("admin can create a disabled non-OIDC provider with redacted nested provider config", async () => {
+  const providerConfig = {
+    token_endpoint: "https://login.example.com/oauth/token",
+    token_type: "Bearer",
+    token_value: "token-value",
+    token_values: ["token-value-a", "token-value-b"],
+    api_token_value: "api-token-value",
+    refresh_tokens: ["refresh-token-a", "refresh-token-b"],
+    api_key: "api-key-value",
+    nested: {
+      client_secret: "nested-secret",
+      display_name: "keep this value",
+      accessToken: "nested-token",
+      token_value: "nested-token-value",
+      access_token_values: ["nested-token-value-a", "nested-token-value-b"],
+      api_token_value: "nested-api-token-value",
+      refresh_tokens: ["nested-refresh-token"]
+    }
+  };
+
+  const result = await call<AuthProviderResponse>("POST", "/v1/admin/auth-providers", {
+    cookie: adminCookie,
+    body: {
+      type: "ldap",
+      name: "directory",
+      provider_config: providerConfig
+    }
+  });
+
+  assert.equal(result.status, 201);
+  assert.equal(result.payload.enabled, false);
+  assert.equal(result.payload.issuer, null);
+  assert.equal(result.payload.client_id, null);
+  assert.equal(result.payload.scopes, null);
+  assert.equal(result.payload.redirect_uri, null);
+  assert.equal(result.payload.claims_mapping, null);
+  assert.deepEqual(lastInsertedProviderConfig, providerConfig);
+  assert.deepEqual(result.payload.provider_config, {
+    token_endpoint: "https://login.example.com/oauth/token",
+    token_type: "Bearer",
+    token_value: "***",
+    token_values: "***",
+    api_token_value: "***",
+    refresh_tokens: "***",
+    api_key: "***",
+    nested: {
+      client_secret: "***",
+      display_name: "keep this value",
+      accessToken: "***",
+      token_value: "***",
+      access_token_values: "***",
+      api_token_value: "***",
+      refresh_tokens: "***"
+    }
+  });
+
+  const update = await call<AuthProviderResponse>("POST", "/v1/admin/auth-providers", {
+    cookie: adminCookie,
+    body: {
+      id: result.payload.id,
+      type: "ldap",
+      name: "directory"
+    }
+  });
+  assert.equal(update.status, 200);
+  assert.deepEqual(update.payload.provider_config, result.payload.provider_config);
+});
+
+test("admin rejects explicit activation of an unimplemented provider", async () => {
+  const result = await call<ErrorPayload>("POST", "/v1/admin/auth-providers", {
+    cookie: adminCookie,
+    body: {
+      type: "saml",
+      name: "saml-disabled",
+      enabled: true
+    }
+  });
+
+  assert.equal(result.status, 400);
+  assert.match(result.payload.message, /not implemented|disabled/i);
+});
+
 test("POST .../test returns discovery metadata for a reachable provider", async () => {
   const provider = seedProvider({
     name: "okta",
@@ -363,6 +474,21 @@ test("POST .../test reports failure with the error message when discovery fails"
   assert.equal(result.status, 200);
   assert.equal(result.payload.ok, false);
   assert.ok(typeof result.payload.error === "string" && result.payload.error.length > 0);
+});
+
+test("POST .../test rejects an unimplemented provider before OIDC discovery", async () => {
+  const provider = seedProvider({
+    type: "ldap",
+    name: "directory",
+    issuer,
+    client_id: idp.clientId,
+    client_secret: idp.clientSecret,
+    redirect_uri: `${baseUrl}/v1/auth/oidc/callback`
+  });
+
+  const result = await call<ErrorPayload>("POST", `/v1/admin/auth-providers/${provider.id}/test`, { cookie: adminCookie });
+  assert.equal(result.status, 400);
+  assert.match(result.payload.message, /not implemented|disabled/i);
 });
 
 test("test endpoint is admin-only and 404s for unknown providers", async () => {
