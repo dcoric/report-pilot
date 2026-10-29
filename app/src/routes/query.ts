@@ -48,7 +48,7 @@ const handleCreateSession: RouteHandler<CreateSessionRequest, CreateSessionRespo
     [userId, dataSourceId, question]
   );
 
-  return json(res, 201, { session_id: sessionResult.rows[0].id, status: "created" });
+  return json(res, 201, { session_id: sessionResult.rows[0].id, status: "created", parent_session_id: null });
 };
 
 const handlePromptHistory: RouteHandlerWithUrl = async (req, res, requestUrl) => {

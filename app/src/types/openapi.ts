@@ -3104,6 +3104,37 @@ export interface paths {
                         "application/json": components["schemas"]["CreateSessionResponse"];
                     };
                 };
+                /** @description Invalid parent_session_id, or the parent session belongs to a different data source */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description Data source not found, or parent session not found for this user */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError"];
+                    };
+                };
+                /** @description The parent session has no validated SQL to refine */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            error: "refinement_base_unavailable";
+                            message: string;
+                        };
+                    };
+                };
             };
         };
         delete?: never;
@@ -5130,14 +5161,25 @@ export interface components {
             row_count: number;
             duration_ms: number;
         };
+        ApiError: {
+            error: string;
+            message: string;
+        };
         CreateSessionRequest: {
             data_source_id: string;
             question: string;
+            /**
+             * Format: uuid
+             * @description Optional session whose latest validated SQL and prior questions are refined by this question. Must belong to the same user and data source.
+             */
+            parent_session_id?: string;
         };
         CreateSessionResponse: {
             session_id: string;
             /** @enum {string} */
             status: "created";
+            /** Format: uuid */
+            parent_session_id: string | null;
         };
         RunSessionRequest: {
             llm_provider?: string;

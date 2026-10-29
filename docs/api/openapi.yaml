@@ -1505,6 +1505,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateSessionResponse"
+        "400":
+          description: Invalid parent_session_id, or the parent session belongs to a different data source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Data source not found, or parent session not found for this user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: The parent session has no validated SQL to refine
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum: [refinement_base_unavailable]
+                  message:
+                    type: string
+                required: [error, message]
   /v1/query/sessions/{sessionId}/run:
     post:
       tags: [Query]
@@ -3592,6 +3617,14 @@ components:
         duration_ms:
           type: integer
       required: [sql, columns, rows, row_count, duration_ms]
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
     CreateSessionRequest:
       type: object
       properties:
@@ -3599,6 +3632,10 @@ components:
           type: string
         question:
           type: string
+        parent_session_id:
+          type: string
+          format: uuid
+          description: Optional session whose latest validated SQL and prior questions are refined by this question. Must belong to the same user and data source.
       required: [data_source_id, question]
     CreateSessionResponse:
       type: object
@@ -3608,7 +3645,11 @@ components:
         status:
           type: string
           enum: [created]
-      required: [session_id, status]
+        parent_session_id:
+          type: string
+          format: uuid
+          nullable: true
+      required: [session_id, status, parent_session_id]
     RunSessionRequest:
       type: object
       properties:
