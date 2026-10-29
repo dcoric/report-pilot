@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-    Bell,
     BookOpen,
     Bookmark,
     ChevronDown,
@@ -24,6 +23,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { WorkspaceActionsProvider } from '../../contexts/WorkspaceActionsContext';
 import { useWorkspaceActions } from '../../contexts/useWorkspaceActions';
 import appLogo from '../../assets/report-pilot.png';
+import { AccountMenu } from './AccountMenu';
 
 type NavEntry = {
     path: string;
@@ -39,12 +39,13 @@ const PRIMARY_NAV: NavEntry[] = [
     { path: '/queries', label: 'Queries', icon: Terminal, permission: 'saved_queries.read' },
     { path: '/prompts', label: 'Prompts', icon: Bookmark, permission: 'users.read_self' },
     { path: '/data-sources', label: 'Datasets', icon: Database, permission: 'data_sources.read' },
-    { path: '/folders', label: 'Folders', icon: FolderClosed, stub: true },
+    { path: '/folders', label: 'Folders', icon: FolderClosed, permission: 'saved_queries.read' },
     { path: '/favorites', label: 'Favorites', icon: Star, stub: true },
     { path: '/recent', label: 'Recent', icon: History, stub: true },
 ];
 
 const ADMIN_NAV: NavEntry[] = [
+    { path: '/llm-providers', label: 'LLM Providers', icon: KeyRound, permission: 'providers.read' },
     { path: '/admin/auth-providers', label: 'Auth Providers', icon: KeyRound, role: 'admin' },
     { path: '/admin/audit-log', label: 'Audit Log', icon: FileSearch, role: 'admin' },
 ];
@@ -93,6 +94,7 @@ function NavItem({ to, label, Icon, stub }: { to: string; label: string; Icon: t
 
 function HeaderInner() {
     const location = useLocation();
+    const navigate = useNavigate();
     const {
         dataSources,
         selectedDataSourceId,
@@ -188,15 +190,12 @@ function HeaderInner() {
             </div>
 
             <div className="flex items-center gap-2">
-                <button type="button" className="rounded p-2 text-slate-500 hover:bg-slate-100" title="Notifications">
-                    <Bell size={18} />
-                </button>
-                <button type="button" className="rounded p-2 text-slate-500 hover:bg-slate-100" title="Settings">
+                <button type="button" onClick={() => navigate('/settings')} className="rounded p-2 text-slate-500 hover:bg-slate-100" title="Settings" aria-label="Settings">
                     <SettingsIcon size={18} />
                 </button>
-                <button type="button" className="rounded p-2 text-slate-500 hover:bg-slate-100" title="Help">
+                <a href="https://github.com/dcoric/report-pilot/blob/main/docs/getting-started.md" target="_blank" rel="noopener noreferrer" className="rounded p-2 text-slate-500 hover:bg-slate-100" title="Help" aria-label="Help (opens in a new tab)">
                     <HelpCircle size={18} />
-                </button>
+                </a>
                 <div className="mx-1 h-6 w-px bg-outline-variant" />
                 {actions.onExecute && (
                     <button
@@ -208,9 +207,7 @@ function HeaderInner() {
                         {actions.isExecuting ? 'Running…' : 'Execute'}
                     </button>
                 )}
-                <div className="ml-2 flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-outline-variant bg-amber-accent-soft text-xs font-semibold text-on-surface">
-                    DC
-                </div>
+                <AccountMenu />
             </div>
         </header>
     );

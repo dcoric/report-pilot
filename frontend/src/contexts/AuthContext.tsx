@@ -21,6 +21,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
+        // Refresh sets state only after the session request resolves.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         void refresh();
     }, [refresh]);
 
@@ -65,13 +67,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     const logout = useCallback(async () => {
-        try {
-            await client.POST('/v1/auth/logout');
-        } finally {
-            setUser(null);
-            setExpiresAt(null);
-            setStatus('unauthenticated');
+        const { response } = await client.POST('/v1/auth/logout');
+        if (!response.ok && response.status !== 401) {
+            throw new Error(`Sign-out failed (${response.status}).`);
         }
+        setUser(null);
+        setExpiresAt(null);
+        setStatus('unauthenticated');
     }, []);
 
     const roles = useMemo(() => user?.roles ?? [], [user]);

@@ -97,7 +97,7 @@ function App() {
                 </RequireAuth>
               )}
             />
-            <Route path="/folders" element={<ComingSoon />} />
+            <Route path="/folders" element={<RequireAuth permission="saved_queries.read"><SavedQueries /></RequireAuth>} />
             <Route path="/favorites" element={<ComingSoon />} />
             <Route path="/recent" element={<ComingSoon />} />
             <Route path="/docs" element={<ComingSoon />} />

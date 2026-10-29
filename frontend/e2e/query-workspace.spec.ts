@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import type { components } from '../src/lib/api/types';
 
 const DATA_SOURCE_ID = '00000000-0000-4000-8000-000000000101';
 const USER_ID = '00000000-0000-4000-8000-000000000201';
@@ -22,6 +23,8 @@ const user = {
 
 async function installApiFixture(page: Page) {
     let authenticated = false;
+    let failLogout = false;
+    const folders: components['schemas']['SavedQueryFolderTreeNode'][] = [];
     let createdQuestion: string | null = null;
     let runSessionId: string | null = null;
 
@@ -42,6 +45,11 @@ async function installApiFixture(page: Page) {
         }
         if (path === '/v1/auth/oidc/providers') {
             return json({ items: [] });
+        }
+        if (path === '/v1/auth/logout' && method === 'POST') {
+            if (failLogout) return json({ message: 'Temporary failure' }, 503);
+            authenticated = false;
+            return json({ ok: true });
         }
         if (path === '/v1/auth/login' && method === 'POST') {
             authenticated = true;
@@ -76,6 +84,18 @@ async function installApiFixture(page: Page) {
         if (path === '/v1/saved-queries') {
             return json({ items: [] });
         }
+        if (path === '/v1/saved-query-folders') {
+            if (method === 'POST') {
+                const input = request.postDataJSON() as { name: string; parent_id: string | null };
+                const folder = {
+                    id: '00000000-0000-4000-8000-000000000601', ...input, owner_id: USER_ID,
+                    created_at: '2026-10-29T00:00:00.000Z', updated_at: '2026-10-29T00:00:00.000Z', children: [],
+                };
+                folders.push(folder);
+                return json(folder, 201);
+            }
+            return json({ items: folders, tree: folders });
+        }
         if (path === '/v1/query/prompts/history') {
             return json({ items: [] });
         }
@@ -109,6 +129,7 @@ async function installApiFixture(page: Page) {
     });
 
     return {
+        setFailLogout: (value: boolean) => { failLogout = value; },
         getCreatedQuestion: () => createdQuestion,
         getRunSessionId: () => runSessionId,
     };
@@ -158,4 +179,49 @@ test('signs in and completes the natural-language query flow', async ({ page }) 
     await expectNoWcagViolations(page);
     expect(api.getCreatedQuestion()).toBe(question);
     expect(api.getRunSessionId()).toBe(SESSION_ID);
+});
+
+test('account controls, folder creation and sign-out work from the active shell', async ({ page }) => {
+    const api = await installApiFixture(page);
+    await page.goto('/folders');
+    await page.getByLabel('Email').fill('analyst@example.com');
+    await page.getByLabel('Password').fill('Password123');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page).toHaveURL(/\/folders$/);
+    await expect(page.getByRole('heading', { name: 'Saved Queries', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'New folder', exact: true }).click();
+    await page.getByLabel('Name', { exact: true }).fill('Operations');
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(page.getByText('Operations', { exact: true }).first()).toBeVisible();
+    await page.reload();
+    await expect(page.getByText('Operations', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Folders', exact: true })).toHaveAttribute('aria-current', 'page');
+
+    const header = page.locator('header');
+    await expect(header.getByRole('link', { name: 'Help (opens in a new tab)' })).toHaveAttribute('href', 'https://github.com/dcoric/report-pilot/blob/main/docs/getting-started.md');
+    await expect(header.getByTitle('Notifications')).toHaveCount(0);
+    await header.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+
+    const avatar = page.getByLabel('Account menu for Test Analyst');
+    await expect(avatar).toHaveText('TA');
+    await avatar.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('Administrator', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeHidden();
+    await expect(avatar).toBeFocused();
+    await avatar.click();
+    await page.getByRole('link', { name: 'Account settings' }).click();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeHidden();
+    await avatar.click();
+    api.setFailLogout(true);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('Sign-out failed. Please try again.');
+    await expect(page).toHaveURL(/\/settings$/);
+    api.setFailLogout(false);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    await page.goto('/folders');
+    await expect(page).toHaveURL(/\/login$/);
 });
