@@ -224,7 +224,7 @@ function AppShellInner() {
     const NewQueryButton = useMemo(() => (
         <button
             type="button"
-            onClick={() => navigate('/query')}
+            onClick={() => navigate('/query', { state: { newQuery: Date.now() } })}
             disabled={!canRunQueries}
             title={canRunQueries ? undefined : 'Requires the query.run permission'}
             className="flex w-full items-center justify-center gap-2 rounded bg-oxblood py-2 text-sm font-medium text-white transition-colors hover:bg-oxblood-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-oxblood"
