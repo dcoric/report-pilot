@@ -34,6 +34,7 @@ export interface QueryDiagnosticInput {
   clarificationKind?: QueryClarification["kind"] | null;
   clarificationOptionCount?: number;
   dataSourceType?: string | null;
+  refinement?: { parentSessionId: string; ancestorCount: number } | null;
 }
 
 export interface QueryDiagnosticPayload {
@@ -91,6 +92,7 @@ export interface QueryDiagnosticPayload {
     repair: number;
     execution: number;
   };
+  refinement: { parent_session_id: string; ancestor_count: number } | null;
 }
 
 export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnosticPayload {
@@ -162,7 +164,13 @@ export function buildQueryDiagnostic(input: QueryDiagnosticInput): QueryDiagnost
       generation: generationLatency,
       repair: repairLatency,
       execution: boundedNumber(input.executionDurationMs || 0)
-    }
+    },
+    refinement: input.refinement
+      ? {
+        parent_session_id: input.refinement.parentSessionId,
+        ancestor_count: Math.max(0, Math.floor(input.refinement.ancestorCount))
+      }
+      : null
   };
 }
 

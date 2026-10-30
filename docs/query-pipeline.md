@@ -130,9 +130,16 @@ A repaired query must pass the checks again. The one-attempt budget is shared ac
 | --- | --- | --- |
 | New natural-language question | Full retrieval, linker, graph expansion, and SQL generation. | Static checks, note-column policy, adapter validation, PostgreSQL budget, and at most one eligible repair. |
 | Dry run | Same generation path. | Static checks and note-column policy; no adapter validation, EXPLAIN, or execution. |
+| Refinement follow-up | Session created with `parent_session_id`. Schema linking and RAG retrieval use the earlier requests plus the follow-up; the generation and repair prompts also receive the parent's current validated SQL. | Same checks, budget, and single repair as a new question. The parent SQL is prompt context only and is never executed directly. |
 | Cached prompt or edited SQL | `sql_override` skips linker and generation; loads datasource context with all non-ignored schema objects. | Same orchestration checks and optional budget, but no automatic repair. Its table allowlist is broader than a newly generated query's selected context. |
 | Saved-query run | Executes stored SQL with validated/bound parameters and saved-query access checks. | SQL normalization, schema-object allowlist, and adapter validation. Does not invoke the orchestration RAG-column policy, EXPLAIN budget, or repair loop. |
 | Export | Re-executes the latest successful attempt's stored SQL. | Direct adapter execution with a 100,000-row output setting. Does not repeat the orchestration validation or budget. It is a fresh query, not a snapshot of the displayed rows; an existing SQL LIMIT can still keep it smaller. |
+
+### Refining a previous result
+
+A follow-up such as "limit this to past 3 months" can refine the result on screen instead of starting over. The client creates a new session with `parent_session_id` set to the session whose result is shown. Creation checks that the parent belongs to the same user (otherwise `404`) and the same datasource (otherwise `400`), and that it has SQL that passed validation (otherwise `409 refinement_base_unavailable`).
+
+At run time the service walks the `parent_session_id` chain, oldest request first, up to 10 ancestors. The base SQL is the immediate parent's most recent attempt whose stored validation result has `ok = true`. Attempts rejected by validation, the EXPLAIN budget, or an exhausted repair are stored with `ok = false` and are skipped. A validated manual SQL edit on the parent counts as its current SQL. The prompt marks earlier requests and the base SQL as untrusted data and asks the model to apply the follow-up while keeping existing joins, filters, columns, grouping, and ordering. Each attempt's validation result records `refinement.parent_session_id` and `refinement.previous_question_count`, and the `query_generation_diagnostics` log event records the parent session and ancestor count.
 
 ## What should be strengthened first?
 

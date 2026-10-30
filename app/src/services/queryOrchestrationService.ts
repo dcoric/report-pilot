@@ -15,9 +15,11 @@ import {
   insertQueryAttempt,
   insertQueryResultMeta,
   loadQueryContext,
+  loadSessionRefinement,
   markSessionStatus,
   resolveSession,
-  validateRequestedProvider
+  validateRequestedProvider,
+  type SessionRefinement
 } from "./queryOrchestrationStore";
 import type { DbAdapter } from "../adapters/types";
 import { prepareQueryGenerationContext, type SchemaLinkingDiagnostics } from "./queryGenerationContextService";
@@ -33,6 +35,7 @@ import {
   loadResolvedClarificationOptionIds
 } from "./queryClarificationStore";
 import type { QueryClarification } from "./queryClarificationService";
+import type { SqlRefinementContext } from "./llmPromptBuilder";
 import { withTelemetrySpan } from "../lib/telemetry";
 
 const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
@@ -68,6 +71,7 @@ export interface QueryOrchestrationDependencies {
   recordPendingClarification: typeof recordPendingClarification;
   resolvePendingClarification: typeof resolvePendingClarification;
   loadResolvedClarificationOptionIds: typeof loadResolvedClarificationOptionIds;
+  loadSessionRefinement: typeof loadSessionRefinement;
 }
 
 const defaultDependencies: QueryOrchestrationDependencies = {
@@ -77,7 +81,8 @@ const defaultDependencies: QueryOrchestrationDependencies = {
   emitQueryDiagnostic,
   recordPendingClarification,
   resolvePendingClarification,
-  loadResolvedClarificationOptionIds
+  loadResolvedClarificationOptionIds,
+  loadSessionRefinement
 };
 
 function success<T>(body: T, statusCode = 200): OrchestrateResult<T> {
@@ -101,8 +106,21 @@ interface BuildValidationJsonInput {
     prompt_chars: number;
   }>;
   schemaLinking: SchemaLinkingDiagnostics | null;
+  refinement: SessionRefinement | null;
   noExecute: boolean;
   requestId?: string | null;
+}
+
+/**
+ * Schema linking needs the whole conversation: a follow-up such as
+ * "limit this to past 3 months" names no tables on its own.
+ */
+export function buildRefinementLinkingQuestion(previousQuestions: string[], followUp: string): string {
+  return [
+    "Earlier requests:",
+    ...previousQuestions.map((question, index) => `${index + 1}. ${question}`),
+    `Follow-up request: ${followUp}`
+  ].join("\n");
 }
 
 function buildResponseDiagnostics(
@@ -155,6 +173,12 @@ function buildValidationJson(input: BuildValidationJsonInput): Record<string, un
     provider_attempts: input.generationAttempts,
     repair_attempts: input.repairs,
     schema_linking: input.schemaLinking,
+    refinement: input.refinement
+      ? {
+        parent_session_id: input.refinement.parentSessionId,
+        previous_question_count: input.refinement.previousQuestions.length
+      }
+      : null,
     execution: {
       skipped: input.noExecute,
       reason: input.noExecute ? "no_execute" : null
@@ -213,6 +237,16 @@ async function orchestrateQueryRunInternal({
   if (!session) {
     return failure(404, { error: "not_found", message: "Session not found" });
   }
+
+  // Loaded separately from resolveSession so the refinement chain is read even
+  // when callers pass every session field and resolveSession skips the DB.
+  const refinement = await dependencies.loadSessionRefinement(sessionId);
+  const linkingQuestion = refinement
+    ? buildRefinementLinkingQuestion(refinement.previousQuestions, session.question)
+    : session.question;
+  const promptRefinement: SqlRefinementContext | null = refinement && refinement.baseSql
+    ? { previousQuestions: refinement.previousQuestions, baseSql: refinement.baseSql }
+    : null;
 
   if (!isSupportedDbType(session.db_type)) {
     return failure(400, {
@@ -276,14 +310,28 @@ async function orchestrateQueryRunInternal({
       executionDurationMs,
       clarificationKind: activeClarification?.kind || null,
       clarificationOptionCount: activeClarification?.options.length,
-      dataSourceType: sqlDialect
+      dataSourceType: sqlDialect,
+      refinement: refinement
+        ? { parentSessionId: refinement.parentSessionId, ancestorCount: refinement.previousQuestions.length }
+        : null
     });
   };
+
+  if (refinement && !promptRefinement && !sqlOverride) {
+    // Session creation requires validated parent SQL, so this only happens if
+    // that SQL disappeared. Refuse rather than answer the follow-up alone.
+    await markSessionStatus(sessionId, "failed");
+    emitTerminalDiagnostic("failed", "generation", "refinement_base_unavailable");
+    return failure(409, {
+      error: "refinement_base_unavailable",
+      message: "The parent session has no validated SQL to refine"
+    });
+  }
 
   if (sqlOverride) {
     [context, ragDocuments] = await Promise.all([
       loadQueryContext(session.data_source_id),
-      retrieveRagContext(session.data_source_id, session.question, { limit: 12 })
+      retrieveRagContext(session.data_source_id, linkingQuestion, { limit: 12 })
     ]);
   } else {
     let prepared;
@@ -297,7 +345,7 @@ async function orchestrateQueryRunInternal({
         "pipeline.stage": "schema_linking"
       }, () => dependencies.prepareQueryGenerationContext({
           dataSourceId: session.data_source_id,
-          question: session.question,
+          question: linkingQuestion,
           requestedProvider,
           requestedModel,
           requestId,
@@ -371,7 +419,8 @@ async function orchestrateQueryRunInternal({
         semanticEntities: context.semanticEntities,
         metricDefinitions: context.metricDefinitions,
         joinPolicies: context.joinPolicies,
-        ragDocuments
+        ragDocuments,
+        refinement: promptRefinement
       }));
 
       generatedSql = generation.sql;
@@ -449,6 +498,7 @@ async function orchestrateQueryRunInternal({
         generationAttempts,
         repairs,
         schemaLinking,
+        refinement,
         noExecute: Boolean(noExecute),
         requestId
       });
@@ -486,6 +536,7 @@ async function orchestrateQueryRunInternal({
               joinPolicies: context.joinPolicies,
               ragDocuments,
               repair: { previousSql, errors: validationErrors },
+              refinement: promptRefinement,
               stage: "repair"
             }));
           } catch (err) {
@@ -584,6 +635,7 @@ async function orchestrateQueryRunInternal({
                 joinPolicies: context.joinPolicies,
                 ragDocuments,
                 repair: { previousSql, errors: budget.errors },
+                refinement: promptRefinement,
                 stage: "repair"
               }));
             } catch (err) {

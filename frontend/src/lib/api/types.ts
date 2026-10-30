@@ -3177,7 +3177,7 @@ export interface paths {
                         "application/json": components["schemas"]["RunSessionResponse"];
                     };
                 };
-                /** @description The clarification is no longer pending for this session */
+                /** @description The clarification is no longer pending for this session, or a refinement session's parent no longer has validated SQL */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -3185,7 +3185,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** @enum {string} */
-                            error: "clarification_not_pending";
+                            error: "clarification_not_pending" | "refinement_base_unavailable";
                             message: string;
                         };
                     };

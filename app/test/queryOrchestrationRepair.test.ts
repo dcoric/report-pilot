@@ -12,14 +12,17 @@ import {
 import type { GenerateSqlWithRoutingInput, GenerateSqlWithRoutingResult } from "../src/services/llmSqlService";
 import type { DbAdapter } from "../src/adapters/types";
 import type { QueryDiagnosticInput } from "../src/services/queryDiagnosticsService";
+import type { SessionRefinement } from "../src/services/queryOrchestrationStore";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000101";
 const DATA_SOURCE_ID = "00000000-0000-4000-8000-000000000111";
 const TABLE_ID = "00000000-0000-4000-8000-000000000201";
 const ATTEMPT_ID = "00000000-0000-4000-8000-000000000301";
+const PARENT_SESSION_ID = "00000000-0000-4000-8000-000000000102";
 
 let originalQuery: typeof appDb.query;
 let insertedSql: string[];
+let insertedValidation: Array<Record<string, unknown>>;
 let statuses: string[];
 let emittedDiagnostics: QueryDiagnosticInput[];
 
@@ -29,6 +32,7 @@ before(() => {
     const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
     if (normalized.startsWith("insert into query_attempts")) {
       insertedSql.push(String(params[4]));
+      insertedValidation.push(params[5] as Record<string, unknown>);
       return normalized.includes("returning id")
         ? { rowCount: 1, rows: [{ id: ATTEMPT_ID }] }
         : { rowCount: 1, rows: [] };
@@ -46,6 +50,7 @@ before(() => {
 
 beforeEach(() => {
   insertedSql = [];
+  insertedValidation = [];
   statuses = [];
   emittedDiagnostics = [];
 });
@@ -188,6 +193,117 @@ test("resume refuses a valid current option when the session has no pending clar
   assert.equal(generationCalled, false);
 });
 
+const REFINEMENT: SessionRefinement = {
+  parentSessionId: PARENT_SESSION_ID,
+  previousQuestions: ["generate report for payments", "only refunded payments"],
+  baseSql: "SELECT payment_id, amount FROM public.payment WHERE amount < 0 LIMIT 100"
+};
+
+test("refinement sessions link schema on the combined question and pass refinement to generation and repair", async () => {
+  const linkingQuestions: string[] = [];
+  const generatorCalls: GenerateSqlWithRoutingInput[] = [];
+  const dependencies = dependenciesWithGenerator(async (input) => {
+    generatorCalls.push(input);
+    return input.stage === "repair"
+      ? generation("SELECT payment_id, amount FROM public.payment WHERE amount < 0", "repair")
+      : generation("DELETE FROM public.payment", "generation");
+  });
+  const prepare = dependencies.prepareQueryGenerationContext;
+  dependencies.prepareQueryGenerationContext = async (input, ...rest) => {
+    linkingQuestions.push(input.question);
+    return prepare(input, ...rest);
+  };
+  const refinementLookups: string[] = [];
+  dependencies.loadSessionRefinement = async (sessionId) => {
+    refinementLookups.push(sessionId);
+    return REFINEMENT;
+  };
+
+  const result = await orchestrateQueryRun({ ...baseInput(), question: "limit this to past 3 months" }, dependencies);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(refinementLookups, [SESSION_ID], "refinement loads even when every session field is passed in");
+  assert.deepEqual(linkingQuestions, [
+    "Earlier requests:\n1. generate report for payments\n2. only refunded payments\nFollow-up request: limit this to past 3 months"
+  ]);
+  assert.deepEqual(generatorCalls.map((call) => call.stage || "generation"), ["generation", "repair"]);
+  for (const call of generatorCalls) {
+    assert.equal(call.question, "limit this to past 3 months");
+    assert.deepEqual(call.refinement, {
+      previousQuestions: REFINEMENT.previousQuestions,
+      baseSql: REFINEMENT.baseSql
+    });
+  }
+  assert.equal(insertedValidation.length, 2);
+  for (const validation of insertedValidation) {
+    assert.deepEqual(validation.refinement, { parent_session_id: PARENT_SESSION_ID, previous_question_count: 2 });
+  }
+  assert.equal(insertedValidation[0].ok, false);
+  assert.equal(insertedValidation[1].ok, true);
+  assert.deepEqual(emittedDiagnostics[0].refinement, { parentSessionId: PARENT_SESSION_ID, ancestorCount: 2 });
+});
+
+test("refinement context survives a budget repair", async () => {
+  const generatorCalls: GenerateSqlWithRoutingInput[] = [];
+  const dependencies = dependenciesWithGenerator(async (input) => {
+    generatorCalls.push(input);
+    return input.stage === "repair"
+      ? generation("SELECT amount FROM public.payment WHERE amount < 0", "repair")
+      : generation("SELECT payment_id, amount FROM public.payment", "generation");
+  });
+  dependencies.loadSessionRefinement = async () => REFINEMENT;
+  dependencies.createDatabaseAdapter = () => fakeAdapter({
+    explain: async (sql) => [{
+      "QUERY PLAN": [{ Plan: { "Total Cost": sql.includes("payment_id") ? 1e12 : 1, "Plan Rows": 1 } }]
+    }]
+  });
+
+  const result = await orchestrateQueryRun({ ...baseInput(), noExecute: false }, dependencies);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(generatorCalls.map((call) => call.stage || "generation"), ["generation", "repair"]);
+  assert.equal(generatorCalls[1].refinement?.baseSql, REFINEMENT.baseSql);
+  assert.match(generatorCalls[1].repair?.errors.join(" ") || "", /cost/i);
+});
+
+test("non-refinement sessions keep the original question and no refinement context", async () => {
+  const linkingQuestions: string[] = [];
+  const generatorCalls: GenerateSqlWithRoutingInput[] = [];
+  const dependencies = dependenciesWithGenerator(async (input) => {
+    generatorCalls.push(input);
+    return generation("SELECT amount FROM public.payment", "generation");
+  });
+  const prepare = dependencies.prepareQueryGenerationContext;
+  dependencies.prepareQueryGenerationContext = async (input, ...rest) => {
+    linkingQuestions.push(input.question);
+    return prepare(input, ...rest);
+  };
+
+  const result = await orchestrateQueryRun(baseInput(), dependencies);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(linkingQuestions, ["What is total revenue?"]);
+  assert.equal(generatorCalls[0].refinement, null);
+  assert.equal(insertedValidation[0].refinement, null);
+  assert.equal(emittedDiagnostics[0].refinement, null);
+});
+
+test("refinement without validated base SQL fails closed before generation", async () => {
+  let generationCalled = false;
+  const dependencies = dependenciesWithGenerator(async () => {
+    generationCalled = true;
+    return generation("SELECT 1", "generation");
+  });
+  dependencies.loadSessionRefinement = async () => ({ ...REFINEMENT, baseSql: null });
+
+  const result = await orchestrateQueryRun(baseInput(), dependencies);
+
+  assert.equal(result.statusCode, 409);
+  assert.equal((result.body as { error: string }).error, "refinement_base_unavailable");
+  assert.equal(generationCalled, false);
+  assert.deepEqual(statuses, ["failed"]);
+});
+
 function baseInput() {
   return {
     sessionId: SESSION_ID,
@@ -239,6 +355,7 @@ function dependenciesWithGenerator(
     recordPendingClarification: async () => undefined,
     resolvePendingClarification: async () => true,
     loadResolvedClarificationOptionIds: async () => [],
+    loadSessionRefinement: async () => null,
     createDatabaseAdapter: () => {
       throw new Error("Adapter must not be created for no_execute tests");
     }

@@ -5,7 +5,7 @@ import {
   loadProviderConfigs,
   loadRoutingRule
 } from "./llmProviderRouting";
-import { buildSqlPrompt, buildSqlSystemPrompt } from "./llmPromptBuilder";
+import { buildSqlPrompt, buildSqlSystemPrompt, type SqlRefinementContext } from "./llmPromptBuilder";
 import { logLlmDebug, normalizeStatusCode, normalizeTokenUsage, type NormalizedTokenUsage } from "./llmDebug";
 
 export interface GenerateSqlWithRoutingInput {
@@ -26,6 +26,7 @@ export interface GenerateSqlWithRoutingInput {
     previousSql: string;
     errors: string[];
   } | null;
+  refinement?: SqlRefinementContext | null;
   stage?: "generation" | "repair";
 }
 
@@ -65,6 +66,7 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     joinPolicies,
     ragDocuments,
     repair,
+    refinement,
     stage = "generation"
   } = input;
 
@@ -82,13 +84,20 @@ export async function generateSqlWithRouting(input: GenerateSqlWithRoutingInput)
     metricDefinitions: metricDefinitions as never,
     joinPolicies: joinPolicies as never,
     ragDocuments: ragDocuments as never,
-    repair
+    repair,
+    refinement
   });
   logLlmDebug({
     stage: stage === "repair" ? "repair_request_compiled" : "request_compiled",
     request_id: input.requestId || null,
     data_source_id: dataSourceId,
     question,
+    refinement: refinement
+      ? {
+        previous_question_count: refinement.previousQuestions.length,
+        base_sql_chars: refinement.baseSql.length
+      }
+      : null,
     requested_provider: requestedProvider || null,
     requested_model: requestedModel || null,
     provider_order: providerOrder,
