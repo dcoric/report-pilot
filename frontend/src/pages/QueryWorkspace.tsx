@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import type { editor } from 'monaco-editor';
 import type { OnMount } from '@monaco-editor/react';
 import { Calendar, Database, Loader2, Play, Save, Share2, Timer } from 'lucide-react';
@@ -23,6 +23,7 @@ import type {
 } from '../components/Query/types';
 import { useDataSource } from '../hooks/useDataSource';
 import { usePromptHistory } from '../hooks/usePromptHistory';
+import { useRefinementChain, type RefinementCommit } from '../hooks/useRefinementChain';
 import { useSavedQueries } from '../hooks/useSavedQueries';
 import { useWorkspaceActions } from '../contexts/useWorkspaceActions';
 import { client } from '../lib/api/client';
@@ -75,6 +76,7 @@ function parseRunErrorPayload(error: unknown): QueryRunErrorPayload | null {
 
 export const QueryWorkspace = () => {
     const [searchParams, setSearchParams] = useSearchParams();
+    const location = useLocation();
     const {
         dataSources,
         selectedDataSourceId,
@@ -124,6 +126,11 @@ export const QueryWorkspace = () => {
     const [selectedClarificationOptionId, setSelectedClarificationOptionId] = useState<string | null>(null);
     const [isCancellingClarification, setIsCancellingClarification] = useState(false);
 
+    const { resultSessionId, refinementTurns, commitTurn, adoptSession, resetChain } = useRefinementChain(selectedDataSourceId);
+    // Ask that created the current session; committed to the chain once its run succeeds.
+    const pendingAskRef = useRef<RefinementCommit | null>(null);
+    const isRefining = Boolean(resultSessionId && queryResult);
+
     const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
     const selectedDataSource = dataSources.find((dataSource) => dataSource.id === selectedDataSourceId) || null;
     const sqlFormatterDialect: 'postgresql' | 'transactsql' =
@@ -160,12 +167,12 @@ export const QueryWorkspace = () => {
         setModel((currentModel) => currentModel || matchedProvider.default_model);
     }, [llmProviders, provider]);
 
-    const applyRunError = (error: unknown, options?: { updateOriginalSql?: boolean }) => {
+    const applyRunError = (error: unknown, options?: { updateOriginalSql?: boolean; preserveSql?: boolean }) => {
         const payload = parseRunErrorPayload(error);
         if (payload?.clarification) {
             setClarification(payload.clarification);
         }
-        if (payload?.sql) {
+        if (payload?.sql && !options?.preserveSql) {
             setGeneratedSql(payload.sql);
             if (options?.updateOriginalSql) {
                 setOriginalSql(payload.sql);
@@ -176,9 +183,14 @@ export const QueryWorkspace = () => {
 
     const generateSql = async (
         nextSessionId: string,
-        sqlOverride?: string,
-        clarificationOptionId?: string,
+        options: {
+            sqlOverride?: string;
+            clarificationOptionId?: string;
+            // Refinements keep the displayed SQL and result until a new result succeeds.
+            preserveResult?: boolean;
+        } = {},
     ): Promise<boolean> => {
+        const { sqlOverride, clarificationOptionId, preserveResult } = options;
         const { data, error } = await client.POST('/v1/query/sessions/{sessionId}/run', {
             params: { path: { sessionId: nextSessionId } },
             body: {
@@ -202,8 +214,10 @@ export const QueryWorkspace = () => {
         }
 
         if (error) {
-            setQueryResult(null);
-            const payload = applyRunError(error, { updateOriginalSql: true });
+            if (!preserveResult) {
+                setQueryResult(null);
+            }
+            const payload = applyRunError(error, { updateOriginalSql: true, preserveSql: preserveResult });
             if (payload?.clarification) {
                 setSelectedClarificationOptionId(null);
                 toast.info('Choose an interpretation to continue.');
@@ -215,10 +229,29 @@ export const QueryWorkspace = () => {
                 }
                 toast.error(payload?.message || 'Generation failed. Retry this interpretation.');
             } else {
-                toast.error(payload?.message || 'Failed to generate SQL');
+                toast.error(
+                    payload?.message || (preserveResult ? 'Could not refine the current result.' : 'Failed to generate SQL'),
+                    preserveResult ? { description: 'The previous result is still shown.' } : undefined,
+                );
             }
         }
         return false;
+    };
+
+    // Otherwise the deep-link effect would reload the saved query over the current result.
+    const clearSavedQueryDeepLink = () => {
+        if (searchParams.has('savedQueryId')) {
+            setSearchParams({}, { replace: true });
+        }
+    };
+
+    const completeAsk = (ask: RefinementCommit) => {
+        pendingAskRef.current = null;
+        commitTurn(ask);
+        setLoadedSavedQuery(null);
+        clearSavedQueryDeepLink();
+        // Keep anything typed while the request was in flight.
+        setQuestion((current) => (current.trim() === ask.question ? '' : current));
     };
 
     const handleAsk = async () => {
@@ -226,22 +259,40 @@ export const QueryWorkspace = () => {
             return;
         }
         const normalizedQuestion = question.trim();
-        const cachedSql = promptHistory.find((item) => item.question.trim() === normalizedQuestion && item.latest_sql)?.latest_sql || null;
+        const dataSourceId = selectedDataSourceId;
+        const parentSessionId = isRefining ? resultSessionId : null;
+        // Refinements build on the displayed SQL, so cached history SQL does not apply.
+        const cachedSql = parentSessionId
+            ? null
+            : promptHistory.find((item) => item.question.trim() === normalizedQuestion && item.latest_sql)?.latest_sql || null;
 
         setIsGenerating(true);
-        setGeneratedSql('');
-        setQueryResult(null);
         setClarification(null);
         setSelectedClarificationOptionId(null);
-        setLoadedSavedQuery(null);
+        pendingAskRef.current = null;
+        if (!parentSessionId) {
+            setGeneratedSql('');
+            setQueryResult(null);
+            setLoadedSavedQuery(null);
+            resetChain();
+        }
 
         try {
-            const { data, error } = await client.POST('/v1/query/sessions', {
-                body: { data_source_id: selectedDataSourceId, question },
+            const { data, error, response } = await client.POST('/v1/query/sessions', {
+                body: {
+                    data_source_id: dataSourceId,
+                    question: normalizedQuestion,
+                    ...(parentSessionId ? { parent_session_id: parentSessionId } : {}),
+                },
             });
 
             if (error) {
-                toast.error('Failed to generate SQL');
+                // The API client already toasts server messages for every status except 404.
+                const detail = response.status === 404 ? parseRunErrorPayload(error)?.message : undefined;
+                toast.error(
+                    parentSessionId ? 'Could not refine the current result.' : 'Failed to generate SQL',
+                    detail ? { description: detail } : undefined,
+                );
                 console.error(error);
                 return;
             }
@@ -249,8 +300,21 @@ export const QueryWorkspace = () => {
                 return;
             }
 
+            const ask: RefinementCommit = {
+                dataSourceId,
+                sessionId: data.session_id,
+                question: normalizedQuestion,
+                parentSessionId,
+            };
+            pendingAskRef.current = ask;
             setSessionId(data.session_id);
-            await generateSql(data.session_id, cachedSql || undefined);
+            const succeeded = await generateSql(data.session_id, {
+                sqlOverride: cachedSql || undefined,
+                preserveResult: Boolean(parentSessionId),
+            });
+            if (succeeded) {
+                completeAsk(ask);
+            }
             void fetchPromptHistory(false);
             if (cachedSql) {
                 toast.success('Used cached SQL from prompt history');
@@ -265,11 +329,18 @@ export const QueryWorkspace = () => {
 
     const handleClarificationSelect = async (optionId: string) => {
         if (!sessionId || resolvingOptionId || isCancellingClarification) return;
+        const pendingAsk = pendingAskRef.current?.sessionId === sessionId ? pendingAskRef.current : null;
         setResolvingOptionId(optionId);
         setIsGenerating(true);
         try {
-            const succeeded = await generateSql(sessionId, undefined, optionId);
+            const succeeded = await generateSql(sessionId, {
+                clarificationOptionId: optionId,
+                preserveResult: Boolean(pendingAsk?.parentSessionId),
+            });
             if (succeeded) {
+                if (pendingAsk) {
+                    completeAsk(pendingAsk);
+                }
                 toast.success(isDryRun ? 'Preview generated successfully' : 'Query executed successfully');
                 void fetchPromptHistory(false);
             }
@@ -296,6 +367,7 @@ export const QueryWorkspace = () => {
             setClarification(null);
             setSelectedClarificationOptionId(null);
             setSessionId(null);
+            pendingAskRef.current = null;
             toast.info('Clarification cancelled. Refine the question and ask again.');
         } catch (error) {
             console.error(error);
@@ -382,7 +454,9 @@ export const QueryWorkspace = () => {
 
         setIsRunning(true);
         try {
-            let nextSessionId = sessionId;
+            // Run on the session behind the displayed result so a later refinement
+            // builds on the edited SQL, not on a failed or pending refinement session.
+            let nextSessionId = resultSessionId ?? sessionId;
             if (!nextSessionId) {
                 const { data: sessionData, error: sessionError } = await client.POST('/v1/query/sessions', {
                     body: {
@@ -414,6 +488,11 @@ export const QueryWorkspace = () => {
                 setGeneratedSql(data.sql);
                 setOriginalSql(data.sql);
                 setQueryResult(data as RunResponse);
+                setSessionId(nextSessionId);
+                setClarification(null);
+                setSelectedClarificationOptionId(null);
+                pendingAskRef.current = null;
+                adoptSession(selectedDataSourceId, nextSessionId);
                 toast.success(data.preview ? 'Preview generated successfully' : 'Query executed successfully');
                 return;
             }
@@ -438,6 +517,8 @@ export const QueryWorkspace = () => {
         setSelectedDataSourceId(savedQuery.data_source_id);
         setQuestion('');
         setSessionId(null);
+        resetChain();
+        pendingAskRef.current = null;
         setGeneratedSql(savedQuery.sql);
         setOriginalSql(savedQuery.sql);
         setQueryResult(null);
@@ -499,7 +580,7 @@ export const QueryWorkspace = () => {
         });
         return () => setActions({});
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loadedSavedQuery, selectedDataSource, isRunning, generatedSql, selectedDataSourceId]);
+    }, [loadedSavedQuery, selectedDataSource, isRunning, generatedSql, selectedDataSourceId, sessionId, resultSessionId]);
 
     const handleCopy = async () => {
         try {
@@ -539,7 +620,31 @@ export const QueryWorkspace = () => {
         }
     };
 
+    const handleNewQuery = () => {
+        resetChain();
+        pendingAskRef.current = null;
+        setQuestion('');
+        setSessionId(null);
+        setGeneratedSql('');
+        setOriginalSql('');
+        setQueryResult(null);
+        setClarification(null);
+        setSelectedClarificationOptionId(null);
+        setLoadedSavedQuery(null);
+        clearSavedQueryDeepLink();
+    };
+
+    // The sidebar "New Query" button navigates here with a fresh token; start over even if already on this page.
+    const newQueryToken = (location.state as { newQuery?: number } | null)?.newQuery;
+    useEffect(() => {
+        if (newQueryToken) {
+            handleNewQuery();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [newQueryToken]);
+
     const handlePromptHistorySelect = (item: PromptHistoryItem) => {
+        resetChain();
         setQuestion(item.question);
         if (item.latest_sql) {
             setGeneratedSql(item.latest_sql);
@@ -725,6 +830,11 @@ export const QueryWorkspace = () => {
                     onPromptHistoryQueryChange={setPromptHistoryQuery}
                     onPromptHistorySelect={handlePromptHistorySelect}
                     onAsk={handleAsk}
+                    isRefining={isRefining}
+                    refinementTurns={refinementTurns}
+                    hasRefinementChain={Boolean(resultSessionId)}
+                    isRunning={isRunning}
+                    onNewQuery={handleNewQuery}
                 />
 
                 {clarification && (

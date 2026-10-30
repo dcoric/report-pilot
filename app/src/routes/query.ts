@@ -11,6 +11,7 @@ import { clamp, isUuid } from "../lib/validation";
 import { validateAndNormalizeSql } from "../services/sqlSafety";
 import ragService = require("../services/ragService");
 import { orchestrateQueryRun } from "../services/queryOrchestrationService";
+import { createQuerySession } from "../services/querySessionService";
 import { cancelPendingClarification } from "../services/queryClarificationStore";
 import { enforceDataSourceAccess, listAccessibleDataSourceIds } from "../lib/authGate";
 import type {
@@ -39,16 +40,21 @@ const handleCreateSession: RouteHandler<CreateSessionRequest, CreateSessionRespo
   }
 
   const userId = req.user && req.user.id ? req.user.id : "anonymous";
-  const sessionResult = await appDb.query<{ id: string }>(
-    `
-      INSERT INTO query_sessions (user_id, data_source_id, question, status)
-      VALUES ($1, $2, $3, 'created')
-      RETURNING id
-    `,
-    [userId, dataSourceId, question]
-  );
+  const created = await createQuerySession({
+    userId,
+    dataSourceId,
+    question,
+    parentSessionId: body.parent_session_id
+  });
+  if (!created.ok) {
+    return json(res, created.statusCode, { error: created.error, message: created.message });
+  }
 
-  return json(res, 201, { session_id: sessionResult.rows[0].id, status: "created" });
+  return json(res, 201, {
+    session_id: created.sessionId,
+    status: "created",
+    parent_session_id: created.parentSessionId
+  });
 };
 
 const handlePromptHistory: RouteHandlerWithUrl = async (req, res, requestUrl) => {

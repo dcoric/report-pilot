@@ -74,6 +74,74 @@ export async function resolveSession({ sessionId, question, dataSourceId, connec
   return sessionResult.rows[0] || null;
 }
 
+export const MAX_REFINEMENT_ANCESTORS = 10;
+
+export interface SessionRefinement {
+  parentSessionId: string;
+  previousQuestions: string[];
+  baseSql: string | null;
+}
+
+/**
+ * Latest SQL of a session that passed validation. Failed and repair-exhausted
+ * attempts are persisted with `validation_result_json.ok = false` (including
+ * EXPLAIN budget failures), so filtering on `ok` keeps only SQL that cleared
+ * every safety check. A manual `sql_override` run that validated counts too.
+ */
+export async function loadLatestValidatedSql(sessionId: string): Promise<string | null> {
+  const result = await appDb.query<{ generated_sql: string }>(
+    `
+      SELECT generated_sql
+      FROM query_attempts
+      WHERE session_id = $1
+        AND validation_result_json->>'ok' = 'true'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [sessionId]
+  );
+  return result.rows[0]?.generated_sql || null;
+}
+
+/**
+ * Walks `parent_session_id` from the given session. Returns null when the
+ * session is not a refinement. Questions are ordered oldest first and capped
+ * at MAX_REFINEMENT_ANCESTORS, which also guards against cycles. Base SQL
+ * comes from the immediate parent only.
+ */
+export async function loadSessionRefinement(sessionId: string): Promise<SessionRefinement | null> {
+  const ancestorsResult = await appDb.query<{ id: string; question: string; depth: number }>(
+    `
+      WITH RECURSIVE ancestors AS (
+        SELECT parent.id, parent.question, parent.parent_session_id, 1 AS depth
+        FROM query_sessions child
+        JOIN query_sessions parent ON parent.id = child.parent_session_id
+        WHERE child.id = $1
+        UNION ALL
+        SELECT parent.id, parent.question, parent.parent_session_id, ancestors.depth + 1
+        FROM ancestors
+        JOIN query_sessions parent ON parent.id = ancestors.parent_session_id
+        WHERE ancestors.depth < $2
+      )
+      SELECT id, question, depth
+      FROM ancestors
+      ORDER BY depth DESC
+    `,
+    [sessionId, MAX_REFINEMENT_ANCESTORS]
+  );
+
+  const ancestors = ancestorsResult.rows;
+  if (ancestors.length === 0) {
+    return null;
+  }
+  const parent = ancestors.find((row) => Number(row.depth) === 1) || ancestors[ancestors.length - 1];
+  return {
+    parentSessionId: parent.id,
+    previousQuestions: ancestors.map((row) => row.question),
+    baseSql: await loadLatestValidatedSql(parent.id)
+  };
+}
+
 export async function loadQueryContext(dataSourceId: string): Promise<QueryContext> {
   return loadQueryContextForObjects(dataSourceId, null);
 }

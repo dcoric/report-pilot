@@ -80,3 +80,33 @@ test("query diagnostics are bounded, correlated, and exclude sensitive content",
   assert.doesNotMatch(serialized, /secret/);
   assert.doesNotMatch(serialized, /question|sql|connection|parameter/i);
 });
+
+test("query diagnostics record refinement lineage without question or SQL content", () => {
+  const base = {
+    sessionId: "session-2",
+    outcome: "succeeded" as const,
+    terminalStage: "execution" as const,
+    durationMs: 10,
+    schemaLinkingDurationMs: 1,
+    schemaLinking: null,
+    expandedTableIds: [],
+    ragDocumentCount: 0,
+    ragExampleCount: 0,
+    provider: "openai",
+    model: "model",
+    providerAttempts: [],
+    repairCount: 0,
+    linkerPromptChars: 0,
+    generationPromptChars: 0,
+    repairPromptChars: 0,
+    tokenUsage: null
+  };
+
+  assert.equal(buildQueryDiagnostic(base).refinement, null);
+  const payload = buildQueryDiagnostic({
+    ...base,
+    refinement: { parentSessionId: "session-1", ancestorCount: 2 }
+  });
+  assert.deepEqual(payload.refinement, { parent_session_id: "session-1", ancestor_count: 2 });
+  assert.doesNotMatch(JSON.stringify(payload), /question|sql/i);
+});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { Bookmark, History, Loader2, Settings2, Sparkles } from 'lucide-react';
+import { Bookmark, History, Loader2, RotateCcw, Settings2, Sparkles } from 'lucide-react';
 import { PromptHistoryPanel } from './PromptHistoryPanel';
 import { RunSettingsPopover } from './RunSettingsPopover';
 import type { LlmProvider, PromptHistoryItem, PromptHistoryPosition } from './types';
@@ -36,6 +36,12 @@ interface PromptSectionProps {
     onPromptHistoryQueryChange: (value: string) => void;
     onPromptHistorySelect: (item: PromptHistoryItem) => void;
     onAsk: () => void;
+    // True when the next ask refines the displayed result instead of starting over.
+    isRefining: boolean;
+    refinementTurns: string[];
+    hasRefinementChain: boolean;
+    isRunning: boolean;
+    onNewQuery: () => void;
 }
 
 export function PromptSection({
@@ -66,6 +72,11 @@ export function PromptSection({
     onPromptHistoryQueryChange,
     onPromptHistorySelect,
     onAsk,
+    isRefining,
+    refinementTurns,
+    hasRefinementChain,
+    isRunning,
+    onNewQuery,
 }: PromptSectionProps) {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const canGenerate = !isGenerating && question.trim().length > 0 && Boolean(selectedDataSourceId);
@@ -106,6 +117,39 @@ export function PromptSection({
                     Dry run skips live database execution. You will get generated SQL, citations, and confidence only.
                 </div>
             )}
+            {(isRefining || hasRefinementChain) && (
+                <div className="mb-2 flex items-start justify-between gap-3">
+                    {isRefining ? (
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-slate-700">
+                            <span id="refinement-context-label" className="font-semibold">Refining:</span>
+                            {refinementTurns.length > 0 ? (
+                                <ol aria-labelledby="refinement-context-label" className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                    {refinementTurns.map((turn, index) => (
+                                        <li
+                                            key={`${index}-${turn}`}
+                                            title={turn}
+                                            className="max-w-xs truncate rounded-full border border-outline-variant bg-white px-2 py-0.5 text-slate-700"
+                                        >
+                                            {turn}
+                                        </li>
+                                    ))}
+                                </ol>
+                            ) : (
+                                <span className="text-slate-600">the current result</span>
+                            )}
+                        </div>
+                    ) : <span />}
+                    <button
+                        type="button"
+                        onClick={onNewQuery}
+                        disabled={isGenerating || isRunning}
+                        className="flex shrink-0 items-center gap-1 rounded border border-outline-variant bg-white px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <RotateCcw size={12} aria-hidden="true" />
+                        New query
+                    </button>
+                </div>
+            )}
             <div className="relative flex items-center">
                 <Sparkles size={16} className="absolute left-3 text-amber-accent" />
                 <input
@@ -120,7 +164,10 @@ export function PromptSection({
                             }
                         }
                     }}
-                    placeholder="Adjust this query to group by region and include YoY growth…"
+                    aria-label={isRefining ? 'Refine the current result' : 'Ask a question'}
+                    placeholder={isRefining
+                        ? 'Refine this result, e.g. limit to the past 3 months'
+                        : 'Adjust this query to group by region and include YoY growth…'}
                     className="w-full rounded-lg border border-outline-variant bg-white py-2.5 pl-10 pr-44 text-sm placeholder-slate-400 focus:border-oxblood focus:outline-none focus:ring-1 focus:ring-oxblood"
                 />
 
@@ -236,7 +283,7 @@ export function PromptSection({
                         className="flex items-center gap-1 rounded bg-oxblood px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-oxblood-soft disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         {isGenerating ? <Loader2 size={12} className="animate-spin" /> : null}
-                        {isDryRun ? 'Preview' : 'Generate'}
+                        {isRefining ? 'Refine' : isDryRun ? 'Preview' : 'Generate'}
                     </button>
                 </div>
             </div>
