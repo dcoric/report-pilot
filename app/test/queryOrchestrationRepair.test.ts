@@ -201,6 +201,7 @@ const REFINEMENT: SessionRefinement = {
 
 test("refinement sessions link schema on the combined question and pass refinement to generation and repair", async () => {
   const linkingQuestions: string[] = [];
+  const requiredRefs: Array<string[] | undefined> = [];
   const generatorCalls: GenerateSqlWithRoutingInput[] = [];
   const dependencies = dependenciesWithGenerator(async (input) => {
     generatorCalls.push(input);
@@ -211,6 +212,7 @@ test("refinement sessions link schema on the combined question and pass refineme
   const prepare = dependencies.prepareQueryGenerationContext;
   dependencies.prepareQueryGenerationContext = async (input, ...rest) => {
     linkingQuestions.push(input.question);
+    requiredRefs.push(input.requiredObjectRefs);
     return prepare(input, ...rest);
   };
   const refinementLookups: string[] = [];
@@ -226,6 +228,7 @@ test("refinement sessions link schema on the combined question and pass refineme
   assert.deepEqual(linkingQuestions, [
     "Earlier requests:\n1. generate report for payments\n2. only refunded payments\nFollow-up request: limit this to past 3 months"
   ]);
+  assert.deepEqual(requiredRefs, [["public.payment"]], "tables of the refined SQL stay in the schema context");
   assert.deepEqual(generatorCalls.map((call) => call.stage || "generation"), ["generation", "repair"]);
   for (const call of generatorCalls) {
     assert.equal(call.question, "limit this to past 3 months");

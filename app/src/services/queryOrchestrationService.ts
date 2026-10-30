@@ -6,6 +6,7 @@ import {
 import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
 import { generateSqlWithRouting, type ProviderAttempt } from "./llmSqlService";
 import { validateAndNormalizeSql } from "./sqlSafety";
+import { validateAstReadOnly } from "./sqlAstValidator";
 import columnPolicyService = require("./columnPolicyService");
 import { evaluateExplainBudget } from "./queryBudget";
 import { buildCitations, computeConfidence, type Citations } from "./queryResponse";
@@ -350,7 +351,10 @@ async function orchestrateQueryRunInternal({
           requestedModel,
           requestId,
           clarificationOptionId,
-          resolvedClarificationOptionIds
+          resolvedClarificationOptionIds,
+          requiredObjectRefs: promptRefinement
+            ? validateAstReadOnly(promptRefinement.baseSql, [], sqlDialect).refs.map((ref) => ref.raw)
+            : undefined
         }));
     } catch (err) {
       schemaLinkingDurationMs = Date.now() - schemaLinkingStartedAt;

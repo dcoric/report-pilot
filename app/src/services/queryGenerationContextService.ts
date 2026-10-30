@@ -37,6 +37,12 @@ export interface PrepareGenerationContextInput {
   finalRagLimit?: number;
   clarificationOptionId?: string | null;
   resolvedClarificationOptionIds?: string[];
+  /**
+   * Objects ("schema.object") the generated SQL must be able to reference,
+   * such as the tables of the SQL being refined. They are added to the
+   * linker's selection so a follow-up that names one table keeps the rest.
+   */
+  requiredObjectRefs?: string[];
 }
 
 export interface SchemaLinkingDiagnostics {
@@ -153,11 +159,12 @@ export async function prepareQueryGenerationContext(
   }));
   diagnostics.linker = linker;
 
+  const coreTableIds = mergeRequiredTableIds(linker.selection.table_ids, cards, input.requiredObjectRefs);
   let expanded = await withTelemetrySpan("query.schema.expand", {
     "pipeline.stage": "schema_expansion"
   }, () => dependencies.loadExpandedSchemaContext(
       input.dataSourceId,
-      linker.selection.table_ids,
+      coreTableIds,
       { maxIntermediateHops: 2, maxAlternativePaths: 4 }
     ));
   diagnostics.expansion = expanded.expansion;
@@ -256,4 +263,17 @@ function uniqueDocuments(documents: RagRetrievalDoc[]): RagRetrievalDoc[] {
 function positiveInteger(value: unknown, fallback: number): number {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+// Required refs only resolve to visible table cards, so hidden or ignored
+// objects stay out of the context even if the refined SQL used them.
+function mergeRequiredTableIds(selectedIds: string[], cards: TableCard[], requiredRefs: string[] | undefined): string[] {
+  if (!requiredRefs || requiredRefs.length === 0) {
+    return selectedIds;
+  }
+  const wanted = new Set(requiredRefs.map((ref) => ref.toLowerCase()));
+  const requiredIds = cards
+    .filter((card) => wanted.has(`${card.schema_name}.${card.object_name}`.toLowerCase()))
+    .map((card) => card.id);
+  return [...new Set([...selectedIds, ...requiredIds])];
 }

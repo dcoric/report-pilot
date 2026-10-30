@@ -188,6 +188,30 @@ test("prepareQueryGenerationContext scopes linking to the selected duplicate tab
   }
 });
 
+test("prepareQueryGenerationContext keeps tables of the refined SQL alongside the linker selection", async () => {
+  const payment = card(PAYMENT, "payment", ["Revenue"]);
+  const customer = card(CUSTOMER, "customer", ["Customer"]);
+  const dependencies = baseDependencies([payment, customer], [rag("payment-doc", "schema", PAYMENT, 2)]);
+  let expandedIds: string[] = [];
+  const expand = dependencies.loadExpandedSchemaContext;
+  dependencies.loadExpandedSchemaContext = async (dataSourceId, coreIds, options) => {
+    expandedIds = coreIds;
+    return expand(dataSourceId, coreIds, options);
+  };
+
+  const result = await prepareQueryGenerationContext({
+    dataSourceId: "source",
+    question: "Total revenue",
+    requiredObjectRefs: ["PUBLIC.customer", "public.hidden_table"]
+  }, dependencies);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(expandedIds, [PAYMENT, CUSTOMER]);
+  if (result.ok) {
+    assert.deepEqual(result.context.schemaObjects.map((object) => object.id).sort(), [PAYMENT, CUSTOMER].sort());
+  }
+});
+
 function baseDependencies(cards: TableCard[], docs: RagRetrievalDoc[]): GenerationContextDependencies {
   return {
     loadTableCards: async () => cards,
