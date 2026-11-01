@@ -17,6 +17,7 @@ import {
   upsertProvider,
   deleteProvider,
   findProviderById,
+  isOidcProvider,
   updateMappingRules,
   updateScimGroupMappings
 } from "../services/authProviderService";
@@ -302,6 +303,12 @@ const handleTestAuthProvider: RouteHandlerWithId = async (_req, res, providerId)
   const provider = await findProviderById(providerId, { withSecret: true });
   if (!provider) {
     return json(res, 404, { error: "not_found", message: "auth provider not found" });
+  }
+  if (!isOidcProvider(provider)) {
+    return json(res, 400, {
+      error: "not_implemented",
+      message: "only OIDC auth providers can be tested; this provider type is not implemented"
+    });
   }
   const result = await testConnection(provider);
   return json(res, 200, result);

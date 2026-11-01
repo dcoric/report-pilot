@@ -4526,19 +4526,19 @@ export interface components {
         AuthProvider: {
             id?: string;
             /** @enum {string} */
-            type?: "oidc";
+            type?: "oidc" | "saml" | "ldap" | "ad" | "pd";
             name?: string;
             display_name?: string | null;
-            issuer?: string;
-            client_id?: string;
+            issuer?: string | null;
+            client_id?: string | null;
             /** @description Redacted as `***` when present; never returned in plaintext. */
             client_secret?: string | null;
-            scopes?: string[];
-            redirect_uri?: string;
+            scopes?: string[] | null;
+            redirect_uri?: string | null;
             claims_mapping?: {
                 email?: string;
                 display_name?: string;
-            };
+            } | null;
             enabled?: boolean;
             /** @description AUTH-012. When true, an SSO login whose email matches an existing local user is auto-linked. */
             auto_link_by_email?: boolean;
@@ -4553,6 +4553,10 @@ export interface components {
             /** @description AUTH-013. SCIM group `displayName` (key, case-insensitive at lookup) to local role name (value). */
             scim_group_mappings?: {
                 [key: string]: string;
+            };
+            /** @description Provider-specific configuration data. The structure depends on the provider type. Secret-like keys are recursively returned as `***` from admin APIs. */
+            provider_config?: {
+                [key: string]: unknown;
             };
             /** Format: date-time */
             created_at?: string;
@@ -4687,24 +4691,29 @@ export interface components {
         AuthProviderListResponse: {
             items?: components["schemas"]["AuthProvider"][];
         };
+        /** @description OIDC retains its current required-field validation. saml/ldap/ad/pd records may be stored only disabled; attempts to enable an unimplemented type return 400. */
         AuthProviderUpsertRequest: {
             /** @description Provide to update an existing provider; omit to create a new one. */
             id?: string;
             /** @enum {string} */
-            type: "oidc";
+            type: "oidc" | "saml" | "ldap" | "ad" | "pd";
             name: string;
             display_name?: string | null;
-            issuer: string;
-            client_id: string;
+            issuer?: string;
+            client_id?: string;
             /** @description Optional for public PKCE-only clients. Omit on update to keep the existing value. */
             client_secret?: string | null;
             scopes?: string[];
-            redirect_uri: string;
+            redirect_uri?: string;
             claims_mapping?: {
                 email?: string;
                 display_name?: string;
             };
             enabled?: boolean;
+            /** @description Arbitrary provider-specific configuration. Secret-like keys are recursively returned as `***` from admin APIs. */
+            provider_config?: {
+                [key: string]: unknown;
+            };
         };
         AuthProviderTestResult: {
             ok?: boolean;
@@ -4758,7 +4767,8 @@ export interface components {
             id?: string;
             name?: string;
             display_name?: string;
-            type?: string;
+            /** @enum {string} */
+            type?: "oidc";
         };
         OidcProviderLoginListResponse: {
             items?: components["schemas"]["OidcProviderLoginEntry"][];

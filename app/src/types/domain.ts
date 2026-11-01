@@ -135,6 +135,15 @@ export interface RagNote {
 export type LlmProviderName = 'openai' | 'gemini' | 'deepseek' | 'openrouter';
 
 /**
+ * Authentication provider types supported by the system.
+ * These correspond to the types allowed in the auth_providers table.
+ */
+export const AUTH_PROVIDER_TYPES = ['oidc', 'saml', 'ldap', 'ad', 'pd'] as const;
+export type AuthProviderType = (typeof AUTH_PROVIDER_TYPES)[number];
+
+export type ProviderConfig = Readonly<Record<string, unknown>>;
+
+/**
  * `llm_providers` row.
  *
  * Sources of truth:
