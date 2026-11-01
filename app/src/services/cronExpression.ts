@@ -61,6 +61,9 @@ function parseField(spec: string, [min, max]: Range): Set<number> {
     if (!part.length) {
       throw new Error(`cron field has empty list entry`);
     }
+    if (!/^(?:\*|[0-9]+(?:-[0-9]+)?)(?:\/[0-9]+)?$/.test(part)) {
+      throw new Error(`cron field has invalid token: ${part}`);
+    }
     const stepIndex = part.indexOf("/");
     const base = stepIndex === -1 ? part : part.slice(0, stepIndex);
     const step = stepIndex === -1 ? 1 : Number(part.slice(stepIndex + 1));
