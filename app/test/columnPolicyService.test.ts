@@ -157,3 +157,11 @@ test("withoutForbiddenColumns hides forbidden columns only on their own table", 
     ["Users.Id", "Orders.Password"]
   );
 });
+
+test("a word containing ban does not forbid the columns a note names", () => {
+  const known = [{ schema_name: "public", object_name: "accounts", column_name: "name" }];
+  const named = (content: string) => extractForbiddenColumnsFromRagNotes([{ title: "Accounts", content }], known);
+  assert.deepEqual(named("Bank customers and urban branches are found through public.accounts.name."), []);
+  assert.equal(named("We ban public.accounts.name.").length, 1);
+  assert.equal(named("public.accounts.name is banned.").length, 1);
+});

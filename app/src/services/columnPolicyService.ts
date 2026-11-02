@@ -33,9 +33,12 @@ const NEGATIVE_KEYWORDS = [
   "not allowed",
   "disallow",
   "never use",
-  "blocked",
-  "ban"
+  "blocked"
 ];
+
+// A short word needs its own boundaries, or "bank" and "urban" would forbid every
+// column a note names.
+const BAN_WORD = /\bban(s|ned)?\b/;
 
 interface ColumnRef {
   kind: "two_part" | "three_part";
@@ -136,7 +139,7 @@ export function validateSqlAgainstForbiddenColumns(
 
 function containsNegativeKeyword(text: string): boolean {
   const normalized = String(text || "").toLowerCase();
-  return NEGATIVE_KEYWORDS.some((keyword) => normalized.includes(keyword));
+  return BAN_WORD.test(normalized) || NEGATIVE_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
 function extractColumnRefs(text: string): ColumnRef[] {
