@@ -79,6 +79,15 @@ export function extractForbiddenColumnsFromRagNotes(
   return [...dedupe.values()];
 }
 
+export function withoutForbiddenColumns<T extends KnownColumn>(columns: T[], forbiddenColumns: ForbiddenColumn[]): T[] {
+  const forbidden = new Set(forbiddenColumns.map(
+    (col) => `${normalizeIdentifier(col.schema)}.${normalizeIdentifier(col.object)}.${normalizeIdentifier(col.column)}`
+  ));
+  return columns.filter(
+    (col) => !forbidden.has(`${normalizeIdentifier(col.schema_name)}.${normalizeIdentifier(col.object_name)}.${normalizeIdentifier(col.column_name)}`)
+  );
+}
+
 export function validateSqlAgainstForbiddenColumns(
   sql: string,
   forbiddenColumns: ForbiddenColumn[] | unknown,
@@ -94,8 +103,10 @@ export function validateSqlAgainstForbiddenColumns(
     (Array.isArray(refs) ? refs as ParsedRefInput[] : []).map((ref) => `${normalizeIdentifier(ref.schema)}.${normalizeIdentifier(ref.object)}`)
   );
   const aliasesByObject = extractObjectAliases(sqlText);
+  const selectsAll = sqlSelectsAllColumns(sqlText);
 
   const errors: string[] = [];
+  const reportedStarObjects = new Set<string>();
   for (const blocked of forbiddenColumns) {
     const schema = normalizeIdentifier(blocked.schema);
     const object = normalizeIdentifier(blocked.object);
@@ -106,16 +117,13 @@ export function validateSqlAgainstForbiddenColumns(
       continue;
     }
 
-    const aliasSet = aliasesByObject.get(objectKey) || new Set<string>();
-    const hasQualified = sqlMentionsQualifiedColumn(sqlText, schema, object, column, aliasSet);
+    if (selectsAll && !reportedStarObjects.has(objectKey)) {
+      reportedStarObjects.add(objectKey);
+      errors.push(`SELECT * is not allowed on ${blocked.schema}.${blocked.object} because it has forbidden columns. List the columns instead.`);
+    }
 
-    // Only apply bare-column checks for single-object queries to reduce false positives.
-    const hasBare =
-      referencedObjects.size === 1 &&
-      referencedObjects.has(objectKey) &&
-      sqlMentionsColumnToken(sqlText, column);
-
-    if (hasQualified || hasBare) {
+    const otherObjectQualifiers = qualifiersOfOtherObjects(objectKey, referencedObjects, aliasesByObject);
+    if (sqlMentionsColumn(sqlText, column, otherObjectQualifiers)) {
       errors.push(`Forbidden column referenced: ${blocked.schema}.${blocked.object}.${blocked.column}`);
     }
   }
@@ -230,32 +238,49 @@ function escapeRegExp(value: unknown): string {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function identifierPattern(identifier: string): string {
-  const escaped = escapeRegExp(identifier);
-  return `(?:\\[${escaped}\\]|"${escaped}"|${escaped})`;
+// A star reads a forbidden column without naming it. COUNT(*) and multiplication do not match.
+function sqlSelectsAllColumns(sql: string): boolean {
+  const pattern = /\bselect\s+(?:(?:distinct|all)\s+)?(?:top\s*\(?\s*[@\w]+\s*\)?\s*(?:percent\s+)?(?:with\s+ties\s+)?)?\*|,\s*\*|[\w$\]"]\s*\.\s*\*/i;
+  return pattern.test(sql);
 }
 
-function sqlMentionsQualifiedColumn(sql: string, schema: string, object: string, column: string, aliases: Set<string>): boolean {
-  const prefixes = [
-    `${identifierPattern(schema)}\\s*\\.\\s*${identifierPattern(object)}`,
-    identifierPattern(object),
-    ...[...aliases].map((alias) => identifierPattern(alias))
-  ];
+function qualifiersOfOtherObjects(
+  objectKey: string,
+  referencedObjects: Set<string>,
+  aliasesByObject: Map<string, Set<string>>
+): Set<string> {
+  const qualifiers = new Set<string>();
+  for (const other of referencedObjects) {
+    if (other === objectKey) {
+      continue;
+    }
+    qualifiers.add(other.split(".").pop() as string);
+    for (const alias of aliasesByObject.get(other) || []) {
+      qualifiers.add(alias);
+    }
+  }
+  qualifiers.delete(objectKey.split(".").pop() as string);
+  for (const alias of aliasesByObject.get(objectKey) || []) {
+    qualifiers.delete(alias);
+  }
+  return qualifiers;
+}
 
-  for (const prefix of prefixes) {
-    const pattern = new RegExp(`(^|[^\\w])${prefix}\\s*\\.\\s*${identifierPattern(column)}([^\\w]|$)`, "i");
-    if (pattern.test(sql)) {
+// Fails closed: a mention counts unless it is qualified by another object in the query,
+// so unqualified columns and unrecognized aliases are all treated as the forbidden column.
+function sqlMentionsColumn(sql: string, column: string, otherObjectQualifiers: Set<string>): boolean {
+  const name = escapeRegExp(column);
+  const pattern = new RegExp(
+    `(?:(\\[[^\\]]+\\]|"[^"]+"|[\\w$]+)\\s*\\.\\s*)?(?<![\\w$])(?:\\[${name}\\]|"${name}"|${name})(?![\\w$])`,
+    "gi"
+  );
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(sql)) !== null) {
+    if (!match[1] || !otherObjectQualifiers.has(normalizeIdentifier(match[1]))) {
       return true;
     }
   }
   return false;
-}
-
-function sqlMentionsColumnToken(sql: string, column: string): boolean {
-  const startsAlpha = /^[a-z_]/i.test(column);
-  const bare = startsAlpha ? `|${escapeRegExp(column)}\\b` : "";
-  const pattern = new RegExp(`(^|[^\\w])(?:\\[${escapeRegExp(column)}\\]|"${escapeRegExp(column)}"${bare})`, "i");
-  return pattern.test(sql);
 }
 
 function extractObjectAliases(sql: string): Map<string, Set<string>> {
@@ -313,6 +338,6 @@ export const __private = {
   extractColumnRefs,
   resolveColumnRef,
   extractObjectAliases,
-  sqlMentionsColumnToken,
-  sqlMentionsQualifiedColumn
+  sqlSelectsAllColumns,
+  sqlMentionsColumn
 };

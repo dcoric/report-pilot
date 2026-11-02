@@ -17,6 +17,8 @@ import { SUPPORTED_FORMATS } from "./exportService";
 import emailService = require("./emailService");
 import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
 import { ensureLimit, sanitizeGeneratedSql, validateAndNormalizeSql } from "./sqlSafety";
+import { validateSqlAgainstForbiddenColumns } from "./columnPolicyService";
+import { loadForbiddenColumns } from "./queryOrchestrationStore";
 import {
   validateParameterValues,
   substitutePlaceholdersForValidation
@@ -589,6 +591,15 @@ async function runScheduledQuery(savedQueryId: string, parameterOverrides: Recor
   });
   if (!normalized.ok) {
     throw new Error(`SQL safety check failed: ${normalized.errors.join("; ")}`);
+  }
+  const columnCheck = validateSqlAgainstForbiddenColumns(
+    normalized.sql,
+    await loadForbiddenColumns(savedQuery.data_source_id),
+    normalized.refs,
+    dialect
+  );
+  if (!columnCheck.ok) {
+    throw new Error(`Column policy check failed: ${columnCheck.errors.join("; ")}`);
   }
   let adapter: ReturnType<typeof createDatabaseAdapter> | null = null;
   let rows: Record<string, unknown>[];
