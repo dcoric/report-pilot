@@ -205,34 +205,45 @@ export function expandSchemaGraph(
     connected.add(knownCoreIds[0]);
   }
 
-  for (const targetId of knownCoreIds.slice(1)) {
-    if (connected.has(targetId)) {
-      continue;
-    }
-    const alternatives = findBestPaths(
-      adjacency,
-      connected,
-      targetId,
-      maxIntermediateHops + 1,
-      maxAlternativePaths
-    );
-    if (alternatives.length === 0) {
-      unresolved.push(targetId);
-      continue;
-    }
-    if (alternatives.length > 1) {
-      ambiguities.push({ target_object_id: targetId, alternatives });
-      continue;
-    }
+  // A target out of reach now can come within reach once a later target joins, so
+  // the outcome must not depend on the order the tables were selected in.
+  let pending = knownCoreIds.slice(1);
+  while (pending.length > 0) {
+    const outOfReach: string[] = [];
+    for (const targetId of pending) {
+      if (connected.has(targetId)) {
+        continue;
+      }
+      const alternatives = findBestPaths(
+        adjacency,
+        connected,
+        targetId,
+        maxIntermediateHops + 1,
+        maxAlternativePaths
+      );
+      if (alternatives.length === 0) {
+        outOfReach.push(targetId);
+        continue;
+      }
+      if (alternatives.length > 1) {
+        ambiguities.push({ target_object_id: targetId, alternatives });
+        continue;
+      }
 
-    const path = alternatives[0];
-    paths.push(path);
-    for (const objectId of path.object_ids) {
-      connected.add(objectId);
+      const path = alternatives[0];
+      paths.push(path);
+      for (const objectId of path.object_ids) {
+        connected.add(objectId);
+      }
+      for (const edge of path.edges) {
+        selectedEdges.set(edge.id, edge);
+      }
     }
-    for (const edge of path.edges) {
-      selectedEdges.set(edge.id, edge);
+    if (outOfReach.length === pending.length) {
+      unresolved.push(...outOfReach);
+      break;
     }
+    pending = outOfReach;
   }
 
   const selectedObjectIds = unique([...knownCoreIds.filter((id) => connected.has(id)), ...connected]);
