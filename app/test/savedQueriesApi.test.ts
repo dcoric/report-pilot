@@ -64,6 +64,7 @@ let originalQuery: typeof appDb.query;
 let originalCreateDatabaseAdapter: typeof dbAdapterFactory.createDatabaseAdapter;
 let originalIsSupportedDbType: typeof dbAdapterFactory.isSupportedDbType;
 let adapterCalls: AdapterCall[];
+let blockedColumnNotes: Array<{ id: string; title: string; content: string }> = [];
 let authStub: import("./helpers/authTestStub").AuthTestStub;
 const testUsers: Record<string, TestUserFixture> = {};
 
@@ -288,6 +289,15 @@ before(async () => {
       return { rowCount: 1, rows: [{ schema_name: "public", object_name: "revenue" }] };
     }
 
+    if (normalized.startsWith("select id, title, content from rag_notes")) {
+      return { rowCount: blockedColumnNotes.length, rows: blockedColumnNotes };
+    }
+
+    if (normalized.startsWith("select so.schema_name, so.object_name, c.column_name from columns c")) {
+      const rows = [{ schema_name: "public", object_name: "revenue", column_name: "amount" }];
+      return { rowCount: rows.length, rows };
+    }
+
     if (normalized.startsWith("update saved_queries set")) {
       // Two callers: the full update flow (9 params) and the visibility-only
       // toggle from shareSavedQuery (2 params: id + visibility).
@@ -467,6 +477,7 @@ beforeEach(() => {
   savedQueryCounter = 0;
   savedQueryVersionCounter = 0;
   adapterCalls = [];
+  blockedColumnNotes = [];
 });
 
 after(async () => {
@@ -700,6 +711,20 @@ test("saved query validate-params and run use resolved parameter values", async 
       type: "close"
     }
   ]);
+});
+
+test("saved query run refuses a forbidden column, including through SELECT *", async () => {
+  blockedColumnNotes = [{ id: "note-1", title: "Blocked columns", content: "Do not use public.revenue.amount in any query." }];
+  for (const sql of ["SELECT amount FROM public.revenue", "SELECT * FROM public.revenue"]) {
+    const created = await api("POST", "/v1/saved-queries", { name: sql, data_source_id: DATA_SOURCE_ID, sql });
+    assert.equal(created.status, 201);
+
+    const run = await api("POST", `/v1/saved-queries/${created.payload.id}/run`, {});
+
+    assert.equal(run.status, 403, sql);
+    assert.equal(run.payload.error, "column_policy_denied");
+    assert.deepEqual(adapterCalls, []);
+  }
 });
 
 test("saved query duplicate names are rejected per owner and data source", async () => {

@@ -80,6 +80,27 @@ test("expandSchemaGraph reports equally good paths as ambiguity", () => {
   );
 });
 
+test("expandSchemaGraph connects the same tables whatever order they were selected in", () => {
+  const E = "00000000-0000-4000-8000-000000000205";
+  const graph = makeGraph(
+    [node(A, "a"), node(B, "b"), node(C, "c"), node(D, "d"), node(E, "e")],
+    [
+      edge("policy:ab", A, B, "approved_policy", "a.id = b.id"),
+      edge("policy:bc", B, C, "approved_policy", "b.id = c.id"),
+      edge("policy:cd", C, D, "approved_policy", "c.id = d.id"),
+      edge("policy:de", D, E, "approved_policy", "d.id = e.id")
+    ]
+  );
+
+  // E is four edges from A, beyond the limit, until C has joined.
+  for (const order of [[A, E, C], [A, C, E], [C, A, E], [E, A, C]]) {
+    const expansion = expandSchemaGraph(graph, order, { maxIntermediateHops: 1 });
+    assert.equal(expansion.status, "complete", order.join(","));
+    assert.deepEqual(expansion.unresolved_object_ids, []);
+    assert.equal(expansion.edges.length, 4);
+  }
+});
+
 test("expandSchemaGraph distinguishes disconnected and hop-limited targets", () => {
   const graph = makeGraph(
     [node(A, "a"), node(B, "b"), node(C, "c"), node(D, "isolated")],

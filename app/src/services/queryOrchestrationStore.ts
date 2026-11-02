@@ -1,5 +1,6 @@
 import appDb = require("../lib/appDb");
 import { LLM_PROVIDERS } from "../lib/constants";
+import { extractForbiddenColumnsFromRagNotes, type ForbiddenColumn } from "./columnPolicyService";
 
 export interface SessionRow {
   session_id: string;
@@ -76,6 +77,26 @@ export async function resolveSession({ sessionId, question, dataSourceId, connec
 
 export async function loadQueryContext(dataSourceId: string): Promise<QueryContext> {
   return loadQueryContextForObjects(dataSourceId, null);
+}
+
+export async function loadForbiddenColumns(dataSourceId: string): Promise<ForbiddenColumn[]> {
+  const notes = await appDb.query<{ id: string; title: string; content: string }>(
+    "SELECT id, title, content FROM rag_notes WHERE data_source_id = $1 AND active = TRUE",
+    [dataSourceId]
+  );
+  if (notes.rows.length === 0) {
+    return [];
+  }
+  const columns = await appDb.query<{ schema_name: string; object_name: string; column_name: string }>(
+    `
+      SELECT so.schema_name, so.object_name, c.column_name
+      FROM columns c
+      JOIN schema_objects so ON so.id = c.schema_object_id
+      WHERE so.data_source_id = $1 AND so.is_ignored = FALSE
+    `,
+    [dataSourceId]
+  );
+  return extractForbiddenColumnsFromRagNotes(notes.rows, columns.rows);
 }
 
 export async function loadScopedQueryContext(dataSourceId: string, schemaObjectIds: string[]): Promise<QueryContext> {

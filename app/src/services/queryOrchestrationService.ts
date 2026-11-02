@@ -35,7 +35,7 @@ import {
 import type { QueryClarification } from "./queryClarificationService";
 import { withTelemetrySpan } from "../lib/telemetry";
 
-const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns } = columnPolicyService;
+const { extractForbiddenColumnsFromRagNotes, validateSqlAgainstForbiddenColumns, withoutForbiddenColumns } = columnPolicyService;
 const { retrieveRagContext } = ragRetrieval;
 
 export interface OrchestrateInput {
@@ -345,6 +345,7 @@ async function orchestrateQueryRunInternal({
   }
   expandedTableIds = context.schemaObjects.map((object) => object.id);
   const forbiddenColumns = extractForbiddenColumnsFromRagNotes(context.ragNotes, context.columns);
+  const promptColumns = withoutForbiddenColumns(context.columns, forbiddenColumns);
 
   let generatedSql: string;
 
@@ -367,7 +368,7 @@ async function orchestrateQueryRunInternal({
         requestedProvider,
         requestedModel,
         schemaObjects: context.schemaObjects,
-        columns: context.columns,
+        columns: promptColumns,
         semanticEntities: context.semanticEntities,
         metricDefinitions: context.metricDefinitions,
         joinPolicies: context.joinPolicies,
@@ -480,7 +481,7 @@ async function orchestrateQueryRunInternal({
               requestedProvider,
               requestedModel,
               schemaObjects: context.schemaObjects,
-              columns: context.columns,
+              columns: promptColumns,
               semanticEntities: context.semanticEntities,
               metricDefinitions: context.metricDefinitions,
               joinPolicies: context.joinPolicies,
@@ -578,7 +579,7 @@ async function orchestrateQueryRunInternal({
                 requestedProvider,
                 requestedModel,
                 schemaObjects: context.schemaObjects,
-                columns: context.columns,
+                columns: promptColumns,
                 semanticEntities: context.semanticEntities,
                 metricDefinitions: context.metricDefinitions,
                 joinPolicies: context.joinPolicies,

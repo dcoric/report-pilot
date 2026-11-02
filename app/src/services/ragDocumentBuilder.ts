@@ -1,4 +1,5 @@
 import appDb = require("../lib/appDb");
+import { extractForbiddenColumnsFromRagNotes, withoutForbiddenColumns } from "./columnPolicyService";
 import { validateAstReadOnly } from "./sqlAstValidator";
 import type { SqlDialect } from "./sqlGenerator";
 
@@ -189,7 +190,16 @@ export async function buildRagDocuments(dataSourceId: string): Promise<RagDocume
     )
   ]);
 
-  const columnsByObject = groupBy(columnsResult.rows, (row) => row.schema_object_id);
+  const objectsById = new Map(schemaObjectsResult.rows.map((obj) => [obj.id, obj]));
+  const knownColumns = columnsResult.rows.flatMap((col) => {
+    const obj = objectsById.get(col.schema_object_id);
+    return obj ? [{ ...col, schema_name: obj.schema_name, object_name: obj.object_name }] : [];
+  });
+  const visibleColumns = withoutForbiddenColumns(
+    knownColumns,
+    extractForbiddenColumnsFromRagNotes(ragNotesResult.rows, knownColumns)
+  );
+  const columnsByObject = groupBy(visibleColumns, (row) => row.schema_object_id);
   const relationshipsByObject = groupBy(relationshipsResult.rows, (row) => row.from_object_id);
   const objectNameById = new Map(
     schemaObjectsResult.rows.map((obj) => [obj.id, `${obj.schema_name}.${obj.object_name}`])

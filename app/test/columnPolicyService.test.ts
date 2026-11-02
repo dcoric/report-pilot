@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { extractForbiddenColumnsFromRagNotes,
-  validateSqlAgainstForbiddenColumns } from "../src/services/columnPolicyService";
+  validateSqlAgainstForbiddenColumns,
+  withoutForbiddenColumns } from "../src/services/columnPolicyService";
 
 const knownColumns = [
   { schema_name: "Sales", object_name: "vSalesPerson", column_name: "BusinessEntityID" },
@@ -92,4 +93,75 @@ test("validateSqlAgainstForbiddenColumns allows column name on different objects
   );
 
   assert.equal(result.ok, true);
+});
+
+const blockedPassword = [{ schema: "dbo", object: "Users", column: "Password" }];
+const usersAndOrders = [{ schema: "dbo", object: "users" }, { schema: "dbo", object: "orders" }];
+
+test("validateSqlAgainstForbiddenColumns blocks SELECT * on a table with a forbidden column", () => {
+  for (const sql of [
+    "SELECT * FROM dbo.Users",
+    "SELECT TOP 10 * FROM dbo.Users",
+    "SELECT TOP (10) * FROM dbo.Users",
+    "SELECT DISTINCT * FROM dbo.Users",
+    "SELECT u.* FROM dbo.Users u",
+    "SELECT [u].* FROM dbo.Users u",
+    "SELECT 1 AS a, * FROM dbo.Users",
+    "SELECT x.Id FROM (SELECT * FROM dbo.Users) x"
+  ]) {
+    assert.equal(validateSqlAgainstForbiddenColumns(sql, blockedPassword, [{ schema: "dbo", object: "users" }], "mssql").ok, false, sql);
+  }
+});
+
+test("validateSqlAgainstForbiddenColumns allows COUNT(*), multiplication and a star on other tables", () => {
+  const usersOnly = [{ schema: "dbo", object: "users" }];
+  for (const sql of ["SELECT COUNT(*) FROM dbo.Users", "SELECT Id * 2 AS d FROM dbo.Users"]) {
+    assert.equal(validateSqlAgainstForbiddenColumns(sql, blockedPassword, usersOnly, "mssql").ok, true, sql);
+  }
+  assert.equal(
+    validateSqlAgainstForbiddenColumns("SELECT * FROM dbo.Orders", blockedPassword, [{ schema: "dbo", object: "orders" }], "mssql").ok,
+    true
+  );
+});
+
+test("validateSqlAgainstForbiddenColumns blocks unqualified and aliased use in a join", () => {
+  for (const sql of [
+    "SELECT Password FROM dbo.Users u JOIN dbo.Orders o ON o.UserId = u.Id",
+    "SELECT [Password] FROM dbo.Users u JOIN dbo.Orders o ON o.UserId = u.Id",
+    "SELECT u.Password FROM dbo.Users u JOIN dbo.Orders o ON o.UserId = u.Id",
+    "SELECT unknown_alias.Password FROM dbo.Users, dbo.Orders unknown_alias2",
+    "SELECT o.Password FROM dbo.Orders o JOIN (SELECT u.Password FROM dbo.Users u) o2 ON 1 = 1"
+  ]) {
+    assert.equal(validateSqlAgainstForbiddenColumns(sql, blockedPassword, usersAndOrders, "mssql").ok, false, sql);
+  }
+});
+
+test("validateSqlAgainstForbiddenColumns allows the same column name on another table in a join", () => {
+  const result = validateSqlAgainstForbiddenColumns(
+    "SELECT o.Password, dbo.Orders.Password FROM dbo.Users u JOIN dbo.Orders o ON o.UserId = u.Id",
+    blockedPassword,
+    usersAndOrders,
+    "mssql"
+  );
+  assert.equal(result.ok, true);
+});
+
+test("withoutForbiddenColumns hides forbidden columns only on their own table", () => {
+  const columns = [
+    { schema_name: "dbo", object_name: "Users", column_name: "Password" },
+    { schema_name: "dbo", object_name: "Users", column_name: "Id" },
+    { schema_name: "dbo", object_name: "Orders", column_name: "Password" }
+  ];
+  assert.deepEqual(
+    withoutForbiddenColumns(columns, blockedPassword).map((col) => `${col.object_name}.${col.column_name}`),
+    ["Users.Id", "Orders.Password"]
+  );
+});
+
+test("a word containing ban does not forbid the columns a note names", () => {
+  const known = [{ schema_name: "public", object_name: "accounts", column_name: "name" }];
+  const named = (content: string) => extractForbiddenColumnsFromRagNotes([{ title: "Accounts", content }], known);
+  assert.deepEqual(named("Bank customers and urban branches are found through public.accounts.name."), []);
+  assert.equal(named("We ban public.accounts.name.").length, 1);
+  assert.equal(named("public.accounts.name is banned.").length, 1);
 });

@@ -234,6 +234,10 @@ before(async () => {
       return { rowCount: 1, rows: [{ schema_name: "public", object_name: "revenue" }] };
     }
 
+    if (normalized.startsWith("select id, title, content from rag_notes")) {
+      return { rowCount: 0, rows: [] };
+    }
+
     // CRUD on saved_query_schedules
     if (normalized.startsWith("insert into saved_query_schedules")) {
       const [

@@ -17,6 +17,8 @@ import {
 } from "../lib/validation";
 import { createDatabaseAdapter, isSupportedDbType } from "../adapters/dbAdapterFactory";
 import { validateAndNormalizeSql, sanitizeGeneratedSql, ensureLimit } from "./sqlSafety";
+import { validateSqlAgainstForbiddenColumns } from "./columnPolicyService";
+import { loadForbiddenColumns } from "./queryOrchestrationStore";
 import {
   extractPlaceholders,
   buildParameterSchemaFromPlaceholders,
@@ -743,6 +745,20 @@ export async function executeSavedQuery(savedQueryId: string, { params, maxRows,
       error: "bad_request",
       message: normalized.errors.join("; "),
       errors: normalized.errors
+    });
+  }
+
+  const columnCheck = validateSqlAgainstForbiddenColumns(
+    normalized.sql,
+    await loadForbiddenColumns(savedQuery.data_source_id),
+    normalized.refs,
+    dialect
+  );
+  if (!columnCheck.ok) {
+    return failure(403, {
+      error: "column_policy_denied",
+      message: columnCheck.errors.join("; "),
+      errors: columnCheck.errors
     });
   }
 
