@@ -1,4 +1,4 @@
-import { Download, Filter, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { RunResponse } from './types';
 
 interface ResultSectionProps {
@@ -32,26 +32,6 @@ export function ResultSection({ queryResult, isRunning, isDryRun }: ResultSectio
                             {queryResult.row_count.toLocaleString()} Rows
                         </span>
                     )}
-                </div>
-                <div className="flex items-center gap-1">
-                    <button
-                        type="button"
-                        className="rounded p-1 text-slate-500 hover:bg-surface-container-high disabled:opacity-40"
-                        disabled={!queryResult || queryResult.preview}
-                        title="Download"
-                        aria-label="Download"
-                    >
-                        <Download size={16} />
-                    </button>
-                    <button
-                        type="button"
-                        className="rounded p-1 text-slate-500 hover:bg-surface-container-high disabled:opacity-40"
-                        disabled={!queryResult || queryResult.preview}
-                        title="Filter"
-                        aria-label="Filter"
-                    >
-                        <Filter size={16} />
-                    </button>
                 </div>
             </div>
 
